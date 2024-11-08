@@ -1,0 +1,81 @@
+name: Solvers lib
+
+on:
+  workflow_call:
+
+jobs:
+  pr-build:
+    name: Build and test
+    if: startsWith(github.ref, 'refs/heads/pull-request/')
+    runs-on: ${{ startsWith(github.repository, 'NVIDIA/cudaqx') && 'linux-amd64-cpu8' || 'ubuntu-latest' }}
+    container: ghcr.io/nvidia/cuda-quantum-devdeps:ext-cu12.0-gcc11-main
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          set-safe-directory: true
+
+      - name: Lookup PR info
+        id: get-pr-info
+        env:
+          GH_TOKEN: ${{ github.token }}
+        uses: nv-gha-runners/get-pr-info@main
+
+      - name: Export PR info
+        id: export-pr-info
+        run: |
+          echo "pr_number=${{ fromJSON(steps.get-pr-info.outputs.pr-info).number }}" >> $GITHUB_OUTPUT
+
+      # ========================================================================
+      # CUDA Quantum build
+      # ========================================================================
+
+      - name: Get required CUDAQ version
+        id: get-cudaq-version
+        uses: ./.github/actions/get-cudaq-version
+
+      - name: Get CUDAQ build
+        uses: ./.github/actions/get-cudaq-build
+        with:
+          repo: ${{ steps.get-cudaq-version.outputs.repo }}
+          ref: ${{ steps.get-cudaq-version.outputs.ref }}
+          token: ${{ secrets.CUDAQ_ACCESS_TOKEN }}
+          pr-number: ${{ steps.export-pr-info.outputs.pr_number }}
+
+      # ========================================================================
+      # Build library
+      # ========================================================================
+
+      - name: Install build requirements
+        run: |
+          apt install -y --no-install-recommends gfortran libblas-dev libcusolver-dev-12-0
+
+      - name: Build
+        id: build
+        uses: ./.github/actions/build-lib
+        with:
+          lib: "solvers"
+          pr-number: ${{ steps.export-pr-info.outputs.pr_number }}
+          save-ccache: true
+
+      # ========================================================================
+      # Run tests
+      # ========================================================================
+      #
+      - name: Run tests
+        run: cmake --build ${{ steps.build.outputs.build-dir }} --target run_tests
+
+      # ========================================================================
+      # Run python tests
+      # ========================================================================
+ 
+      - name: Install python requirements
+        run: pip install numpy pytest cupy-cuda12x cuquantum-python-cu12
+
+      - name: Run Python tests
+        run: cmake --build ${{ steps.build.outputs.build-dir }} --target run_python_tests
+

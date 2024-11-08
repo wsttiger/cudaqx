@@ -1,0 +1,145 @@
+# ============================================================================ #
+# Copyright (c) 2024 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+# We need 3.28 because of the `EXCLUDE_FROM_ALL` in FetchContent_Declare
+cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
+
+# This policy was added in version 3.30 in which calling `FetchContent_Populate()`
+# with a single argument (the name of a declared dependency) is deprecated.
+# We use the functionality to import the solvers libraries.
+if(POLICY CMP0169)
+  cmake_policy(SET CMP0169 OLD)
+endif()
+
+# Project setup
+# ==============================================================================
+
+add_compile_options(-Wno-attributes) 
+
+# Check if core is built as a standalone project.
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(cudaq-solvers)
+  set(CUDAQX_SOLVERS_STANDALONE_BUILD TRUE)
+
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+  # Add our Modules to the path
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/../../cmake/Modules")
+
+  # Include custom CUDA-QX modules
+  include(CUDA-QX)
+
+  # Helper target to collect python modules
+  add_custom_target(cudaqx-pymodules)
+endif()
+
+enable_language(Fortran)
+
+# The following must go after `project(...)` 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
+
+set(CUDAQX_SOLVERS_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR})
+set(CUDAQX_SOLVERS_INCLUDE_DIR ${CUDAQX_SOLVERS_SOURCE_DIR}/include)
+
+# Options
+# ==============================================================================
+
+option(CUDAQX_SOLVERS_INCLUDE_TESTS
+       "Generate build targets for the CUDA-QX Solvers unit tests."
+       ${CUDAQX_INCLUDE_TESTS})
+
+option(CUDAQX_SOLVERS_BINDINGS_PYTHON
+       "Generate build targets for python bindings."
+       ${CUDAQX_BINDINGS_PYTHON})
+
+option(CUDAQX_SOLVERS_INSTALL_PYTHON
+       "Install python files alongside the library."
+       ${CUDAQX_INSTALL_PYTHON})
+
+# External Dependencies 
+# ==============================================================================
+
+include(FetchContent)
+
+FetchContent_Declare(
+  cppitertools
+  GIT_REPOSITORY https://github.com/ryanhaining/cppitertools.git
+  GIT_TAG master
+  EXCLUDE_FROM_ALL
+)
+
+# We need version 3.11.1 because that is what CUDA-Q uses. If CUDA-Q updates,
+# then we need to remember to update.
+FetchContent_Declare(
+  json
+  GIT_REPOSITORY https://github.com/nlohmann/json
+  GIT_TAG v3.11.1
+  EXCLUDE_FROM_ALL
+)
+
+FetchContent_MakeAvailable(cppitertools json)
+
+if (CUDAQX_SOLVERS_STANDALONE_BUILD)
+  # FIXME for now, we only use library mode
+  set(CUDAQ_LIBRARY_MODE ON)
+  find_package(CUDAQ REQUIRED)
+
+  # FIXME
+  add_subdirectory(../core core_build)
+endif()
+
+# Wheel building setup
+# ==============================================================================
+
+if (SKBUILD)
+  # When building with scikit, i.e., building wheels, we want all the install
+  # to be on the package directory.
+  set(CMAKE_INSTALL_BINDIR cudaq_solvers/bin)
+  set(CMAKE_INSTALL_INCLUDEDIR cudaq_solvers/include)
+  set(CMAKE_INSTALL_LIBDIR cudaq_solvers/lib)
+endif()
+
+# Directory setup
+# ==============================================================================
+
+add_subdirectory(lib)
+add_subdirectory(tools)
+
+if (CUDAQX_SOLVERS_BINDINGS_PYTHON)
+  add_subdirectory(python)
+endif()
+
+if (CUDAQX_SOLVERS_INCLUDE_TESTS)
+  add_custom_target(CUDAQXSolversUnitTests)
+  if (CUDAQX_SOLVERS_STANDALONE_BUILD)
+    include(CTest)
+
+    add_custom_target(run_tests
+      COMMAND ${CMAKE_COMMAND} -E env 
+              PYTHONPATH="${CUDAQ_INSTALL_DIR}:${CMAKE_BINARY_DIR}/python"
+              ${CMAKE_CTEST_COMMAND} --output-on-failure
+      DEPENDS CUDAQXSolversUnitTests
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+
+    if (CUDAQX_SOLVERS_BINDINGS_PYTHON)
+      add_custom_target(run_python_tests
+        COMMAND ${CMAKE_COMMAND} -E env 
+                PYTHONPATH="${CUDAQ_INSTALL_DIR}:${CMAKE_BINARY_DIR}/python"
+                pytest -v ${CUDAQX_SOLVERS_SOURCE_DIR}/python/tests
+        DEPENDS cudaqx-pymodules
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+      )
+    endif()
+  else()
+    add_dependencies(CUDAQXUnitTests CUDAQXSolversUnitTests)
+  endif()
+  add_subdirectory(unittests)
+endif()

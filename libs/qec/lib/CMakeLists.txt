@@ -1,0 +1,83 @@
+# ============================================================================ #
+# Copyright (c) 2024 NVIDIA Corporation & Affiliates.                          #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
+add_compile_options(-Wno-attributes) 
+
+# FIXME?: This must be a shared library. Trying to build a static one will fail.
+add_library(cudaq-qec SHARED
+  code.cpp
+  stabilizer_utils.cpp 
+  decoder.cpp
+  experiments.cpp
+  decoders/single_error_lut.cpp
+)
+
+add_subdirectory(codes)
+add_subdirectory(device) 
+
+if (CUDAQX_QEC_USE_DOUBLE)
+   target_compile_definitions(cudaq-qec PUBLIC -DCUDAQX_QEC_FLOAT_TYPE=double)
+endif()
+
+target_include_directories(cudaq-qec
+  PUBLIC 
+    $<BUILD_INTERFACE:${CUDAQX_QEC_INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:${CUDAQ_INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_options(cudaq-qec PUBLIC
+  $<$<CXX_COMPILER_ID:GNU>:-Wl,--no-as-needed>
+)
+
+target_link_libraries(cudaq-qec
+  PUBLIC 
+    cudaqx-core
+    cudaq::cudaq 
+    cudaq::cudaq-spin
+  PRIVATE
+    cudaq::cudaq-common
+)
+
+set_target_properties(cudaq-qec PROPERTIES
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# RPATH configuration 
+# ==============================================================================
+
+if (NOT SKBUILD)
+  set_target_properties(cudaq-qec PROPERTIES
+    BUILD_RPATH "$ORIGIN"
+    INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib"
+  )
+
+  # Let CMake automatically add paths of linked libraries to the RPATH:
+  set_target_properties(cudaq-qec PROPERTIES
+    INSTALL_RPATH_USE_LINK_PATH TRUE)
+else()
+  # CUDA-Q install its libraries in site-packages/lib (or dist-packages/lib)
+  # Thus, we need the $ORIGIN/../lib
+  set_target_properties(cudaq-qec PROPERTIES
+    INSTALL_RPATH "$ORIGIN/../../lib"
+  )
+endif()
+
+# Install 
+# ==============================================================================
+
+install(TARGETS cudaq-qec
+  COMPONENT qec-lib
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+    
+install(DIRECTORY ${CUDAQX_QEC_INCLUDE_DIR}/cudaq
+  COMPONENT qec-headers
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING PATTERN "*.h"
+)
+

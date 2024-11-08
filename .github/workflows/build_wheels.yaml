@@ -1,0 +1,51 @@
+name: Build wheels
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-build:
+    name: Linux build
+    runs-on: ubuntu-latest
+    # CUDAQ requires a highly specialized environment to build. Thus, it is much
+    # easier to rely on their's devdeps images to do the building.
+    container: ghcr.io/nvidia/cuda-quantum-devdeps:manylinux-amd64-${{ matrix.toolchain.id }}-main
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - id: cu12.0-gcc11
+            cc: gcc-11
+            cxx: g++-11
+            build-type: Release
+
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+        with:
+          set-safe-directory: true
+
+      - name: Get CUDAQ code
+        uses: actions/checkout@v4
+        with:
+          repository: 'NVIDIA/cuda-quantum'
+          ref: ${{ inputs.ref }}
+          path: cudaq
+          set-safe-directory: true
+
+      - name: Build CUDAQ toolchain
+        run: |
+          .github/workflows/scripts/build_cudaq.sh 
+
+      - name: Build wheels
+        run: |
+          .github/workflows/scripts/build_wheels.sh \
+              --cudaq-prefix $HOME/.cudaq \
+
