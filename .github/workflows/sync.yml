@@ -9,6 +9,9 @@ jobs:
   sync:
     name: Get Updates from Upstream
     if: ${{ github.repository != 'NVIDIA/cudaqx' }}
+    permissions:
+      actions: write
+      contents: write
     runs-on: 'ubuntu-latest'
 
     steps:
