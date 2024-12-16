@@ -1,3 +1,10 @@
+/****************************************************************-*- C++ -*-****
+ * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
+ * All rights reserved.                                                        *
+ *                                                                             *
+ * This source code and the accompanying materials are made available under    *
+ * the terms of the Apache License 2.0 which accompanies this distribution.    *
+ ******************************************************************************/
 #include <set>
 #include <complex>
 #include <iostream>
@@ -6,9 +13,7 @@
 
 #include <gtest/gtest.h>
 
-#include "spin_op.h"
-#include "tensor.h"
-#include "bravyi_kitaev.h"
+#include "cudaq/solvers/operators/molecule/fermion_compilers/bravyi_kitaev.h"
 
 
 TEST(BravyiKitaev, testH2Hamiltonian) {
@@ -58,7 +63,7 @@ TEST(BravyiKitaev, testH2Hamiltonian) {
     hpqrs.at({3, 3, 3, 3}) = 0.34814578499360427;
 
     cudaq::solvers::bravyi_kitaev transform{};
-    cudaq::spin_op result = transform.generate(h_constant, hpq, hpqrs);
+    cudaq::spin_op result = transform.generate(h_constant, hpq, hpqrs, {});
     cudaq::spin_op gold = 
             -0.1064770114930045 * i(0)
          + 0.04540633286914125  * x(0) * z(1) * x(2) 
@@ -235,10 +240,4 @@ TEST(BravyiKitaev, testSRLCase10) {
 
     auto [terms, residuals] = (result-gold).get_raw_data();
     for (auto r : residuals) EXPECT_NEAR(std::abs(r), 0.0, 1e-4);
-}
-
-// Main function
-int main(int argc, char **argv) {
-    testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

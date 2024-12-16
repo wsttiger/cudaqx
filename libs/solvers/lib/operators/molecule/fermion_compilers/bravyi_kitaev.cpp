@@ -5,6 +5,8 @@
 
 #include "cudaq/solvers/operators/molecule/fermion_compilers/bravyi_kitaev.h"
 
+using namespace cudaqx;
+
 namespace cudaq::solvers {
 
 template<typename T>
@@ -533,21 +535,26 @@ std::complex<double> two_body_coef(const cudaqx::tensor<> &hpqrs,
 }
 
 cudaq::spin_op bravyi_kitaev::generate(const double constant,
-                                       const cudaqx::tensor<> &hpq,
-                                       const cudaqx::tensor<> &hpqrs) {
+                                       const tensor<> &hpq,
+                                       const tensor<> &hpqrs,
+                                       const heterogeneous_map &options) {
   assert(hpq.rank() == 2 && "hpq must be a rank-2 tensor");
   assert(hpqrs.rank() == 4 && "hpqrs must be a rank-4 tensor");
   auto nqubits = hpq.shape()[0];
-  cudaq::spin_op bk_hamiltonian = 0.0 * cudaq::spin::i(0);
+  cudaq::spin_op spin_hamiltonian = 0.0 * cudaq::spin::i(0);
+
+  double tolerance =
+      options.get<double>(std::vector<std::string>{"tolerance", "tol"}, 1e-15);
+
   double constant_term = constant;
   for (std::size_t p = 0; p < nqubits; p++) {
     if (std::abs(hpq.at({p,p})) > 0.0) {
-      bk_hamiltonian += seeley_richard_love(p, p, hpq.at({p,p}), nqubits); 
+      spin_hamiltonian += seeley_richard_love(p, p, hpq.at({p,p}), nqubits); 
     }
     for (std::size_t q = 0; q < p; q++) {
       if (std::abs(hpq.at({p,q})) > 0.0) {
-        bk_hamiltonian += seeley_richard_love(p, q,           hpq.at({p,q} ), nqubits); 
-        bk_hamiltonian += seeley_richard_love(q, p, std::conj(hpq.at({p,q})), nqubits); 
+        spin_hamiltonian += seeley_richard_love(p, q,           hpq.at({p,q} ), nqubits); 
+        spin_hamiltonian += seeley_richard_love(q, p, std::conj(hpq.at({p,q})), nqubits); 
       }
       auto coef = 0.25 * two_body_coef(hpqrs, p, q, q, p);
       if (std::abs(coef) > 0.0) {
@@ -556,21 +563,21 @@ cudaq::spin_op bravyi_kitaev::generate(const double constant,
           for (auto index : occupation_set(p)) {
             zs *= cudaq::spin::z(index);
           }
-          bk_hamiltonian += -coef * zs;
+          spin_hamiltonian += -coef * zs;
         }
         if (not occupation_set(q).empty()) {
           cudaq::spin_op zs2;
           for (auto index : occupation_set(q)) {
             zs2 *= cudaq::spin::z(index);
           }
-          bk_hamiltonian += -coef * zs2;
+          spin_hamiltonian += -coef * zs2;
         }
         if (not F_ij_set(p, q).empty()) {
           cudaq::spin_op zs3;
           for (auto index : F_ij_set(p, q)) {
             zs3 *= cudaq::spin::z(index);
           }
-          bk_hamiltonian +=  coef * zs3;
+          spin_hamiltonian +=  coef * zs3;
         }
         // TODO: question about this:
         // constant_term is a double but += will cast it to a std::complex<>
@@ -589,7 +596,7 @@ cudaq::spin_op bravyi_kitaev::generate(const double constant,
           if (std::abs(coef) > 0.0) {
             cudaq::spin_op excitation = seeley_richard_love(q, r, coef, nqubits);
             cudaq::spin_op number = seeley_richard_love(p, p, 1.0, nqubits);
-            bk_hamiltonian += number * excitation;
+            spin_hamiltonian += number * excitation;
           }
         }
       }
@@ -602,22 +609,22 @@ cudaq::spin_op bravyi_kitaev::generate(const double constant,
         for (std::size_t s = 0; s < r; s++) {
           auto coef_pqrs = -two_body_coef(hpqrs, p, q, r, s);
           if (std::abs(coef_pqrs) > 0.0) {
-            bk_hamiltonian +=  hermitian_one_body_product(p, q, r, s, coef_pqrs, nqubits);
+            spin_hamiltonian +=  hermitian_one_body_product(p, q, r, s, coef_pqrs, nqubits);
           }
           auto coef_prqs = -two_body_coef(hpqrs, p, r, q, s);
           if (std::abs(coef_prqs) > 0.0) {
-            bk_hamiltonian +=  hermitian_one_body_product(p, r, q, s, coef_prqs, nqubits);
+            spin_hamiltonian +=  hermitian_one_body_product(p, r, q, s, coef_prqs, nqubits);
           }
           auto coef_psqr = -two_body_coef(hpqrs, p, s, q, r);
           if (std::abs(coef_psqr) > 0.0) {
-            bk_hamiltonian +=  hermitian_one_body_product(p, s, q, r, coef_psqr, nqubits);
+            spin_hamiltonian +=  hermitian_one_body_product(p, s, q, r, coef_psqr, nqubits);
           }
         }
       }
     }
   }
 
-  bk_hamiltonian += constant_term * cudaq::spin::i(0);
-  return bk_hamiltonian;
+  spin_hamiltonian += constant_term * cudaq::spin::i(0);
+  return spin_hamiltonian;
 }
 } // namespace cudaqx::solvers
