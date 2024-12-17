@@ -15,11 +15,12 @@
 
 #include "cudaq/solvers/operators/molecule/fermion_compilers/bravyi_kitaev.h"
 
-
+// One- and Two-body integrals were copied from test_molecule.cpp.
+// They were further validated using the script ./support/h2_pyscf_hf.py.
+//
 TEST(BravyiKitaev, testH2Hamiltonian) {
-    using namespace cudaq;
-    using namespace spin;
     using double_complex = std::complex<double>;
+    using namespace cudaq::spin;
 
     cudaqx::tensor<> hpq({4, 4});
     cudaqx::tensor<> hpqrs({4, 4, 4, 4});
@@ -86,8 +87,7 @@ TEST(BravyiKitaev, testH2Hamiltonian) {
 
 TEST(BravyiKitaev, testSRLCase0) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(2, 2, 4.0, 20);
 
@@ -101,8 +101,7 @@ TEST(BravyiKitaev, testSRLCase0) {
 
 TEST(BravyiKitaev, testSRLCase1) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(2, 6, 4.0, 20);
     cudaq::spin_op gold = 
@@ -116,8 +115,7 @@ TEST(BravyiKitaev, testSRLCase1) {
 
 TEST(BravyiKitaev, testSRLCase2) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(5, 2, 4.0, 20);
     cudaq::spin_op gold = 
@@ -132,8 +130,7 @@ TEST(BravyiKitaev, testSRLCase2) {
 
 TEST(BravyiKitaev, testSRLCase3) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(1, 2, 4.0, 20);
     cudaq::spin_op gold = 
@@ -148,8 +145,7 @@ TEST(BravyiKitaev, testSRLCase3) {
 
 TEST(BravyiKitaev, testSRLCase4) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(0, 5, 4.0, 20);
     cudaq::spin_op gold = 
@@ -164,8 +160,7 @@ TEST(BravyiKitaev, testSRLCase4) {
 
 TEST(BravyiKitaev, testSRLCase6) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(18, 19, 4.0, 20);
     cudaq::spin_op gold = 
@@ -180,8 +175,7 @@ TEST(BravyiKitaev, testSRLCase6) {
 
 TEST(BravyiKitaev, testSRLCase7) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(11, 5, 4.0, 20);
     cudaq::spin_op gold = 
@@ -196,8 +190,7 @@ TEST(BravyiKitaev, testSRLCase7) {
 
 TEST(BravyiKitaev, testSRLCase8) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(7, 9, 4.0, 20);
     cudaq::spin_op gold = 
@@ -212,8 +205,7 @@ TEST(BravyiKitaev, testSRLCase8) {
 
 TEST(BravyiKitaev, testSRLCase9) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(9, 15, 4.0, 20);
     cudaq::spin_op gold = 
@@ -228,8 +220,7 @@ TEST(BravyiKitaev, testSRLCase9) {
 
 TEST(BravyiKitaev, testSRLCase10) {
     using double_complex = std::complex<double>;
-    using namespace cudaq;
-    using namespace spin;
+    using namespace cudaq::spin;
 
     auto result = cudaq::solvers::seeley_richard_love(3, 7, 4.0, 20);
     cudaq::spin_op gold = 
