@@ -1,10 +1,10 @@
-/*******************************************************************************
+/****************************************************************-*- C++ -*-****
  * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
- *                                                                             * 
+ *                                                                             *
  * This file was translated and modified from bravyi_kitaev.py                 *
  * which was adapted from https://doi.org/10.1063/1.4768229                    *
  * Original work Copyright OpenFermion                                         *
@@ -32,7 +32,8 @@
 namespace cudaq::solvers {
 
 /// @brief Helper function used by the Bravyi-Kitaev transformation.
-cudaq::spin_op seeley_richard_love(std::size_t i, std::size_t j, std::complex<double> coef, int n_qubits);
+cudaq::spin_op seeley_richard_love(std::size_t i, std::size_t j,
+                                   std::complex<double> coef, int n_qubits);
 
 /// @brief Map fermionic operators to spin operators via the
 /// Bravyi-Kitaev transformation.
