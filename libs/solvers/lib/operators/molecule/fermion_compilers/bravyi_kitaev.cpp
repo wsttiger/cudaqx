@@ -1,3 +1,15 @@
+/****************************************************************-*- C++ -*-****
+ *                                                                             *
+ * This file was translated and modified from bravyi_kitaev.py                 *
+ * which was adapted from https://doi.org/10.1063/1.4768229                    *
+ * Original work Copyright OpenFermion                                         *
+ * Licensed under the Apache License, Version 2.0                              *
+ *                                                                             *
+ * Modifications:                                                              *
+ * - Translated from Python to C++                                             *
+ *                                                                             *
+ ******************************************************************************/
+
 #include <algorithm>
 #include <complex>
 #include <iterator>
