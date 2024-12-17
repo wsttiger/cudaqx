@@ -32,10 +32,8 @@ Configuration:
 import numpy as np
 from openfermion import *
 from openfermionpyscf import run_pyscf
-geometry = [
-    ['H', [0,0,0]],
-    ['H', [0,0,0.7474]]
-]
+
+geometry = [['H', [0, 0, 0]], ['H', [0, 0, 0.7474]]]
 basis = 'sto-3g'
 multiplicity = 1
 charge = 0
@@ -50,6 +48,7 @@ fermion_hamiltonian = get_fermion_operator(molecular_hamiltonian)
 
 # Convert to qubit Hamiltonian using Bravyi-Kitaev transformation
 qubit_hamiltonian = bravyi_kitaev(fermion_hamiltonian)
+
 
 def print_hamiltonian_info():
     print("System Information:")
@@ -68,6 +67,7 @@ def print_hamiltonian_info():
     for term, coefficient in qubit_hamiltonian.terms.items():
         if abs(coefficient) > 1e-8:  # Filter out near-zero terms
             print(f"{coefficient:.8f} [{' '.join(str(x) for x in term)}]")
+
 
 # Print the Hamiltonians and system information
 print_hamiltonian_info()
