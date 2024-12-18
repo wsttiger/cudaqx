@@ -1,4 +1,12 @@
-/****************************************************************-*- C++ -*-****
+/*******************************************************************************
+ * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
+ * All rights reserved.                                                        *
+ *                                                                             *
+ * This source code and the accompanying materials are made available under    *
+ * the terms of the Apache License 2.0 which accompanies this distribution.    *
+ ******************************************************************************/
+
+ /******************************************************************************
  *                                                                             *
  * This file was translated and modified from bravyi_kitaev.py                 *
  * which was adapted from https://doi.org/10.1063/1.4768229                    *
@@ -55,6 +63,8 @@ std::set<T> set_symmetric_difference(const std::set<T> &set1,
   return result;
 }
 
+/// @brief Contains the indices of qubits in the Bravyi-Kitaev basis that
+/// contribute to the occupation of index-th qubit.
 std::set<std::size_t> occupation_set(std::size_t index) {
   std::set<std::size_t> indices;
   index += 1;
@@ -71,6 +81,8 @@ std::set<std::size_t> occupation_set(std::size_t index) {
   return indices;
 }
 
+/// @brief Contains the indices of qubits in the Bravyi-Kitaev basis that
+/// contribute to the parity of the index-th qubit.
 std::set<std::size_t> parity_set(std::size_t index) {
   std::set<std::size_t> indices;
 
@@ -82,6 +94,8 @@ std::set<std::size_t> parity_set(std::size_t index) {
   return indices;
 }
 
+/// @brief Contains the indices of qubits in the Bravyi-Kitaev basis that need
+/// to be updated when the occupation of the index-th qubit changes.
 std::set<std::size_t> update_set(std::size_t index, std::size_t n_qubits) {
   std::set<std::size_t> indices;
 
@@ -634,10 +648,6 @@ cudaq::spin_op bravyi_kitaev::generate(const double constant,
           }
           spin_hamiltonian += coef * zs3;
         }
-        // TODO: question about this:
-        // constant_term is a double but += will cast it to a std::complex<>
-        //
-        // constant_term += coef;
         constant_term += std::real(coef);
       }
     }
