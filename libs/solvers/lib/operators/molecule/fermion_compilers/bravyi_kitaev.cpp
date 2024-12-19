@@ -6,7 +6,7 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
- /******************************************************************************
+/******************************************************************************
  *                                                                             *
  * This file was translated and modified from bravyi_kitaev.py                 *
  * which was adapted from https://doi.org/10.1063/1.4768229                    *
