@@ -30,6 +30,7 @@ add_subdirectory(adapt)
 add_subdirectory(optimizers)
 add_subdirectory(stateprep)
 add_subdirectory(qaoa)
+add_subdirectory(qfd)
 
 target_include_directories(cudaq-solvers
   PUBLIC
