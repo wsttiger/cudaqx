@@ -7,3 +7,5 @@
 # ============================================================================ #
 
 add_subdirectory(device)
+
+target_sources(cudaq-solvers PRIVATE qfd.cpp)
