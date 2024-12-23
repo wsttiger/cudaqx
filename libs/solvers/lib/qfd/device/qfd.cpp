@@ -10,26 +10,23 @@
 
 namespace cudaq {
 
-__qpu__ void U_m(qview<> qubits, 
-		 double dt,
-		 const std::vector<std::complex<double>> &coefficients,
-	         const std::vector<pauli_word> &words) {
+__qpu__ void U_m(qview<> qubits, double dt,
+                 const std::vector<std::complex<double>> &coefficients,
+                 const std::vector<pauli_word> &words) {
   for (std::size_t i = 0; i < coefficients.size(); i++) {
     exp_pauli(dt * std::real(coefficients[i]), qubits, words[i]);
   }
 }
 
-__qpu__ void U_n(qview<> qubits, 
-		 double dt,
-		 const std::vector<std::complex<double>> &coefficients,
-	         const std::vector<pauli_word> &words) {
+__qpu__ void U_n(qview<> qubits, double dt,
+                 const std::vector<std::complex<double>> &coefficients,
+                 const std::vector<pauli_word> &words) {
   for (std::size_t i = 0; i < coefficients.size(); i++) {
     exp_pauli(dt * std::real(coefficients[i]), qubits, words[i]);
   }
 }
 
-__qpu__ void apply_pauli(qview<> qubits, 
-		         const std::vector<int> &word) {
+__qpu__ void apply_pauli(qview<> qubits, const std::vector<int> &word) {
   for (std::size_t i = 0; i < word.size(); i++) {
     if (word[i] == 1) {
       x(qubits[i]);
@@ -43,13 +40,11 @@ __qpu__ void apply_pauli(qview<> qubits,
   }
 }
 
-__qpu__ void
-qfd_kernel(double dt_alpha,
-	   double dt_beta,
-           const std::vector<std::complex<double>> &coefficients,
-	   const std::vector<pauli_word> &words,
-	   const std::vector<int> &word_list,
-           const std::vector<double> &vec) {
+__qpu__ void qfd_kernel(double dt_alpha, double dt_beta,
+                        const std::vector<std::complex<double>> &coefficients,
+                        const std::vector<pauli_word> &words,
+                        const std::vector<int> &word_list,
+                        const std::vector<double> &vec) {
   cudaq::qubit ancilla;
   cudaq::qvector qreg(vec);
   h(ancilla);
