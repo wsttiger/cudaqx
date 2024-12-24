@@ -7,6 +7,7 @@
  ******************************************************************************/
 
 #include "cudaq.h"
+#include "device/qfd.h"
 
 namespace cudaq {
 
@@ -56,4 +57,5 @@ __qpu__ void qfd_kernel(double dt_alpha, double dt_beta,
   control(apply_pauli, ancilla, qreg, word_list);
   control(U_n, ancilla, qreg, dt_beta, coefficients, words);
 }
+
 } // namespace cudaq
