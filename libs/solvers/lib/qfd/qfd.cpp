@@ -90,8 +90,8 @@ auto create_trotterized_krylov_matrix(const cudaq::spin_op& op,
         mat_real += results[0].expectation(); 
         mat_imag += results[1].expectation();
       }
-      // result({m, n}) = std::complex(mat_real, mat_imag);
-      // result({n, m}) = std::conj(result({m,n});
+      result.at({m, n}) = std::complex(mat_real, mat_imag);
+      result.at({n, m}) = std::conj(result.at({m,n}));
     }
   }
   return result;
