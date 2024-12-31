@@ -42,12 +42,12 @@ auto unzip_op(const cudaq::spin_op& op, std::size_t num_qubits) {
   return std::make_tuple(term_coefficients(op), term_words(op));
 }
 
-auto create_trotterized_krylov_matrix(const cudaq::spin_op& op, 
-                                      const cudaq::spin_op& h_op, 
-                                      const std::size_t num_qubits,
-                                      const std::size_t krylov_size,
-                                      const double dt,
-                                      const std::vector<double>& vec) {
+auto create_krylov_subspace_matrix(const cudaq::spin_op& op, 
+                                   const cudaq::spin_op& h_op, 
+                                   const std::size_t num_qubits,
+                                   const std::size_t krylov_dim,
+                                   const double dt,
+                                   const std::vector<double>& vec) {
 
   cudaq::spin_op x_0 = cudaq::spin::x(0);
   cudaq::spin_op y_0 = cudaq::spin::y(0);
@@ -70,8 +70,8 @@ auto create_trotterized_krylov_matrix(const cudaq::spin_op& op,
                    return r;
                  });
 
-  cudaqx::tensor<> result({krylov_size, krylov_size});
-  for (size_t m = 0; m < krylov_size; m++) {
+  cudaqx::tensor<> result({krylov_dim, krylov_dim});
+  for (size_t m = 0; m < krylov_dim; m++) {
     double dt_m = m * dt;
     for (size_t n = 0; n <= m; n++) {
       double dt_n = n * dt;
@@ -98,4 +98,4 @@ auto create_trotterized_krylov_matrix(const cudaq::spin_op& op,
 }
 
 
-} // namespace cudaq::solvers::adapt
+} // namespace cudaq::solvers:qfd:
