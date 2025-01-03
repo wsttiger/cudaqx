@@ -17,6 +17,7 @@
 #include "cudaq/solvers/qaoa.h"
 #include "cudaq/solvers/stateprep/uccsd.h"
 #include "cudaq/solvers/vqe.h"
+#include "cudaq/solvers/qfd.h"
 
 #include "cudaq/solvers/operators/graph/clique.h"
 #include "cudaq/solvers/operators/graph/max_cut.h"
@@ -26,6 +27,7 @@
 
 #include "bindings/utils/kwargs_utils.h"
 #include "bindings/utils/type_casters.h"
+#include "bindings/utils/tensor_ops.h"
 
 namespace py = pybind11;
 
@@ -1096,6 +1098,25 @@ Notes:
       },
       "Generate Clique Hamiltonian from a NetworkX graph", py::arg("graph"),
       py::arg("penalty") = 4.0);
+
+  solvers.def(
+      "identity",
+      [](std::size_t num_qubits) {
+        return cudaq::solvers::qfd::identity(num_qubits);
+      }, R"#(
+Return the identity operator for given number of qubits.
+)#");
+  solvers.def(
+      "create_krylov_subspace_matrix",
+      [](const cudaq::spin_op &op, const cudaq::spin_op& h_op,
+         std::size_t num_qubits, std::size_t krylov_dim, double dt,
+         std::vector<double> vec, py::kwargs options) {
+        heterogeneous_map optOptions;
+        return fromTensor(cudaq::solvers::qfd::create_krylov_subspace_matrix(op, h_op, num_qubits, krylov_dim, dt, vec));
+      }, R"#(
+Foo!!
+)#");
+
 }
 
 } // namespace cudaq::solvers

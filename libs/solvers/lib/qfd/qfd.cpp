@@ -30,7 +30,7 @@ std::vector<cudaq::pauli_word> term_words(cudaq::spin_op op) {
   return result;
 }
 
-auto identity(std::size_t num_qubits) {
+cudaq::spin_op identity(std::size_t num_qubits) {
   cudaq::spin_op identity;
   for (std::size_t i = 0; i < num_qubits; i++) {
     identity *= cudaq::spin::i(i);
@@ -42,12 +42,12 @@ auto unzip_op(const cudaq::spin_op& op, std::size_t num_qubits) {
   return std::make_tuple(term_coefficients(op), term_words(op));
 }
 
-auto create_krylov_subspace_matrix(const cudaq::spin_op& op, 
-                                   const cudaq::spin_op& h_op, 
-                                   const std::size_t num_qubits,
-                                   const std::size_t krylov_dim,
-                                   const double dt,
-                                   const std::vector<double>& vec) {
+cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op, 
+                                               const cudaq::spin_op& h_op, 
+                                               const std::size_t num_qubits,
+                                               const std::size_t krylov_dim,
+                                               const double dt,
+                                               const std::vector<double>& vec) {
 
   cudaq::spin_op x_0 = cudaq::spin::x(0);
   cudaq::spin_op y_0 = cudaq::spin::y(0);
