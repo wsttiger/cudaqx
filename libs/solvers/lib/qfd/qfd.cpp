@@ -42,12 +42,40 @@ auto unzip_op(const cudaq::spin_op& op, std::size_t num_qubits) {
   return std::make_tuple(term_coefficients(op), term_words(op));
 }
 
-std::complex<double>  compute_time_evolved_amplitude(double dt_m, 
-                                                     double dt_n, 
-                                                     const std::vector<std::complex<double>>& h_coefs, 
-                                                     const std::vector<cudaq::pauli_word>& h_words, 
-                                                     const std::vector<std::vector<int>>& op_words_int,
-                                                     const std::vector<double>& vec) {
+std::vector<std::vector<int>> translate_pauli_words_to_ints(const std::vector<cudaq::pauli_word> &words, std::size_t num_qubits) {
+  // Convert the op_words into int's (not sure if this is necessary)
+  std::map<char, int> char_to_int = {{'I', 0}, {'X', 1}, {'Y', 2}, {'Z', 3}};
+  std::vector<std::vector<int>> op_words_int(words.size());
+  std::transform(words.begin(), 
+                 words.end(), 
+                 op_words_int.begin(), 
+                 [&] (const auto& word) {
+                   std::vector<int> r(num_qubits, 0);
+                   for (std::size_t i = 0; i < num_qubits; i++) {
+                     r[i] = char_to_int[word.data()[i]];
+                   }
+                   return r;
+                 });
+  return op_words_int;
+}
+
+cudaq::state time_evolve_state(const cudaq::spin_op &h_op,
+                               const std::size_t num_qubits,
+                               const int order,
+                               const double dt,
+                               const std::vector<double>& vec) {
+  // Pull apart the operator into coef's and words
+  auto [h_coefs, h_words] = unzip_op(h_op, num_qubits);
+  auto state = cudaq::get_state(cudaq::U_t, order, dt, h_coefs, h_words, vec);  
+  return state;
+}
+
+std::complex<double> compute_time_evolved_amplitude(double dt_m, 
+                                                    double dt_n, 
+                                                    const std::vector<std::complex<double>>& h_coefs, 
+                                                    const std::vector<cudaq::pauli_word>& h_words, 
+                                                    const std::vector<std::vector<int>>& op_words_int,
+                                                    const std::vector<double>& vec) {
   cudaq::spin_op x_0 = cudaq::spin::x(0);
   cudaq::spin_op y_0 = cudaq::spin::y(0);
 
@@ -68,6 +96,20 @@ std::complex<double>  compute_time_evolved_amplitude(double dt_m,
   return std::complex(mat_real, mat_imag);
 }
 
+std::complex<double>  compute_time_evolved_amplitude(const cudaq::spin_op& op,
+                                                     const cudaq::spin_op& h_op,
+                                                     const std::size_t num_qubits,
+                                                     const double dt_m,
+                                                     const double dt_n,
+                                                     const std::vector<double>& vec) {
+  // Pull apart the operator into coef's and words
+  auto [op_coefs, op_words] = unzip_op(op, num_qubits);
+  auto [h_coefs, h_words]   = unzip_op(h_op, num_qubits);
+
+  auto op_words_int = translate_pauli_words_to_ints(op_words, num_qubits);
+  return compute_time_evolved_amplitude(dt_m, dt_n, h_coefs, h_words, op_words_int, vec);
+}
+
 cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op, 
                                                const cudaq::spin_op& h_op, 
                                                const std::size_t num_qubits,
@@ -82,19 +124,7 @@ cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op,
   auto [op_coefs, op_words] = unzip_op(op, num_qubits);
   auto [h_coefs, h_words]   = unzip_op(h_op, num_qubits);
 
-  // Convert the op_words into int's (not sure if this is necessary)
-  std::map<char, int> char_to_int = {{'I', 0}, {'X', 1}, {'Y', 2}, {'Z', 3}};
-  std::vector<std::vector<int>> op_words_int(op_words.size());
-  std::transform(op_words.begin(), 
-                 op_words.end(), 
-                 op_words_int.begin(), 
-                 [&] (const auto& word) {
-                   std::vector<int> r(num_qubits, 0);
-                   for (std::size_t i = 0; i < num_qubits; i++) {
-                     r[i] = char_to_int[word.data()[i]];
-                   }
-                   return r;
-                 });
+  auto op_words_int = translate_pauli_words_to_ints(op_words, num_qubits);
 
   cudaqx::tensor<> result({krylov_dim, krylov_dim});
   for (size_t m = 0; m < krylov_dim; m++) {

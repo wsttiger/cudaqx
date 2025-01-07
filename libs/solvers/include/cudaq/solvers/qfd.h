@@ -15,19 +15,29 @@ namespace cudaq::solvers::qfd {
 
 cudaq::spin_op identity(std::size_t num_qubits);
 
-std::complex<double> compute_time_evolved_amplitude(double dt_m, 
-                                                    double dt_n, 
-                                                    const std::vector<std::complex<double>>& h_coefs, 
-                                                    const std::vector<cudaq::pauli_word>& h_words, 
-                                                    const std::vector<std::vector<int>>& op_words_int,
+std::vector<std::complex<double>> time_evolve_state(const cudaq::spin_op &h_op,
+                                                    const std::size_t num_qubits,
+                                                    const double dt,
                                                     const std::vector<double>& vec);
 
-cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op, 
-                                               const cudaq::spin_op& h_op, 
+std::complex<double> compute_time_evolved_amplitude(const cudaq::spin_op& op,
+                                                    const cudaq::spin_op& h_op,
+                                                    const std::size_t num_qubits,
+                                                    const double dt_m,
+                                                    const double dt_n,
+                                                    const std::vector<double>& vec);
+
+cudaq::state time_evolve_state(const cudaq::spin_op &h_op,
+                               const std::size_t num_qubits,
+                               const int order,
+                               const double dt,
+                               const std::vector<double>& vec);
+
+cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op,
+                                               const cudaq::spin_op& h_op,
                                                const std::size_t num_qubits,
                                                const std::size_t krylov_dim,
                                                const double dt,
                                                const std::vector<double>& vec);
-
 } // namespace cudaq::solvers
 

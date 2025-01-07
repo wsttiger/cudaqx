@@ -26,6 +26,20 @@ __qpu__ void U_n(qview<> qubits, double dt,
   }
 }
 
+__qpu__ void U_t(int order,
+                 double dt,
+                 const std::vector<std::complex<double>> &coefficients,
+                 const std::vector<pauli_word> &words,
+                 const std::vector<double> &vec) {
+  cudaq::qvector qreg(vec);
+  double dt2 = dt / order;
+  for (std::size_t o = 0; o < order; o++) {
+    for (std::size_t i = 0; i < coefficients.size(); i++) {
+      exp_pauli(dt2 * std::real(coefficients[i]), qreg, words[i]);
+    }
+  }
+}
+
 __qpu__ void apply_pauli(qview<> qubits, const std::vector<int> &word) {
   for (std::size_t i = 0; i < word.size(); i++) {
     if (word[i] == 1) {

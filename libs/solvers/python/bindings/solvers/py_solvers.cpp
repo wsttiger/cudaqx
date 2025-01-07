@@ -1116,7 +1116,28 @@ Return the identity operator for given number of qubits.
       }, R"#(
 Foo!!
 )#");
-
+  solvers.def(
+      "compute_time_evolved_amplitude",
+      [](const cudaq::spin_op &op, const cudaq::spin_op& h_op,
+         std::size_t num_qubits, double dt_m, double dt_n,
+         std::vector<double> vec, py::kwargs options) {
+        heterogeneous_map optOptions;
+        return cudaq::solvers::qfd::compute_time_evolved_amplitude(op, h_op, num_qubits, dt_m, dt_n, vec);
+      }, R"#(
+Foo!!
+)#");
+  solvers.def(
+      "time_evolve_state",
+      [](const cudaq::spin_op& h_op,
+         std::size_t num_qubits, double dt,
+         std::vector<double> vec, py::kwargs options) {
+        heterogeneous_map optOptions;
+        // TODO: put into options
+        const int order = 1;
+        return cudaq::solvers::qfd::time_evolve_state(h_op, num_qubits, order, dt, vec);
+      }, R"#(
+Foo!!
+)#");
 }
 
 } // namespace cudaq::solvers

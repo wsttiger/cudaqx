@@ -22,6 +22,12 @@ void U_n(qview<> qubits, double dt,
          const std::vector<std::complex<double>> &coefficients,
          const std::vector<pauli_word> &words); 
 
+__qpu__ void U_t(int order,
+                 double dt,
+                 const std::vector<std::complex<double>> &coefficients,
+                 const std::vector<pauli_word> &words,
+                 const std::vector<double> &vec);
+
 void apply_pauli(qview<> qubits, const std::vector<int> &word);
 
 void qfd_kernel(double dt_alpha, double dt_beta,
