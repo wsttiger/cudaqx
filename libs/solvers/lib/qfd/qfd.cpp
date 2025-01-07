@@ -42,6 +42,32 @@ auto unzip_op(const cudaq::spin_op& op, std::size_t num_qubits) {
   return std::make_tuple(term_coefficients(op), term_words(op));
 }
 
+std::complex<double>  compute_time_evolved_amplitude(double dt_m, 
+                                                     double dt_n, 
+                                                     const std::vector<std::complex<double>>& h_coefs, 
+                                                     const std::vector<cudaq::pauli_word>& h_words, 
+                                                     const std::vector<std::vector<int>>& op_words_int,
+                                                     const std::vector<double>& vec) {
+  cudaq::spin_op x_0 = cudaq::spin::x(0);
+  cudaq::spin_op y_0 = cudaq::spin::y(0);
+
+  double mat_real = 0.0;
+  double mat_imag = 0.0;
+  for (std::size_t iword = 0; iword < op_words_int.size(); iword++) {
+    auto results = cudaq::observe(cudaq::qfd_kernel,
+                                  std::vector<cudaq::spin_op>({x_0, y_0}),
+                                  dt_m,
+                                  dt_n,
+                                  h_coefs,
+                                  h_words,
+                                  op_words_int[iword],
+                                  vec);
+    mat_real += results[0].expectation(); 
+    mat_imag += results[1].expectation();
+  }
+  return std::complex(mat_real, mat_imag);
+}
+
 cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op, 
                                                const cudaq::spin_op& h_op, 
                                                const std::size_t num_qubits,
@@ -73,25 +99,12 @@ cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op,
   cudaqx::tensor<> result({krylov_dim, krylov_dim});
   for (size_t m = 0; m < krylov_dim; m++) {
     double dt_m = m * dt;
-    for (size_t n = 0; n <= m; n++) {
+    for (size_t n = 0; n < krylov_dim; n++) {
       double dt_n = n * dt;
-      double mat_real = 0.0;
-      double mat_imag = 0.0;
-      for (std::size_t iword = 0; iword < op_words.size(); iword++) {
-
-        auto results = cudaq::observe(cudaq::qfd_kernel,
-                                      std::vector<cudaq::spin_op>({x_0, y_0}),
-                                      dt_m,
-                                      dt_n,
-                                      h_coefs,
-                                      h_words,
-                                      op_words_int[iword],
-                                      vec);
-        mat_real += results[0].expectation(); 
-        mat_imag += results[1].expectation();
+      result.at({m, n}) = compute_time_evolved_amplitude(dt_m, dt_n, h_coefs, h_words, op_words_int, vec);
+      if (n != m) {
+        result.at({n, m}) = std::conj(result.at({m,n}));
       }
-      result.at({m, n}) = std::complex(mat_real, mat_imag);
-      result.at({n, m}) = std::conj(result.at({m,n}));
     }
   }
   return result;

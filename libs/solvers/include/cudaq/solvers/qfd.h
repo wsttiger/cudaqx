@@ -15,6 +15,13 @@ namespace cudaq::solvers::qfd {
 
 cudaq::spin_op identity(std::size_t num_qubits);
 
+std::complex<double> compute_time_evolved_amplitude(double dt_m, 
+                                                    double dt_n, 
+                                                    const std::vector<std::complex<double>>& h_coefs, 
+                                                    const std::vector<cudaq::pauli_word>& h_words, 
+                                                    const std::vector<std::vector<int>>& op_words_int,
+                                                    const std::vector<double>& vec);
+
 cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op, 
                                                const cudaq::spin_op& h_op, 
                                                const std::size_t num_qubits,
