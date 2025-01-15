@@ -8,7 +8,7 @@ name: "Sync with upstream repository"
 jobs:
   sync:
     name: Get Updates from Upstream
-    if: ${{ github.repository != 'NVIDIA/cudaqx' }}
+    if: ${{ startsWith(github.repository, 'NVIDIA/cudaqx') && github.repository != 'NVIDIA/cudaqx' }}
     runs-on: 'ubuntu-latest'
 
     steps:

@@ -28,6 +28,10 @@ inputs:
     description: 'Check if a cache entry exists without downloading the cache'
     default: 'false'
     required: false
+  platform:
+    description: 'Platform (amd64 or arm64)'
+    default: ''
+    required: true
 outputs:
   found-cache:
     description: 'A boolean value to indicate that a cache entry was found.'
@@ -49,7 +53,7 @@ runs:
           .cudaq_version
       run: |
         hash=${{ hashFiles(format('{0}', env.to_hash)) }}
-        echo "main=cudaq-${{ inputs.ref }}-$hash" >> $GITHUB_OUTPUT
+        echo "main=cudaq-${{ inputs.platform }}-${{ inputs.ref }}-$hash" >> $GITHUB_OUTPUT
         if [[ -n "${{ inputs.pr-number }}" ]]; then
           echo "pr=-pr${{ inputs.pr-number }}" >> $GITHUB_OUTPUT
         fi
@@ -113,7 +117,7 @@ runs:
       with:
         fail-on-cache-miss: false
         path: /cudaq-ccache
-        key: ccache-cudaq
+        key: ccache-cudaq-${{ inputs.platform }}
 
     - name: Install CUDAQ build requirements
       if: steps.check-cache.outputs.valid == 'false' && inputs.lookup-only == 'false'
@@ -143,7 +147,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        gh cache delete ccache-cudaq --repo ${{ github.repository }}
+        gh cache delete ccache-cudaq-${{ inputs.platform }} --repo ${{ github.repository }}
       shell: bash --noprofile --norc -euo pipefail {0}
 
     - name: Store compilation (CCache)
@@ -151,7 +155,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: /cudaq-ccache
-        key: ccache-cudaq
+        key: ccache-cudaq-${{ inputs.platform }}
 
 
     # ==========================================================================
