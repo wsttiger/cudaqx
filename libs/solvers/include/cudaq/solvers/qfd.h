@@ -32,6 +32,7 @@ cudaq::state time_evolve_state(const cudaq::spin_op &h_op,
                                const int order,
                                const double dt,
                                const std::vector<double>& vec);
+                               // const std::vector<std::complex<double>>& vec);
 
 cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op,
                                                const cudaq::spin_op& h_op,

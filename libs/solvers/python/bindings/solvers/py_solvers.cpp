@@ -1131,9 +1131,10 @@ Foo!!
       [](const cudaq::spin_op& h_op,
          std::size_t num_qubits, double dt,
          std::vector<double> vec, py::kwargs options) {
+         // std::vector<std::complex<double>> vec, py::kwargs options) {
         heterogeneous_map optOptions;
         // TODO: put into options
-        const int order = 1;
+        const int order = cudaqx::getValueOr<int>(options, "order", 1);
         return cudaq::solvers::qfd::time_evolve_state(h_op, num_qubits, order, dt, vec);
       }, R"#(
 Foo!!

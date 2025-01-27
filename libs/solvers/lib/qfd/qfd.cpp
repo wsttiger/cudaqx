@@ -66,6 +66,7 @@ cudaq::state time_evolve_state(const cudaq::spin_op &h_op,
                                const std::vector<double>& vec) {
   // Pull apart the operator into coef's and words
   auto [h_coefs, h_words] = unzip_op(h_op, num_qubits);
+
   auto state = cudaq::get_state(cudaq::U_t, order, dt, h_coefs, h_words, vec);  
   return state;
 }
@@ -90,8 +91,6 @@ std::complex<double> compute_time_evolved_amplitude(double dt_m,
                                   h_words,
                                   op_words_int[iword],
                                   vec);
-    mat_real += results[0].expectation(); 
-    mat_imag += results[1].expectation();
   }
   return std::complex(mat_real, mat_imag);
 }
@@ -103,12 +102,49 @@ std::complex<double>  compute_time_evolved_amplitude(const cudaq::spin_op& op,
                                                      const double dt_n,
                                                      const std::vector<double>& vec) {
   // Pull apart the operator into coef's and words
-  auto [op_coefs, op_words] = unzip_op(op, num_qubits);
   auto [h_coefs, h_words]   = unzip_op(h_op, num_qubits);
 
-  auto op_words_int = translate_pauli_words_to_ints(op_words, num_qubits);
-  return compute_time_evolved_amplitude(dt_m, dt_n, h_coefs, h_words, op_words_int, vec);
+  // Set trotter order to 1
+  int order = 20;
+  //
+  // Create vectors for <bra| and |ket>
+  std::size_t vec_size = 1ULL << num_qubits;
+  std::vector<std::complex<double>> ket_vector(vec_size);
+  std::vector<std::complex<double>> bra_vector(vec_size);
+  //
+  // Time evolve |vec> using dt_n and dt_m
+  auto ket_state = cudaq::get_state(cudaq::U_t, order, dt_n, h_coefs, h_words, vec);
+  auto bra_state = cudaq::get_state(cudaq::U_t, order, dt_m, h_coefs, h_words, vec);
+  //
+  // Copy to vectors (this is ugly)
+  for (std::size_t i = 0; i < vec_size; i++) {
+    ket_vector[i] = ket_state[i];
+    bra_vector[i] = bra_state[i];
+  }
+  // Apply op as a matrix (for now)
+  auto op_matrix = op.to_matrix();
+  auto tmp_vector = op_matrix * ket_vector;
+
+  std::complex<double> result(0.0, 0.0);
+  for (int i = 0; i < vec_size; i++) {
+    result += std::conj(bra_vector[i])*tmp_vector.data()[i];
+  }
+  return result;
 }
+
+// std::complex<double>  compute_time_evolved_amplitude(const cudaq::spin_op& op,
+//                                                      const cudaq::spin_op& h_op,
+//                                                      const std::size_t num_qubits,
+//                                                      const double dt_m,
+//                                                      const double dt_n,
+//                                                      const std::vector<double>& vec) {
+//   // Pull apart the operator into coef's and words
+//   auto [op_coefs, op_words] = unzip_op(op, num_qubits);
+//   auto [h_coefs, h_words]   = unzip_op(h_op, num_qubits);
+// 
+//   auto op_words_int = translate_pauli_words_to_ints(op_words, num_qubits);
+//   return compute_time_evolved_amplitude(dt_m, dt_n, h_coefs, h_words, op_words_int, vec);
+// }
 
 cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op, 
                                                const cudaq::spin_op& h_op, 
@@ -116,9 +152,6 @@ cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op,
                                                const std::size_t krylov_dim,
                                                const double dt,
                                                const std::vector<double>& vec) {
-
-  cudaq::spin_op x_0 = cudaq::spin::x(0);
-  cudaq::spin_op y_0 = cudaq::spin::y(0);
 
   // Pull apart the operator into coef's and words
   auto [op_coefs, op_words] = unzip_op(op, num_qubits);
@@ -131,7 +164,7 @@ cudaqx::tensor<> create_krylov_subspace_matrix(const cudaq::spin_op& op,
     double dt_m = m * dt;
     for (size_t n = 0; n < krylov_dim; n++) {
       double dt_n = n * dt;
-      result.at({m, n}) = compute_time_evolved_amplitude(dt_m, dt_n, h_coefs, h_words, op_words_int, vec);
+      result.at({m, n}) = compute_time_evolved_amplitude(op, h_op, num_qubits, dt_m, dt_n, vec);
       if (n != m) {
         result.at({n, m}) = std::conj(result.at({m,n}));
       }

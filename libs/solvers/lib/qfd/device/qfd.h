@@ -14,10 +14,6 @@
 
 namespace cudaq {
 
-void U_m(qview<> qubits, double dt,
-         const std::vector<std::complex<double>> &coefficients,
-         const std::vector<pauli_word> &words); 
-
 void U_n(qview<> qubits, double dt,
          const std::vector<std::complex<double>> &coefficients,
          const std::vector<pauli_word> &words); 
