@@ -67,3 +67,30 @@ def test_time_evolved_krylov_subspace_creation():
 
     # Verify the shape
     assert(B.shape == (256,10))
+
+def test_krylov_overlap_matrix():
+    np.random.seed(12345)
+    num_qubits = 3
+    # Create random hamiltonian
+    H = cudaq.SpinOperator.random(qubit_count=num_qubits, term_count=4)
+    # In this framework, we use the identity operator to compute the overlap matrix
+    identity = solvers.identity(num_qubits)
+    # Set to a reasonably small timestep
+    dt = 1.1
+    
+    # Create random intial vector
+    v0 = np.random.randn(2**num_qubits)
+    v0 = v0 / np.linalg.norm(v0)
+    
+    v = [v0]
+    v.append(np.dot(scipy.linalg.expm(1.0j * H.to_matrix() * dt), v0))
+    v.append(np.dot(scipy.linalg.expm(1.0j * H.to_matrix() * 2*dt), v0))
+    v.append(np.dot(scipy.linalg.expm(1.0j * H.to_matrix() * 3*dt), v0))
+    vvecs = np.zeros((2**num_qubits, 4)).astype(np.complex128)
+    for i in range(4): vvecs[:,i] = v[i]
+    # Overlap matrix computed with numpy
+    Sv = np.dot(np.conj(vvecs.T), vvecs)
+    # Overlap matrix computed w/ (partial) quantum computing (using a really high order for test)
+    Sk = solvers.create_krylov_subspace_matrix(identity, H, num_qubits, 4, dt, v0, order=80)
+    assert(np.max(np.abs(Sv-Sk)) < 0.05)
+

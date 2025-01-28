@@ -1110,9 +1110,10 @@ Return the identity operator for given number of qubits.
       "create_krylov_subspace_matrix",
       [](const cudaq::spin_op &op, const cudaq::spin_op& h_op,
          std::size_t num_qubits, std::size_t krylov_dim, double dt,
-         std::vector<double> vec, py::kwargs options) {
+         std::vector<double> &vec, py::kwargs options) {
         heterogeneous_map optOptions;
-        return fromTensor(cudaq::solvers::qfd::create_krylov_subspace_matrix(op, h_op, num_qubits, krylov_dim, dt, vec));
+        optOptions.insert("order", getValueOr<int>(options, "order", 1));
+        return fromTensor(cudaq::solvers::qfd::create_krylov_subspace_matrix(op, h_op, num_qubits, krylov_dim, dt, vec, optOptions));
       }, R"#(
 Foo!!
 )#");
@@ -1122,7 +1123,8 @@ Foo!!
          std::size_t num_qubits, double dt_m, double dt_n,
          std::vector<double> vec, py::kwargs options) {
         heterogeneous_map optOptions;
-        return cudaq::solvers::qfd::compute_time_evolved_amplitude(op, h_op, num_qubits, dt_m, dt_n, vec);
+        optOptions.insert("order", getValueOr<int>(options, "order", 1));
+        return cudaq::solvers::qfd::compute_time_evolved_amplitude(op, h_op, num_qubits, dt_m, dt_n, vec, optOptions);
       }, R"#(
 Foo!!
 )#");
@@ -1131,11 +1133,9 @@ Foo!!
       [](const cudaq::spin_op& h_op,
          std::size_t num_qubits, double dt,
          std::vector<double> vec, py::kwargs options) {
-         // std::vector<std::complex<double>> vec, py::kwargs options) {
         heterogeneous_map optOptions;
-        // TODO: put into options
-        const int order = cudaqx::getValueOr<int>(options, "order", 1);
-        return cudaq::solvers::qfd::time_evolve_state(h_op, num_qubits, order, dt, vec);
+        optOptions.insert("order", getValueOr<int>(options, "order", 1));
+        return cudaq::solvers::qfd::time_evolve_state(h_op, num_qubits, dt, vec, optOptions);
       }, R"#(
 Foo!!
 )#");
