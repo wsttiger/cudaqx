@@ -1115,7 +1115,45 @@ Return the identity operator for given number of qubits.
         optOptions.insert("order", getValueOr<int>(options, "order", 1));
         return fromTensor(cudaq::solvers::qfd::create_krylov_subspace_matrix(op, h_op, num_qubits, krylov_dim, dt, vec, optOptions));
       }, R"#(
-Foo!!
+Create a Krylov subspace representation of op.
+
+This function creates a representation of op within a Krylov subspace where the 
+Krylov subspace vectors are generated from repeated applications of e^(-I H dt) onto v0.
+
+Parameters:
+-----------
+op : cudaq.SpinOperator
+    The spin operator that we want to represent in the generated Krylov subspace.
+h_op : cudaq.SpinOperator
+    The Hamiltonian used evolve the initial state, v0.
+    Shape should be (N, N, N, N) where N is the number of spin molecular orbitals.
+num_qubits : int
+    The number of qubits. 
+krylov_dim : int
+    The size of the Krylov subspace.
+dt : double 
+    The time to advanced the state.
+v0 : double 
+    The initial state.
+
+Returns:
+--------
+numpy.ndarray
+    A 2D complex Hermitian numpy array that serves as a Krylov subspace representation of op.
+
+Examples:
+---------
+>>> import numpy as np
+>>> num_qubits = 8
+>>> krylov_dim = 10
+>>> H = cudaq.SpinOperator.random(qubit_count=num_qubits, term_count=42)
+>>> dt = 0.01
+>>> v0 = np.random.randn(2**num_qubits)
+>>> v0 = v0 / np.linalg.norm(v0)
+>>> Hk = solvers.create_krylov_subspace_matrix(H, H, num_qubits, krylov_dim, dt, v0, order=80)
+
+Notes:
+------
 )#");
   solvers.def(
       "compute_time_evolved_amplitude",
@@ -1126,6 +1164,45 @@ Foo!!
         optOptions.insert("order", getValueOr<int>(options, "order", 1));
         return cudaq::solvers::qfd::compute_time_evolved_amplitude(op, h_op, num_qubits, dt_m, dt_n, vec, optOptions);
       }, R"#(
+Create a a single matrix element of Krylov subspace representation of op. (USED FOR TESTING)
+
+This function creates a representation of op within a Krylov subspace where the 
+Krylov subspace vectors are generated from repeated applications of e^(-I H dt) onto v0.
+
+Parameters:
+-----------
+op : cudaq.SpinOperator
+    The spin operator that we want to represent in the generated Krylov subspace.
+h_op : cudaq.SpinOperator
+    The Hamiltonian used evolve the initial state, v0.
+    Shape should be (N, N, N, N) where N is the number of spin molecular orbitals.
+num_qubits : int
+    The number of qubits. 
+krylov_dim : int
+    The size of the Krylov subspace.
+dt : double 
+    The time to advanced the state.
+v0 : double 
+    The initial state.
+
+Returns:
+--------
+numpy.ndarray
+    A 2D complex Hermitian numpy array that serves as a Krylov subspace representation of op.
+
+Examples:
+---------
+>>> import numpy as np
+>>> num_qubits = 8
+>>> krylov_dim = 10
+>>> H = cudaq.SpinOperator.random(qubit_count=num_qubits, term_count=42)
+>>> dt = 0.01
+>>> v0 = np.random.randn(2**num_qubits)
+>>> v0 = v0 / np.linalg.norm(v0)
+>>> Hk = solvers.create_krylov_subspace_matrix(H, H, num_qubits, krylov_dim, dt, v0, order=80)
+
+Notes:
+------
 Foo!!
 )#");
   solvers.def(
@@ -1137,7 +1214,40 @@ Foo!!
         optOptions.insert("order", getValueOr<int>(options, "order", 1));
         return cudaq::solvers::qfd::time_evolve_state(h_op, num_qubits, dt, vec, optOptions);
       }, R"#(
-Foo!!
+Perform time-evolution exp(-i*H*t) on an initial state v0 using Hamiltonian, h_op.
+
+Given an initial state, v0, and spin operator H, this function evolves v0 according to exp(-i*H*t).
+
+Parameters:
+-----------
+h_op : cudaq.SpinOperator
+    The Hamiltonian used evolve the initial state, v0.
+    Shape should be (N, N, N, N) where N is the number of spin molecular orbitals.
+num_qubits : int
+    The number of qubits. 
+dt : double 
+    The time to advanced the state.
+v0 : double 
+    The initial state.
+
+Returns:
+--------
+cudaq.State
+    A time-evolved state vector vt that is easily converted to a numpy array.
+
+Examples:
+---------
+>>> import numpy as np
+>>> num_qubits = 8
+>>> krylov_dim = 10
+>>> H = cudaq.SpinOperator.random(qubit_count=num_qubits, term_count=42)
+>>> dt = 0.01
+>>> v0 = np.random.randn(2**num_qubits)
+>>> v0 = v0 / np.linalg.norm(v0)
+>>> Hk = solvers.time_evolve_state(H, num_qubits, dt, v0, order=80)
+
+Notes:
+------
 )#");
 }
 
