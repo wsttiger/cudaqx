@@ -52,7 +52,7 @@ jobs:
       # Do this early to help validate user inputs (if present)
       - name: Fetch assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PACKAGE_TOKEN || github.token }}
         id: fetch-assets
         run: |
           sudo bash .github/workflows/scripts/install_git_cli.sh
