@@ -1,5 +1,5 @@
 # ============================================================================ #
-# Copyright (c) 2024 NVIDIA Corporation & Affiliates.                          #
+# Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                   #
 # All rights reserved.                                                         #
 #                                                                              #
 # This source code and the accompanying materials are made available under     #
@@ -19,7 +19,7 @@ def test_generate_with_default_config():
     assert len(operators) == 2 + 1
 
     for op in operators:
-        assert op.get_qubit_count() == 4
+        assert op.get_qubit_count() <= 4
 
 
 def test_generate_with_custom_coefficients():
@@ -31,7 +31,7 @@ def test_generate_with_custom_coefficients():
     assert len(operators) == (2 + 1)
 
     for i, op in enumerate(operators):
-        assert op.get_qubit_count() == 4
+        assert op.get_qubit_count() <= 4
         expected_coeff = [0.5, 0.125]
         for term in op:
             assert (abs(term.get_coefficient().real) in expected_coeff)
@@ -47,7 +47,7 @@ def test_generate_with_odd_electrons():
     assert len(operators) == 2 * 2 + 4
 
     for op in operators:
-        assert op.get_qubit_count() == 6
+        assert op.get_qubit_count() <= 6
 
 
 def test_generate_with_large_system():
@@ -59,7 +59,7 @@ def test_generate_with_large_system():
     assert len(operators) == 875
 
     for op in operators:
-        assert op.get_qubit_count() == 20
+        assert op.get_qubit_count() <= 20
 
 
 def test_uccsd_operator_pool_correctness():
@@ -69,7 +69,7 @@ def test_uccsd_operator_pool_correctness():
     data_counter = 0
     for op in pool:
         op.for_each_term(lambda term: temp_data[data_counter].append(
-            (term.to_string(False), term.get_coefficient())))
+            (term.get_pauli_word(4), term.get_coefficient())))
         data_counter += 1
 
     # Assert
@@ -105,7 +105,7 @@ def test_uccsd_operator_pool_correctness():
             # Check operator length
             assert len(
                 op_string
-            ) == 4, f"Operator {op_string} does not have the expected length of 4"
+            ) <= 4, f"Operator {op_string} does not have the expected length of <= 4"
             index = expected_operators[i].index(op_string)
 
             assert op_coeff == expected_coefficients[i][index], \

@@ -1,5 +1,5 @@
-/****************************************************************-*- C++ -*-****
- * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
+/*******************************************************************************
+ * Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
@@ -26,7 +26,7 @@ TEST(UCCSDTest, GenerateWithDefaultConfig) {
   EXPECT_EQ(operators.size(), 2 + 1);
 
   for (const auto &op : operators) {
-    EXPECT_EQ(op.num_qubits(), 4);
+    EXPECT_LT(op.max_degree(), 4);
   }
 }
 
@@ -37,7 +37,7 @@ TEST(UCCSDTest, GenerateFromAPIFunction) {
   EXPECT_EQ(operators.size(), 2 + 1);
 
   for (const auto &op : operators) {
-    EXPECT_EQ(op.num_qubits(), 4);
+    EXPECT_LT(op.max_degree(), 4);
   }
 }
 
@@ -54,11 +54,9 @@ TEST(UCCSDTest, GenerateWithCustomCoefficients) {
 
   std::vector<std::complex<double>> temp_coeffs;
   for (size_t i = 0; i < operators.size(); ++i) {
-    EXPECT_EQ(operators[i].num_qubits(), 4);
-
-    operators[i].for_each_term([&](const auto &term) {
-      temp_coeffs.push_back(term.get_coefficient());
-    });
+    EXPECT_LT(operators[i].max_degree(), 4);
+    for (auto &term : operators[i])
+      temp_coeffs.push_back(term.evaluate_coefficient());
   }
 
   for (size_t j = 0; j < temp_coeffs.size(); ++j) {
@@ -83,7 +81,7 @@ TEST(UCCSDTest, GenerateWithOddElectrons) {
   EXPECT_EQ(operators.size(), 2 * 2 + 4);
 
   for (const auto &op : operators)
-    EXPECT_EQ(op.num_qubits(), 6);
+    EXPECT_LT(op.max_degree(), 6);
 }
 
 TEST(UCCSDTest, GenerateWithLargeSystem) {
@@ -98,7 +96,7 @@ TEST(UCCSDTest, GenerateWithLargeSystem) {
   EXPECT_EQ(operators.size(), 875);
 
   for (const auto &op : operators) {
-    EXPECT_EQ(op.num_qubits(), 20);
+    EXPECT_LT(op.max_degree(), 20);
   }
 }
 
@@ -112,61 +110,29 @@ TEST(UccsdOperatorPoolTest, GeneratesCorrectOperators) {
   // Act
   auto operators = pool->generate(config);
 
-  // Convert SpinOperators to strings
-  std::vector<std::vector<std::string>> terms_strings;
-  std::vector<std::vector<std::complex<double>>> coefficients;
-  for (const auto &op : operators) {
-    std::vector<std::complex<double>> temp_coeffs;
-    std::vector<std::string> string_rep;
-    op.for_each_term([&](const auto &term) {
-      string_rep.push_back(term.to_string(false));
-      temp_coeffs.push_back(term.get_coefficient());
-    });
-    terms_strings.push_back(string_rep);
-    coefficients.push_back(temp_coeffs);
-  }
+  // Canonicalize the spin ops to have all the qubits to make comparisons
+  // easier.
+  std::set<std::size_t> s{0, 1, 2, 3};
+  for (auto &op : operators)
+    op.canonicalize(s);
 
-  // Assert
-  std::vector<std::vector<std::string>> expected_operators = {
-      {"XZYI", "YZXI"},
-      {"IXZY", "IYZX"},
-      {"YYYX", "YXXX", "XXYX", "YYXY", "XYYY", "XXXY", "YXYY", "XYXX"}};
+  std::vector<cudaq::spin_op> gold;
+  gold.emplace_back(-0.500 * cudaq::spin_op::from_word("XZYI") +
+                    +0.500 * cudaq::spin_op::from_word("YZXI"));
+  gold.emplace_back(-0.500 * cudaq::spin_op::from_word("IXZY") +
+                    +0.500 * cudaq::spin_op::from_word("IYZX"));
+  gold.emplace_back(-0.125 * cudaq::spin_op::from_word("YYYX") +
+                    -0.125 * cudaq::spin_op::from_word("YXXX") +
+                    +0.125 * cudaq::spin_op::from_word("XXYX") +
+                    -0.125 * cudaq::spin_op::from_word("YYXY") +
+                    +0.125 * cudaq::spin_op::from_word("XYYY") +
+                    +0.125 * cudaq::spin_op::from_word("XXXY") +
+                    +0.125 * cudaq::spin_op::from_word("YXYY") +
+                    -0.125 * cudaq::spin_op::from_word("XYXX"));
 
-  std::vector<std::vector<std::complex<double>>> expected_coefficients = {
-      {std::complex<double>(-0.5, 0), std::complex<double>(0.5, 0)},
-      {std::complex<double>(-0.5, 0), std::complex<double>(0.5, 0)},
-      {std::complex<double>(-0.125, 0), std::complex<double>(-0.125, 0),
-       std::complex<double>(0.125, 0), std::complex<double>(-0.125, 0),
-       std::complex<double>(0.125, 0), std::complex<double>(0.125, 0),
-       std::complex<double>(0.125, 0), std::complex<double>(-0.125, 0)}};
-  EXPECT_EQ(terms_strings.size(), expected_operators.size())
-      << "Number of generated operators does not match expected count";
-
-  for (size_t i = 0; i < expected_operators.size(); ++i) {
-    for (size_t j = 0; j < expected_operators[i].size(); ++j) {
-
-      EXPECT_EQ(expected_operators[i][j].length(), 4)
-          << "Operator " << expected_operators[i][j]
-          << " does not have the expected length of 4";
-
-      EXPECT_EQ(terms_strings[i][j], expected_operators[i][j])
-          << "Mismatch at index " << i << ", " << j;
-      std::cout << coefficients[i][j] << std::endl;
-      std::cout << expected_coefficients[i][j] << std::endl;
-      EXPECT_EQ(coefficients[i][j], expected_coefficients[i][j])
-          << "Mismatch at index " << i << ", " << j;
-    }
-  }
-
-  // Additional checks
-  for (size_t k = 0; k < terms_strings.size(); ++k) {
-    for (size_t l = 0; l < terms_strings[k].size(); ++l) {
-      std::string term_string = terms_strings[k][l];
-      EXPECT_EQ(term_string.size(), 4)
-          << "Operator  " << term_string
-          << " does not have the expected length of 4";
-    }
-  }
+  ASSERT_EQ(gold.size(), operators.size());
+  for (std::size_t i = 0; i < gold.size(); i++)
+    EXPECT_EQ(gold[i], operators[i]) << "Mismatch at index " << i;
 }
 
 TEST(UCCSDTest, GenerateWithInvalidConfig) {

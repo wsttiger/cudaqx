@@ -1,5 +1,5 @@
-/****************************************************************-*- C++ -*-****
- * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
+/*******************************************************************************
+ * Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
@@ -17,7 +17,7 @@ cudaq::spin_op get_maxcut_hamiltonian(const cudaqx::graph &graph) {
     return cudaq::spin_op();
 
   // Initialize empty spin operator
-  cudaq::spin_op hamiltonian(nodes.size());
+  cudaq::spin_op hamiltonian;
 
   // Iterate through all nodes
   for (const auto &u : nodes) {
@@ -32,14 +32,13 @@ cudaq::spin_op get_maxcut_hamiltonian(const cudaqx::graph &graph) {
 
         // For each weighted edge (u,v), add w/2(Z_u Z_v - I) to the Hamiltonian
         // This matches the mathematical form: H = Σ w_ij/2(Z_i Z_j - I)
-        hamiltonian += weight * 0.5 *
-                       (cudaq::spin::z(u) * cudaq::spin::z(v) -
-                        cudaq::spin::i(nodes.size() - 1));
+        hamiltonian +=
+            weight * 0.5 * (cudaq::spin::z(u) * cudaq::spin::z(v) - 1.0);
       }
     }
   }
 
-  return hamiltonian - cudaq::spin_op(nodes.size() - 1);
+  return hamiltonian.canonicalize().trim();
 }
 
 } // namespace cudaq::solvers

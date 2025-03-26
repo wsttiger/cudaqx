@@ -1,5 +1,5 @@
-/****************************************************************-*- C++ -*-****
- * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
+/*******************************************************************************
+ * Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
@@ -65,36 +65,17 @@ simulator::run(const cudaq::qkernel<void(cudaq::qvector<> &)> &initialState,
 
   // Check if operator has only imaginary coefficients
   // checking the first one is enough, we assume the pool is homogeneous
-  const auto &c = pool[0].begin()->get_coefficient();
+  const auto &c = pool[0].begin()->evaluate_coefficient();
   bool isImaginary =
       (std::abs(c.real()) <= 1e-9) && (std::abs(c.imag()) > 1e-9);
   auto coeff = (!isImaginary) ? std::complex<double>{0.0, 1.0}
                               : std::complex<double>{1.0, 0.0};
 
-  auto cleanCommutator =
-      [](cudaq::spin_op commutator) -> std::tuple<cudaq::spin_op, std::size_t> {
-    cudaq::spin_op cleaned;
-    std::size_t numTerms = 0;
-    commutator.for_each_term([&](const auto &term) {
-      if (term.get_coefficient().real() != 0.0 ||
-          term.get_coefficient().imag() != 0.0) {
-        if (numTerms == 0) {
-          cleaned = term;
-          numTerms++;
-        } else {
-          cleaned += term;
-          numTerms++;
-        }
-      }
-    });
-    return std::make_tuple(cleaned, numTerms);
-  };
-
   for (auto &op : pool) {
     auto commutator = H * op - op * H;
-    auto [cleanedCom, numTerms] = cleanCommutator(commutator);
-    if (numTerms > 0)
-      commutators.push_back(coeff * cleanedCom);
+    commutator.canonicalize().trim();
+    if (commutator.num_terms() > 0)
+      commutators.push_back(coeff * commutator);
   }
 
   nlohmann::json initInfo = {{"num-qpus", numQpus},
@@ -211,8 +192,8 @@ simulator::run(const cudaq::qkernel<void(cudaq::qvector<> &)> &initialState,
     thetas.push_back(initTheta);
 
     for (auto o : op) {
-      pauliWords.emplace_back(o.to_string(false));
-      coefficients.push_back(o.get_coefficient().imag());
+      pauliWords.emplace_back(o.get_pauli_word(numQubits));
+      coefficients.push_back(o.evaluate_coefficient().imag());
       poolIndices.push_back(maxOpIdx);
     }
 
