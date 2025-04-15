@@ -9,7 +9,9 @@ CUDA-QX provides multiple installation methods to suit your needs:
 pip install
 ^^^^^^^^^^^^
 
-The simplest way to install CUDA-QX is via pip. You can install individual components:
+The simplest way to install CUDA-QX is via pip. (If you're on Mac, your only
+option is to use the Docker container as described below.) For pip, you can
+install individual components:
 
 .. code-block:: bash
 
@@ -46,6 +48,11 @@ CUDA-QX is available as a Docker container with all dependencies pre-installed:
 .. code-block:: bash
 
     docker run --gpus all -it ghcr.io/nvidia/cudaqx
+
+.. note::
+
+    If your system does not have local GPUs (eg. a MacBook), omit the `--gpus all`
+    argument.
 
 The container includes:
     * CUDA-Q compiler and runtime
