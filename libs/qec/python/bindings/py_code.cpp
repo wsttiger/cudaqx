@@ -75,9 +75,14 @@ public:
           "{...}. Please provide the CUDA-Q kernels for the operation "
           "encodings.");
 
-    // Get the stabilizers
-    m_stabilizers =
-        registeredCode.attr("stabilizers").cast<std::vector<cudaq::spin_op>>();
+    // Get the stabilizers. First convert to spin_op_term's and then convert to
+    // spin_op's.
+    auto stab_terms = registeredCode.attr("stabilizers")
+                          .cast<std::vector<cudaq::spin_op_term>>();
+    m_stabilizers.reserve(stab_terms.size());
+    for (auto &term : stab_terms)
+      m_stabilizers.emplace_back(std::move(term));
+
     // Get the CUDA-Q kernels for the operation encodings
     auto opsDict = registeredCode.attr("operation_encodings").cast<py::dict>();
 
