@@ -7,7 +7,6 @@
  ******************************************************************************/
 #pragma once
 
-#include "common/MeasureCounts.h"
 #include "cudaq/spin_op.h"
 
 #include "cuda-qx/core/graph.h"
