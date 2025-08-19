@@ -761,6 +761,11 @@ Tensor Network Decoder
 
 The ``tensor_network_decoder`` constructs a tensor network representation of a quantum code given its parity check matrix, logical observable(s), and noise model. It can decode individual syndromes or batches of syndromes, returning the probability that a logical observable has flipped.
 
+Due to the additional dependencies of the Tensor Network Decoder, you must
+specify the optional pip package when installing CUDA-Q QEC in order to use this
+decoder. Use `pip install cudaq-qec[tensor-network-decoder]` in order to use
+this decoder.
+
 Key Steps:
 
 1. **Define the parity check matrix**: This matrix encodes the structure of the quantum code. In the example, a simple [3,1] repetition code is used.
@@ -813,6 +818,14 @@ Output:
 
 The decoder returns the probability that the logical observable has flipped for each syndrome. This can be used to assess the performance of the code and the decoder under different error scenarios.
 
+.. note::
+
+    In general, the Tensor Network Decoder has the same GPU support as the
+    `Quantum Low-Density Parity-Check Decoder <https://nvidia.github.io/cudaqx/components/qec/introduction.html#quantum-low-density-parity-check-decoder>`__.
+    However, if you are using the V100 GPU (SM70), you will need to pin your
+    cuTensor version to 2.2 by running `pip install cutensor_cu12==2.2`. Note
+    that this GPU will not be supported by the Tensor Network Decoder when
+    CUDA-Q 0.5.0 is released.
 
 
 Numerical Experiments
