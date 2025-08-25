@@ -134,6 +134,7 @@ jobs:
         fi
 
     - name: Fetch CUDA-Q
+      if: ${{ inputs.force_rebuild || steps.check-image.outputs.IMAGE_EXISTS == 'false' }}
       uses: actions/checkout@v4
       with:
         repository: ${{ steps.get-cudaq-version.outputs.repo }}
@@ -142,6 +143,7 @@ jobs:
         set-safe-directory: true
 
     - name: Build CUDA-Q wheels
+      if: ${{ inputs.force_rebuild || steps.check-image.outputs.IMAGE_EXISTS == 'false' }}
       id: wheel_build
       uses: docker/build-push-action@v5
       with:
