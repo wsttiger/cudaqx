@@ -41,6 +41,32 @@ target_link_libraries(test_qec PRIVATE GTest::gtest_main cudaq-qec cudaq::cudaq)
 add_dependencies(CUDAQXQECUnitTests test_qec)
 gtest_discover_tests(test_qec)
 
+add_executable(test_trt_decoder test_trt_decoder.cpp)
+
+# Find TensorRT for the test
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+    PATHS
+        /scratch/installed/TensorRT-10.13.2.6/include
+        /usr/include/x86_64-linux-gnu
+        /usr/local/cuda/include
+        /usr/local/tensorrt/include
+        /opt/tensorrt/include
+    NO_DEFAULT_PATH
+)
+
+# Add TensorRT include directories if available
+if(TENSORRT_INCLUDE_DIR)
+    target_include_directories(test_trt_decoder PRIVATE 
+        ${TENSORRT_INCLUDE_DIR}
+        /usr/local/cuda-12.0/targets/x86_64-linux/include
+    )
+    # TensorRT is now always available
+endif()
+
+target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq)
+add_dependencies(CUDAQXQECUnitTests test_trt_decoder)
+gtest_discover_tests(test_trt_decoder)
+
 # ==============================================================================
 
 add_subdirectory(backend-specific)
