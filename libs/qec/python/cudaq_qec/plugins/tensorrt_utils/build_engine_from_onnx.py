@@ -1,7 +1,13 @@
 import argparse
 import tensorrt as trt
 
-def build_engine(onnx_file, engine_file, fp16=False, int8=False, workspace_size=1 << 30, max_batch_size=1):
+
+def build_engine(onnx_file,
+                 engine_file,
+                 fp16=False,
+                 int8=False,
+                 workspace_size=1 << 30,
+                 max_batch_size=1):
     logger = trt.Logger(trt.Logger.WARNING)
     builder = trt.Builder(logger)
     network_flags = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
@@ -29,7 +35,9 @@ def build_engine(onnx_file, engine_file, fp16=False, int8=False, workspace_size=
         else:
             config.set_flag(trt.BuilderFlag.INT8)
             # In practice, you'd need a calibrator for INT8
-            print("Note: INT8 requires calibration – using dummy mode for example.")
+            print(
+                "Note: INT8 requires calibration – using dummy mode for example."
+            )
 
     # Build serialized engine
     profile = builder.create_optimization_profile()
@@ -38,8 +46,7 @@ def build_engine(onnx_file, engine_file, fp16=False, int8=False, workspace_size=
 
     # Example dynamic shape support: use batch dimension
     if input_shape[0] == -1:
-        profile.set_shape(input_tensor.name,
-                          (1, *input_shape[1:]),
+        profile.set_shape(input_tensor.name, (1, *input_shape[1:]),
                           (max_batch_size, *input_shape[1:]),
                           (max_batch_size, *input_shape[1:]))
         config.add_optimization_profile(profile)
@@ -56,22 +63,33 @@ def build_engine(onnx_file, engine_file, fp16=False, int8=False, workspace_size=
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Convert ONNX to TensorRT Engine")
+    parser = argparse.ArgumentParser(
+        description="Convert ONNX to TensorRT Engine")
     parser.add_argument("--onnx_file", type=str, help="Path to input ONNX file")
-    parser.add_argument("--engine_file", type=str, help="Path to save TensorRT engine")
-    parser.add_argument("--fp16", action="store_true", help="Enable FP16 precision")
-    parser.add_argument("--int8", action="store_true", help="Enable INT8 precision (needs calibration in practice)")
-    parser.add_argument("--workspace_size", type=int, default=1 << 30, help="Workspace size in bytes (default: 1GB)")
-    parser.add_argument("--batch_size", type=int, default=1, help="Max batch size (default: 1)")
+    parser.add_argument("--engine_file",
+                        type=str,
+                        help="Path to save TensorRT engine")
+    parser.add_argument("--fp16",
+                        action="store_true",
+                        help="Enable FP16 precision")
+    parser.add_argument(
+        "--int8",
+        action="store_true",
+        help="Enable INT8 precision (needs calibration in practice)")
+    parser.add_argument("--workspace_size",
+                        type=int,
+                        default=1 << 30,
+                        help="Workspace size in bytes (default: 1GB)")
+    parser.add_argument("--batch_size",
+                        type=int,
+                        default=1,
+                        help="Max batch size (default: 1)")
 
     args = parser.parse_args()
 
-    build_engine(
-        onnx_file=args.onnx_file,
-        engine_file=args.engine_file,
-        fp16=args.fp16,
-        int8=args.int8,
-        workspace_size=args.workspace_size,
-        max_batch_size=args.batch_size
-    )
-
+    build_engine(onnx_file=args.onnx_file,
+                 engine_file=args.engine_file,
+                 fp16=args.fp16,
+                 int8=args.int8,
+                 workspace_size=args.workspace_size,
+                 max_batch_size=args.batch_size)
