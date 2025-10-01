@@ -12,7 +12,7 @@ jobs:
       matrix:
         platform: ['amd64', 'arm64']
     runs-on: ${{ startsWith(github.repository, 'NVIDIA/cudaqx') && format('linux-{0}-cpu8', matrix.platform) || 'ubuntu-latest' }}
-    container: ghcr.io/nvidia/cuda-quantum-devdeps:ext-${{ matrix.platform }}-cu12.0-gcc11-main
+    container: ghcr.io/nvidia/cuda-quantum-devdeps:ext-${{ matrix.platform }}-cu12.6-gcc11-main
     permissions:
       actions: write
       contents: read
@@ -54,6 +54,14 @@ jobs:
       # ========================================================================
       # Build library
       # ========================================================================
+      - name: Install build requirements
+        run: |
+          apt install -y --no-install-recommends gfortran libblas-dev wget
+          wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/nv-tensorrt-local-repo-ubuntu2404-10.13.3-cuda-12.9_1.0-1_amd64.deb
+          dpkg -i nv-tensorrt-local-repo-ubuntu2404-10.13.3-cuda-12.9_1.0-1_amd64.deb
+          cp /var/nv-tensorrt-local-repo-ubuntu2404-10.13.3-cuda-12.9/nv-tensorrt-local-4B177B4F-keyring.gpg /usr/share/keyrings/
+          apt update
+          apt install -y tensorrt-dev
 
       - name: Build
         id: build
@@ -76,8 +84,15 @@ jobs:
       # ========================================================================
  
       - name: Install python requirements
-        # Note: install tensor_network_decoder's dependencies quimb, opt_einsum, and torch when we advance to Python 3.11
-        run: pip install numpy pytest cupy-cuda12x cuquantum-cu12
+        shell: bash
+        run: |
+          pip install numpy pytest cupy-cuda12x cuquantum-cu12 quimb opt_einsum torch nvidia-cublas-cu12 cuquantum-python-cu12==25.06
+          # The following tests are needed for docs/sphinx/examples/qec/python/tensor_network_decoder.py.
+          if [ "$(uname -m)" == "x86_64" ]; then
+              # Stim is not currently available on manylinux ARM wheels, so only
+              # install for x86_64.
+              pip install stim beliefmatching
+          fi
 
       - name: Run Python tests
         run: cmake --build ${{ steps.build.outputs.build-dir }} --target run_python_tests
