@@ -46,7 +46,6 @@ add_executable(test_trt_decoder test_trt_decoder.cpp)
 # Find TensorRT for the test
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
     PATHS
-        /scratch/installed/TensorRT-10.13.2.6/include
         /usr/include/x86_64-linux-gnu
         /usr/local/cuda/include
         /usr/local/tensorrt/include

@@ -14,7 +14,6 @@ project(${MODULE_NAME})
 
 # Set default TensorRT root if not provided
 if(NOT DEFINED TENSORRT_ROOT)
-    set(TENSORRT_ROOT "/scratch/installed/TensorRT-10.13.2.6" CACHE PATH "Path to TensorRT installation")
     message(STATUS "TENSORRT_ROOT not provided, using default: ${TENSORRT_ROOT}")
 else()
     message(STATUS "Using TENSORRT_ROOT: ${TENSORRT_ROOT}")
