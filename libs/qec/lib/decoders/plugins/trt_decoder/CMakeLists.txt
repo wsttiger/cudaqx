@@ -25,6 +25,8 @@ set(PLUGIN_SRC
   # Add additional source files here as needed
 )
 
+find_package(CUDAToolkit REQUIRED)
+
 # Create the shared library
 add_library(${MODULE_NAME} SHARED ${PLUGIN_SRC})
 
@@ -82,7 +84,7 @@ target_include_directories(${MODULE_NAME}
 if(TENSORRT_INCLUDE_DIR)
     target_include_directories(${MODULE_NAME} PRIVATE 
         ${TENSORRT_INCLUDE_DIR}
-        /usr/local/cuda-12.0/targets/x86_64-linux/include
+        ${CUDAToolkit_INCLUDE_DIRS}
     )
 endif()
 
@@ -101,8 +103,7 @@ if(TENSORRT_LIBRARY AND TENSORRT_ONNX_LIBRARY)
     target_link_libraries(${MODULE_NAME} PRIVATE
         ${TENSORRT_LIBRARY}
         ${TENSORRT_ONNX_LIBRARY}
-        /usr/lib/x86_64-linux-gnu/libcuda.so
-        /usr/local/cuda-12.0/targets/x86_64-linux/lib/libcudart.so
+        CUDA::cudart
     )
 endif()
 
