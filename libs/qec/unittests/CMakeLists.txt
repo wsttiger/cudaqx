@@ -28,6 +28,8 @@ if (CMAKE_COMPILER_IS_GNUCXX
 endif()
 include(GoogleTest)
 
+find_package(CUDAToolkit REQUIRED)
+
 # ==============================================================================
 add_compile_options(-Wno-attributes) 
 
@@ -53,14 +55,9 @@ find_path(TENSORRT_INCLUDE_DIR NvInfer.h
     NO_DEFAULT_PATH
 )
 
-# Add TensorRT include directories if available
-if(TENSORRT_INCLUDE_DIR)
-    target_include_directories(test_trt_decoder PRIVATE 
-        ${TENSORRT_INCLUDE_DIR}
-        /usr/local/cuda-12.0/targets/x86_64-linux/include
-    )
-    # TensorRT is now always available
-endif()
+target_include_directories(test_trt_decoder PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
 
 target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq)
 add_dependencies(CUDAQXQECUnitTests test_trt_decoder)

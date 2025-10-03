@@ -15,12 +15,6 @@
 #include <random>
 #include <vector>
 
-// Include TensorRT headers for the test
-#ifdef TENSORRT_AVAILABLE
-#include <NvInfer.h>
-#include <NvInferRuntime.h>
-#endif
-
 using namespace cudaq::qec;
 using namespace cudaqx;
 
