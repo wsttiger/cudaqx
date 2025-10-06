@@ -43,25 +43,28 @@ target_link_libraries(test_qec PRIVATE GTest::gtest_main cudaq-qec cudaq::cudaq)
 add_dependencies(CUDAQXQECUnitTests test_qec)
 gtest_discover_tests(test_qec)
 
-add_executable(test_trt_decoder test_trt_decoder.cpp)
+# TensorRT decoder test is only built for x86 architectures
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD64|amd64)|(^i.86$)")
+  add_executable(test_trt_decoder test_trt_decoder.cpp)
 
-# Find TensorRT for the test
-find_path(TENSORRT_INCLUDE_DIR NvInfer.h
-    PATHS
-        /usr/include/x86_64-linux-gnu
-        /usr/local/cuda/include
-        /usr/local/tensorrt/include
-        /opt/tensorrt/include
-    NO_DEFAULT_PATH
-)
+  # Find TensorRT for the test
+  find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+      PATHS
+          /usr/include/x86_64-linux-gnu
+          /usr/local/cuda/include
+          /usr/local/tensorrt/include
+          /opt/tensorrt/include
+      NO_DEFAULT_PATH
+  )
 
-target_include_directories(test_trt_decoder PRIVATE
-    ${CUDAToolkit_INCLUDE_DIRS}
-)
+  target_include_directories(test_trt_decoder PRIVATE
+      ${CUDAToolkit_INCLUDE_DIRS}
+  )
 
-target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq)
-add_dependencies(CUDAQXQECUnitTests test_trt_decoder)
-gtest_discover_tests(test_trt_decoder)
+  target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq)
+  add_dependencies(CUDAQXQECUnitTests test_trt_decoder)
+  gtest_discover_tests(test_trt_decoder)
+endif()
 
 # ==============================================================================
 

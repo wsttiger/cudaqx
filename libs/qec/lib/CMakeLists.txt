@@ -24,7 +24,10 @@ add_library(${LIBRARY_NAME} SHARED
 )
 
 add_subdirectory(decoders/plugins/example)
-add_subdirectory(decoders/plugins/trt_decoder)
+# TensorRT decoder is only built for x86 architectures
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD64|amd64)|(^i.86$)")
+  add_subdirectory(decoders/plugins/trt_decoder)
+endif()
 add_subdirectory(codes)
 add_subdirectory(device) 
 
