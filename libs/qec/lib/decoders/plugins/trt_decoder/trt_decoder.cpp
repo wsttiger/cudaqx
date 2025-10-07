@@ -1,11 +1,12 @@
 /*******************************************************************************
- * Copyright (c) 2024 NVIDIA Corporation & Affiliates.                         *
+ * Copyright (c) 2025 NVIDIA Corporation & Affiliates.                         *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
+#include "common/Logger.h"
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/trt_decoder_internal.h"
 #include <cassert>
@@ -25,7 +26,9 @@ public:
   void log(Severity severity, const char *msg) noexcept override {
     // filter out info-level messages
     if (severity <= Severity::kWARNING) {
-      std::cout << "[TensorRT] " << msg << std::endl;
+      CUDAQ_INFO("[TensorRT] {}", msg);
+    } else {
+      CUDAQ_WARN("[TensorRT] {}", msg);
     }
   }
 };
@@ -54,13 +57,13 @@ private:
   // TensorRT-specific members
   std::unique_ptr<nvinfer1::ICudaEngine> engine_;
   std::unique_ptr<nvinfer1::IExecutionContext> context_;
-  int input_index_;
-  int output_index_;
-  int input_size_;
-  int output_size_;
-  void *buffers_[2];
+  int input_index_ = 0;
+  int output_index_ = 0;
+  int input_size_ = 0;
+  int output_size_ = 0;
+  void *buffers_[2] = {nullptr, nullptr};
   cudaStream_t stream_;
-  bool initialized_;
+  bool initialized_ = false;
 
 public:
   trt_decoder(const cudaqx::tensor<uint8_t> &H,
@@ -171,12 +174,8 @@ public:
     try {
       // Preprocess syndrome data for TensorRT input
       // Ensure input size matches expected TensorRT input size
-      std::vector<float> input_host(input_size_, 0.0f);
-      for (std::size_t i = 0;
-           i < syndrome.size() && i < static_cast<std::size_t>(input_size_);
-           i++) {
-        input_host[i] = static_cast<float>(syndrome[i]);
-      }
+      assert(syndrome.size() == input_size_);
+      std::vector<float> input_host(syndrome.begin(), syndrome.end());
 
       // Copy input to GPU
       cudaMemcpy(buffers_[input_index_], input_host.data(),
@@ -273,8 +272,6 @@ public:
       has_fp16_ = true;
     else if (prop.major == 5 && prop.minor == 3)
       has_fp16_ = false;
-    else
-      std::cout << "FP16: NO\n";
 
     // ---- INT8 ----
     if (prop.major > 6 || (prop.major == 6 && prop.minor >= 1))
@@ -353,41 +350,31 @@ void parse_precision(const std::string &precision,
     if (platform.device_has_fp16()) {
       config->setFlag(nvinfer1::BuilderFlag::kFP16);
     } else {
-      std::cerr << "Warning: FP16 requested but not supported on this "
-                   "platform, using FP32"
-                << std::endl;
+      CUDAQ_WARN("Warning: FP16 requested but not supported on this platform, using FP32");
     }
   } else if (precision == "bf16") {
     if (platform.device_has_bf16()) {
       config->setFlag(nvinfer1::BuilderFlag::kBF16);
     } else {
-      std::cerr << "Warning: BF16 requested but not supported on this "
-                   "platform, using FP32"
-                << std::endl;
+      CUDAQ_WARN("Warning: BF16 requested but not supported on this platform, using FP32");
     }
   } else if (precision == "int8") {
     if (platform.device_has_int8()) {
       config->setFlag(nvinfer1::BuilderFlag::kINT8);
     } else {
-      std::cerr << "Warning: INT8 requested but not supported on this "
-                   "platform, using FP32"
-                << std::endl;
+      CUDAQ_WARN("Warning: INT8 requested but not supported on this platform, using FP32");
     }
   } else if (precision == "fp8") {
     if (platform.device_has_fp8()) {
       config->setFlag(nvinfer1::BuilderFlag::kFP8);
     } else {
-      std::cerr << "Warning: FP8 requested but not supported on this platform, "
-                   "using FP32"
-                << std::endl;
+      CUDAQ_WARN("Warning: FP8 requested but not supported on this platform, using FP32");
     }
   } else if (precision == "tf32") {
     if (platform.device_has_tf32()) {
       config->setFlag(nvinfer1::BuilderFlag::kTF32);
     } else {
-      std::cerr << "Warning: TF32 requested but not supported on this "
-                   "platform, using FP32"
-                << std::endl;
+      CUDAQ_WARN("Warning: TF32 requested but not supported on this platform, using FP32");
     }
   } else if (precision == "noTF32") {
     config->setFlag(nvinfer1::BuilderFlag::kDISABLE_TIMING_CACHE);
@@ -398,8 +385,7 @@ void parse_precision(const std::string &precision,
     // Let TensorRT choose the best precision automatically
     // This is the default behavior, no additional flags needed
   } else {
-    std::cerr << "Warning: Unknown precision '" << precision
-              << "', using default (best)" << std::endl;
+    CUDAQ_WARN("Warning: Unknown precision '{}', using default (best)", precision);
   }
 }
 
