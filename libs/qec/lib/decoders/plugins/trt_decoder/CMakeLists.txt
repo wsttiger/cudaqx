@@ -35,6 +35,7 @@ find_path(TENSORRT_INCLUDE_DIR NvInfer.h
     PATHS
         ${TENSORRT_ROOT}/include
         /usr/include/x86_64-linux-gnu
+        /usr/include/aarch64-linux-gnu/
         /usr/local/cuda/include
         /usr/local/tensorrt/include
         /opt/tensorrt/include
