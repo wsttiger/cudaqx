@@ -16,7 +16,6 @@
 #include <vector>
 
 using namespace cudaq::qec;
-using namespace cudaqx;
 
 // Test fixture for TRT decoder tests
 class TRTDecoderTest : public ::testing::Test {
