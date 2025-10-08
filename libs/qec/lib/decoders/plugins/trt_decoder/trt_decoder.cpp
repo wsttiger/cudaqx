@@ -9,6 +9,7 @@
 #include "common/Logger.h"
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/trt_decoder_internal.h"
+#include <algorithm>
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -214,7 +215,7 @@ public:
   }
 
   virtual decoder_result decode(const std::vector<float_t> &syndrome) override {
-    decoder_result result{false, std::vector<float_t>(block_size, 0.0)};
+    decoder_result result{false, std::vector<float_t>(output_size_, 0.0)};
 
     if (!initialized_) {
       // Return unconverged result if not properly initialized
@@ -249,12 +250,9 @@ public:
                                    cudaMemcpyDeviceToHost));
 
       // Postprocess output to get error probabilities
-      // Map output to block_size (number of qubits)
-      result.result.resize(block_size);
-      for (std::size_t i = 0;
-           i < block_size && i < static_cast<std::size_t>(output_size_); i++) {
-        result.result[i] = static_cast<float_t>(output_host[i]);
-      }
+      std::transform(output_host.begin(), output_host.end(),
+                     result.result.begin(),
+                     [](float val) { return static_cast<float_t>(val); });
 
       result.converged = true;
 
