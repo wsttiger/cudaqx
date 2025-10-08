@@ -296,11 +296,12 @@ namespace cudaq::qec::trt_decoder_internal {
 // Hardware platform detection class
 class HardwarePlatform {
 private:
-  bool has_fp16_;
-  bool has_int8_;
-  bool has_bf16_;
-  bool has_tf32_;
-  bool has_fp8_;
+  bool has_fp16_ = false;
+  bool has_int8_ = false;
+  bool has_bf16_ = false;
+  bool has_tf32_ = false;
+  bool has_fp8_ = false;
+  ;
 
 public:
   HardwarePlatform() {
@@ -309,13 +310,6 @@ public:
 
     cudaDeviceProp prop;
     HANDLE_CUDA_ERROR(cudaGetDeviceProperties(&prop, device));
-
-    // Initialize all capabilities to false
-    has_fp16_ = false;
-    has_int8_ = false;
-    has_bf16_ = false;
-    has_tf32_ = false;
-    has_fp8_ = false;
 
     // ---- FP16 ----
     if (prop.major > 6 || (prop.major == 6 && prop.minor >= 0))
