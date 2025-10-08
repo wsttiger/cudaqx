@@ -20,6 +20,54 @@
 #include "NvOnnxParser.h"
 #include "cuda_runtime_api.h"
 
+// Remove the leading path elements from a fully qualified filename
+static inline void trim_filename(std::string &filename) {
+  std::size_t lastSlashPos = filename.find_last_of('/');
+  if (lastSlashPos != std::string::npos)
+    filename = filename.substr(lastSlashPos + 1);
+}
+
+#ifndef cudaCheckError
+#define cudaCheckError()                                                       \
+  do {                                                                         \
+    cudaError_t e = cudaGetLastError();                                        \
+    if (e != cudaSuccess) {                                                    \
+      std::string filename = __FILE__;                                         \
+      trim_filename(filename);                                                 \
+      printf("CUDA ERROR %s:%d: '%s'\n", filename.c_str(), __LINE__,           \
+             cudaGetErrorString(e));                                           \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  } while (0)
+#endif
+
+#ifndef HANDLE_CUDA_ERROR
+#define HANDLE_CUDA_ERROR(x)                                                   \
+  do {                                                                         \
+    const auto err = x;                                                        \
+    if (err != cudaSuccess) {                                                  \
+      std::string filename = __FILE__;                                         \
+      trim_filename(filename);                                                 \
+      printf("CUDA ERROR %s:%d: '%s'\n", filename.c_str(), __LINE__,           \
+             cudaGetErrorString(err));                                         \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  } while (0)
+#endif
+
+#ifndef HANDLE_CUDA_ERROR_NO_THROW
+#define HANDLE_CUDA_ERROR_NO_THROW(x)                                          \
+  do {                                                                         \
+    const auto err = x;                                                        \
+    if (err != cudaSuccess) {                                                  \
+      std::string filename = __FILE__;                                         \
+      trim_filename(filename);                                                 \
+      printf("CUDA ERROR %s:%d: '%s'\n", filename.c_str(), __LINE__,           \
+             cudaGetErrorString(err));                                         \
+    }                                                                          \
+  } while (0)
+#endif
+
 // Logger for TensorRT
 class Logger : public nvinfer1::ILogger {
 public:
@@ -149,16 +197,18 @@ public:
         output_size_ *= outputDims.d[j];
 
       // Allocate GPU buffers
-      cudaMalloc(&buffers_[input_index_], input_size_ * sizeof(float));
-      cudaMalloc(&buffers_[output_index_], output_size_ * sizeof(float));
+      HANDLE_CUDA_ERROR(
+          cudaMalloc(&buffers_[input_index_], input_size_ * sizeof(float)));
+      HANDLE_CUDA_ERROR(
+          cudaMalloc(&buffers_[output_index_], output_size_ * sizeof(float)));
 
       // Create CUDA stream
-      cudaStreamCreate(&stream_);
+      HANDLE_CUDA_ERROR(cudaStreamCreate(&stream_));
 
       initialized_ = true;
 
     } catch (const std::exception &e) {
-      std::cerr << "TensorRT initialization failed: " << e.what() << std::endl;
+      CUDAQ_WARN("TensorRT initialization failed: {}", e.what());
       initialized_ = false;
     }
   }
@@ -178,8 +228,9 @@ public:
       std::vector<float> input_host(syndrome.begin(), syndrome.end());
 
       // Copy input to GPU
-      cudaMemcpy(buffers_[input_index_], input_host.data(),
-                 input_size_ * sizeof(float), cudaMemcpyHostToDevice);
+      HANDLE_CUDA_ERROR(cudaMemcpy(buffers_[input_index_], input_host.data(),
+                                   input_size_ * sizeof(float),
+                                   cudaMemcpyHostToDevice));
 
       // Set tensor addresses for TensorRT V1 API
       context_->setTensorAddress(engine_->getIOTensorName(input_index_),
@@ -189,12 +240,13 @@ public:
 
       // Run inference
       context_->enqueueV3(stream_);
-      cudaStreamSynchronize(stream_);
+      HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream_));
 
       // Copy output back from GPU
       std::vector<float> output_host(output_size_);
-      cudaMemcpy(output_host.data(), buffers_[output_index_],
-                 output_size_ * sizeof(float), cudaMemcpyDeviceToHost);
+      HANDLE_CUDA_ERROR(cudaMemcpy(output_host.data(), buffers_[output_index_],
+                                   output_size_ * sizeof(float),
+                                   cudaMemcpyDeviceToHost));
 
       // Postprocess output to get error probabilities
       // Map output to block_size (number of qubits)
@@ -207,7 +259,7 @@ public:
       result.converged = true;
 
     } catch (const std::exception &e) {
-      std::cerr << "TensorRT inference failed: " << e.what() << std::endl;
+      CUDAQ_WARN("TensorRT inference failed: {}", e.what());
       result.converged = false;
     }
 
@@ -217,9 +269,9 @@ public:
   virtual ~trt_decoder() {
     // Clean up TensorRT resources
     if (initialized_) {
-      cudaStreamDestroy(stream_);
-      cudaFree(buffers_[input_index_]);
-      cudaFree(buffers_[output_index_]);
+      HANDLE_CUDA_ERROR(cudaStreamDestroy(stream_));
+      HANDLE_CUDA_ERROR(cudaFree(buffers_[input_index_]));
+      HANDLE_CUDA_ERROR(cudaFree(buffers_[output_index_]));
       // TensorRT engine and context will be automatically destroyed by
       // unique_ptr
     }
@@ -255,10 +307,10 @@ private:
 public:
   HardwarePlatform() {
     int device;
-    cudaGetDevice(&device);
+    HANDLE_CUDA_ERROR(cudaGetDevice(&device));
 
     cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);
+    HANDLE_CUDA_ERROR(cudaGetDeviceProperties(&prop, device));
 
     // Initialize all capabilities to false
     has_fp16_ = false;
@@ -350,31 +402,36 @@ void parse_precision(const std::string &precision,
     if (platform.device_has_fp16()) {
       config->setFlag(nvinfer1::BuilderFlag::kFP16);
     } else {
-      CUDAQ_WARN("Warning: FP16 requested but not supported on this platform, using FP32");
+      CUDAQ_WARN("Warning: FP16 requested but not supported on this platform, "
+                 "using FP32");
     }
   } else if (precision == "bf16") {
     if (platform.device_has_bf16()) {
       config->setFlag(nvinfer1::BuilderFlag::kBF16);
     } else {
-      CUDAQ_WARN("Warning: BF16 requested but not supported on this platform, using FP32");
+      CUDAQ_WARN("Warning: BF16 requested but not supported on this platform, "
+                 "using FP32");
     }
   } else if (precision == "int8") {
     if (platform.device_has_int8()) {
       config->setFlag(nvinfer1::BuilderFlag::kINT8);
     } else {
-      CUDAQ_WARN("Warning: INT8 requested but not supported on this platform, using FP32");
+      CUDAQ_WARN("Warning: INT8 requested but not supported on this platform, "
+                 "using FP32");
     }
   } else if (precision == "fp8") {
     if (platform.device_has_fp8()) {
       config->setFlag(nvinfer1::BuilderFlag::kFP8);
     } else {
-      CUDAQ_WARN("Warning: FP8 requested but not supported on this platform, using FP32");
+      CUDAQ_WARN("Warning: FP8 requested but not supported on this platform, "
+                 "using FP32");
     }
   } else if (precision == "tf32") {
     if (platform.device_has_tf32()) {
       config->setFlag(nvinfer1::BuilderFlag::kTF32);
     } else {
-      CUDAQ_WARN("Warning: TF32 requested but not supported on this platform, using FP32");
+      CUDAQ_WARN("Warning: TF32 requested but not supported on this platform, "
+                 "using FP32");
     }
   } else if (precision == "noTF32") {
     config->setFlag(nvinfer1::BuilderFlag::kDISABLE_TIMING_CACHE);
@@ -385,7 +442,8 @@ void parse_precision(const std::string &precision,
     // Let TensorRT choose the best precision automatically
     // This is the default behavior, no additional flags needed
   } else {
-    CUDAQ_WARN("Warning: Unknown precision '{}', using default (best)", precision);
+    CUDAQ_WARN("Warning: Unknown precision '{}', using default (best)",
+               precision);
   }
 }
 
@@ -474,7 +532,7 @@ void save_engine_to_file(nvinfer1::ICudaEngine *engine,
   }
   file.close();
 
-  std::cout << "TensorRT engine saved to: " << file_path << std::endl;
+  CUDAQ_INFO("TensorRT engine saved to: {}", file_path);
 }
 
 } // namespace cudaq::qec::trt_decoder_internal
