@@ -6,9 +6,9 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
+#include "trt_test_data.h"
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/trt_decoder_internal.h"
-#include "trt_test_data.h"
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -146,7 +146,8 @@ TEST_F(TRTDecoderTest, ValidateParameters_EdgeCases) {
 }
 
 // Test TRT decoder with generated test data
-// This test validates that the TRT decoder produces identical results to PyTorch
+// This test validates that the TRT decoder produces identical results to
+// PyTorch
 TEST_F(TRTDecoderTest, ValidateAgainstPyTorchModel) {
   // Check if the ONNX model file exists
   std::string onnx_path = "surface_code_decoder.onnx";
@@ -155,12 +156,13 @@ TEST_F(TRTDecoderTest, ValidateAgainstPyTorchModel) {
   }
 
   // Create parity check matrix matching the test data
-  // For distance-3 surface code: 24 detectors (syndromes), block_size matches output
+  // For distance-3 surface code: 24 detectors (syndromes), block_size matches
+  // output
   std::size_t num_detectors = NUM_DETECTORS;
   std::size_t num_observables = NUM_OBSERVABLES;
-  
-  // Create a dummy H matrix (the TRT decoder doesn't actually use it for inference,
-  // but the constructor requires it)
+
+  // Create a dummy H matrix (the TRT decoder doesn't actually use it for
+  // inference, but the constructor requires it)
   cudaqx::tensor<uint8_t> H({num_detectors, num_detectors});
   for (std::size_t i = 0; i < num_detectors; ++i) {
     H.at({i, i}) = 1;
@@ -169,7 +171,7 @@ TEST_F(TRTDecoderTest, ValidateAgainstPyTorchModel) {
   // Create the TRT decoder
   cudaqx::heterogeneous_map params;
   params.insert("onnx_load_path", onnx_path);
-  
+
   std::unique_ptr<decoder> trt_decoder;
   try {
     trt_decoder = decoder::get("trt_decoder", H, params);
@@ -179,7 +181,7 @@ TEST_F(TRTDecoderTest, ValidateAgainstPyTorchModel) {
 
   // Tolerance for floating point comparison
   constexpr float TOLERANCE = 1e-4f;
-  
+
   // Track statistics
   int num_passed = 0;
   int num_failed = 0;
@@ -189,24 +191,25 @@ TEST_F(TRTDecoderTest, ValidateAgainstPyTorchModel) {
   // Test each of the 100 test cases
   for (size_t i = 0; i < TEST_INPUTS.size(); ++i) {
     // Convert test input to the format expected by decoder
-    std::vector<cudaq::qec::float_t> syndrome(TEST_INPUTS[i].begin(), TEST_INPUTS[i].end());
-    
+    std::vector<cudaq::qec::float_t> syndrome(TEST_INPUTS[i].begin(),
+                                              TEST_INPUTS[i].end());
+
     // Run TRT decoder inference
     auto result = trt_decoder->decode(syndrome);
-    
+
     // Get the PyTorch expected output
     float expected_output = TEST_OUTPUTS[i][0];
-    
+
     // Get the TRT decoder output
-    ASSERT_FALSE(result.result.empty()) 
+    ASSERT_FALSE(result.result.empty())
         << "TRT decoder returned empty result for test case " << i;
     float trt_output = result.result[0];
-    
+
     // Compute absolute error
     float error = std::abs(trt_output - expected_output);
     total_error += error;
     max_error = std::max(max_error, error);
-    
+
     // Check if within tolerance
     if (error < TOLERANCE) {
       num_passed++;
@@ -220,23 +223,24 @@ TEST_F(TRTDecoderTest, ValidateAgainstPyTorchModel) {
         std::cout << "  Error:    " << error << std::endl;
       }
     }
-    
+
     // Assert each individual test case
     EXPECT_LT(error, TOLERANCE)
         << "Test case " << i << " failed: "
         << "TRT output (" << trt_output << ") differs from PyTorch output ("
         << expected_output << ") by " << error;
   }
-  
+
   // Print summary statistics
   std::cout << "\n=== TRT Decoder Validation Summary ===" << std::endl;
   std::cout << "Total test cases: " << TEST_INPUTS.size() << std::endl;
   std::cout << "Passed: " << num_passed << std::endl;
   std::cout << "Failed: " << num_failed << std::endl;
   std::cout << "Max error: " << max_error << std::endl;
-  std::cout << "Average error: " << (total_error / TEST_INPUTS.size()) << std::endl;
+  std::cout << "Average error: " << (total_error / TEST_INPUTS.size())
+            << std::endl;
   std::cout << "====================================\n" << std::endl;
-  
+
   // Overall test assertion: all cases must pass
   EXPECT_EQ(num_failed, 0) << num_failed << " test cases failed validation";
 }
@@ -259,7 +263,7 @@ TEST_F(TRTDecoderTest, ValidateSingleTestCase) {
   // Create the TRT decoder
   cudaqx::heterogeneous_map params;
   params.insert("onnx_load_path", onnx_path);
-  
+
   std::unique_ptr<decoder> trt_decoder;
   try {
     trt_decoder = decoder::get("trt_decoder", H, params);
@@ -268,25 +272,27 @@ TEST_F(TRTDecoderTest, ValidateSingleTestCase) {
   }
 
   // Test first case in detail
-  std::vector<cudaq::qec::float_t> syndrome(TEST_INPUTS[0].begin(), TEST_INPUTS[0].end());
-  
+  std::vector<cudaq::qec::float_t> syndrome(TEST_INPUTS[0].begin(),
+                                            TEST_INPUTS[0].end());
+
   std::cout << "Input syndrome (first 10 values): ";
   for (size_t i = 0; i < std::min(size_t(10), syndrome.size()); ++i) {
     std::cout << syndrome[i] << " ";
   }
   std::cout << std::endl;
-  
+
   auto result = trt_decoder->decode(syndrome);
-  
+
   float expected = TEST_OUTPUTS[0][0];
   float actual = result.result[0];
   float error = std::abs(actual - expected);
-  
+
   std::cout << "Expected output: " << expected << std::endl;
   std::cout << "Actual output:   " << actual << std::endl;
   std::cout << "Absolute error:  " << error << std::endl;
-  std::cout << "Converged:       " << (result.converged ? "yes" : "no") << std::endl;
-  
+  std::cout << "Converged:       " << (result.converged ? "yes" : "no")
+            << std::endl;
+
   EXPECT_LT(error, 1e-4f) << "Single test case validation failed";
   EXPECT_TRUE(result.converged) << "Decoder did not converge";
 }

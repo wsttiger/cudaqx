@@ -12,15 +12,13 @@ hidden_dim = 128
 error_prob = 0.001
 
 # Build the same circuit
-circuit = stim.Circuit.generated(
-    "surface_code:rotated_memory_x",
-    distance=distance,
-    rounds=num_rounds,
-    after_clifford_depolarization=error_prob,
-    after_reset_flip_probability=error_prob,
-    before_measure_flip_probability=error_prob,
-    before_round_data_depolarization=error_prob
-)
+circuit = stim.Circuit.generated("surface_code:rotated_memory_x",
+                                 distance=distance,
+                                 rounds=num_rounds,
+                                 after_clifford_depolarization=error_prob,
+                                 after_reset_flip_probability=error_prob,
+                                 before_measure_flip_probability=error_prob,
+                                 before_round_data_depolarization=error_prob)
 
 dem = circuit.detector_error_model()
 num_detectors = dem.num_detectors
@@ -30,7 +28,8 @@ num_test_samples = 200
 sampler = circuit.compile_detector_sampler()
 
 print(f"Generating {num_test_samples} test samples...")
-detector_samples, observable_samples = sampler.sample(num_test_samples, separate_observables=True)
+detector_samples, observable_samples = sampler.sample(num_test_samples,
+                                                      separate_observables=True)
 
 X_test_data = []
 Y_test_data = []
@@ -46,8 +45,10 @@ Y_test = torch.stack(Y_test_data)
 
 num_observables = Y_test.shape[1]
 
+
 # Reconstruct model architecture
 class SurfaceCodeDecoder(nn.Module):
+
     def __init__(self, input_dim, output_dim, hidden_dim=128, dropout=0.3):
         super().__init__()
         self.net = nn.Sequential(
@@ -61,15 +62,17 @@ class SurfaceCodeDecoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, output_dim),
-            nn.Sigmoid()
-        )
+            nn.Sigmoid())
 
     def forward(self, x):
         return self.net(x)
 
+
 # Load the trained model
-model = SurfaceCodeDecoder(input_dim=num_detectors, output_dim=num_observables, 
-                           hidden_dim=hidden_dim, dropout=0.3)
+model = SurfaceCodeDecoder(input_dim=num_detectors,
+                           output_dim=num_observables,
+                           hidden_dim=hidden_dim,
+                           dropout=0.3)
 model.load_state_dict(torch.load("surface_code_decoder_best.pth"))
 model.eval()
 
@@ -94,7 +97,7 @@ with open("trt_test_data.h", "w") as f:
     f.write("\n")
     f.write("// First 100 test cases\n")
     f.write("const std::vector<std::vector<float>> TEST_INPUTS = {\n")
-    
+
     for i in range(min(100, num_test_samples)):
         input_data = X_test[i].numpy()
         f.write("    {")
@@ -103,11 +106,11 @@ with open("trt_test_data.h", "w") as f:
         if i < min(100, num_test_samples) - 1:
             f.write(",")
         f.write("\n")
-    
+
     f.write("};\n")
     f.write("\n")
     f.write("const std::vector<std::vector<float>> TEST_OUTPUTS = {\n")
-    
+
     for i in range(min(100, num_test_samples)):
         output_data = predictions[i].numpy()
         f.write("    {")
@@ -116,7 +119,7 @@ with open("trt_test_data.h", "w") as f:
         if i < min(100, num_test_samples) - 1:
             f.write(",")
         f.write("\n")
-    
+
     f.write("};\n")
 
 print(f"Test data header file generated: trt_test_data.h")

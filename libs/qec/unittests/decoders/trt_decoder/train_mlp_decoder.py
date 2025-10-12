@@ -7,27 +7,25 @@ from torch.utils.data import TensorDataset, DataLoader
 # --------------------------
 # Parameters
 # --------------------------
-distance = 3              # Surface code distance (simpler for demo)
-num_rounds = 3            # Rounds of stabilizer measurements
-num_train_samples = 5000 # Training samples (more data)
-num_val_samples = 1000    # Validation samples
-num_test_samples = 1000   # Test samples
-hidden_dim = 128          # Larger model capacity
-error_prob = 0.18        # Balanced error rate for better learning
+distance = 3  # Surface code distance (simpler for demo)
+num_rounds = 3  # Rounds of stabilizer measurements
+num_train_samples = 5000  # Training samples (more data)
+num_val_samples = 1000  # Validation samples
+num_test_samples = 1000  # Test samples
+hidden_dim = 128  # Larger model capacity
+error_prob = 0.18  # Balanced error rate for better learning
 
 # --------------------------
 # Build the surface code circuit
 # --------------------------
 # Use the built-in Stim surface code generator with noise
-circuit = stim.Circuit.generated(
-    "surface_code:rotated_memory_x",
-    distance=distance,
-    rounds=num_rounds,
-    after_clifford_depolarization=error_prob,
-    after_reset_flip_probability=error_prob,
-    before_measure_flip_probability=error_prob,
-    before_round_data_depolarization=error_prob
-)
+circuit = stim.Circuit.generated("surface_code:rotated_memory_x",
+                                 distance=distance,
+                                 rounds=num_rounds,
+                                 after_clifford_depolarization=error_prob,
+                                 after_reset_flip_probability=error_prob,
+                                 before_measure_flip_probability=error_prob,
+                                 before_round_data_depolarization=error_prob)
 
 # Convert to detector error model
 dem = circuit.detector_error_model()
@@ -41,20 +39,23 @@ print(f"Num data qubits: {num_data_qubits}, Num detectors: {num_detectors}")
 # --------------------------
 sampler = circuit.compile_detector_sampler()
 
+
 def sample_data(num_samples):
     """Sample detector outcomes and observable flips."""
     X_data = []
     Y_data = []
-    
-    detector_samples, observable_samples = sampler.sample(num_samples, separate_observables=True)
-    
+
+    detector_samples, observable_samples = sampler.sample(
+        num_samples, separate_observables=True)
+
     for i in range(num_samples):
         detectors = torch.tensor(detector_samples[i], dtype=torch.float32)
         observable = torch.tensor(observable_samples[i], dtype=torch.float32)
         X_data.append(detectors)
         Y_data.append(observable)
-    
+
     return torch.stack(X_data), torch.stack(Y_data)
+
 
 print(f"Sampling {num_train_samples} training samples...")
 X_train, Y_train = sample_data(num_train_samples)
@@ -71,10 +72,12 @@ print(f"Num observables: {num_observables}")
 print(f"X_test: {X_test}")
 print(f"Y_test: {Y_test}")
 
+
 # --------------------------
 # Improved Torch NN decoder with dropout and deeper architecture
 # --------------------------
 class SurfaceCodeDecoder(nn.Module):
+
     def __init__(self, input_dim, output_dim, hidden_dim=128, dropout=0.3):
         super().__init__()
         self.net = nn.Sequential(
@@ -88,17 +91,21 @@ class SurfaceCodeDecoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, output_dim),
-            nn.Sigmoid()
-        )
+            nn.Sigmoid())
 
     def forward(self, x):
         return self.net(x)
 
-model = SurfaceCodeDecoder(input_dim=num_detectors, output_dim=num_observables, 
-                           hidden_dim=hidden_dim, dropout=0.3)
+
+model = SurfaceCodeDecoder(input_dim=num_detectors,
+                           output_dim=num_observables,
+                           hidden_dim=hidden_dim,
+                           dropout=0.3)
 optimizer = optim.Adam(model.parameters(), lr=5e-4)  # Lower learning rate
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                  factor=0.5, patience=20)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                 mode='min',
+                                                 factor=0.5,
+                                                 patience=20)
 criterion = nn.BCELoss()
 
 # Create DataLoaders for batch training
@@ -107,11 +114,13 @@ val_dataset = TensorDataset(X_val, Y_val)
 train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
 
+
 def compute_accuracy(predictions, targets, threshold=0.5):
     """Compute binary accuracy."""
     pred_binary = (predictions > threshold).float()
     correct = (pred_binary == targets).float().mean()
     return correct.item()
+
 
 # --------------------------
 # Train NN with validation
@@ -119,7 +128,7 @@ def compute_accuracy(predictions, targets, threshold=0.5):
 epochs = 1000  # Train longer for better convergence
 best_val_acc = 0.0
 print("\nTraining started...")
-print("="*70)
+print("=" * 70)
 
 for epoch in range(epochs):
     # Training step with batches
@@ -127,27 +136,27 @@ for epoch in range(epochs):
     train_loss_total = 0.0
     train_correct = 0
     train_total = 0
-    
+
     for batch_X, batch_Y in train_loader:
         optimizer.zero_grad()
         train_output = model(batch_X)
         train_loss = criterion(train_output, batch_Y)
         train_loss.backward()
         optimizer.step()
-        
+
         train_loss_total += train_loss.item() * batch_X.size(0)
         train_correct += ((train_output > 0.5).float() == batch_Y).sum().item()
         train_total += batch_Y.numel()
-    
+
     train_loss_avg = train_loss_total / len(train_loader.dataset)
     train_acc = train_correct / train_total
-    
+
     # Validation step with batches
     model.eval()
     val_loss_total = 0.0
     val_correct = 0
     val_total = 0
-    
+
     cum_ler = 0.0
 
     with torch.no_grad():
@@ -160,7 +169,7 @@ for epoch in range(epochs):
             ler = val_output_binary ^ (batch_Y > 0.5)
             # print(f"loss: {loss.sum().item() / loss.numel()}")
             cum_ler += ler.sum().item()
-            # print(f"val_output_binary: {val_output_binary} ler: {ler} batch_Y: {batch_Y} ") 
+            # print(f"val_output_binary: {val_output_binary} ler: {ler} batch_Y: {batch_Y} ")
 
             # print(f"logical_error_rate (pred): {val_output.sum().item() / val_output.numel()}")
             # print(f"logical_error_rate (raw): {batch_Y.sum().item() / batch_Y.numel()}")
@@ -174,22 +183,23 @@ for epoch in range(epochs):
 
     val_loss_avg = val_loss_total / len(val_loader.dataset)
     val_acc = val_correct / val_total
-    
+
     # Learning rate scheduling
     scheduler.step(val_loss_avg)
-    
+
     # Save best model
     if val_acc > best_val_acc:
         best_val_acc = val_acc
         torch.save(model.state_dict(), "surface_code_decoder_best.pth")
-    
+
     # Print progress every 10 epochs
     if (epoch + 1) % 10 == 0:
-        print(f"Epoch {epoch+1:3d}/{epochs} | "
-              f"Train Loss: {train_loss_avg:.4f} | Train Acc: {train_acc:.4f} | "
-              f"Val Loss: {val_loss_avg:.4f} | Val Acc: {val_acc:.4f}")
+        print(
+            f"Epoch {epoch+1:3d}/{epochs} | "
+            f"Train Loss: {train_loss_avg:.4f} | Train Acc: {train_acc:.4f} | "
+            f"Val Loss: {val_loss_avg:.4f} | Val Acc: {val_acc:.4f}")
 
-print("="*70)
+print("=" * 70)
 print(f"Training complete! Best validation accuracy: {best_val_acc:.4f}")
 
 # --------------------------
@@ -203,37 +213,36 @@ with torch.no_grad():
     test_output = model(X_test)
     test_loss = criterion(test_output, Y_test)
     test_acc = compute_accuracy(test_output, Y_test)
-    
+
     # Additional metrics
     test_pred_binary = (test_output > 0.5).float()
-    
+
     # Count logical errors
     total_actual_errors = Y_test.sum().item()
     total_predicted_errors = test_pred_binary.sum().item()
     correct_predictions = (test_pred_binary == Y_test).sum().item()
     total_predictions = Y_test.numel()
 
-print("="*70)
+print("=" * 70)
 print("TEST SET RESULTS:")
-print("="*70)
+print("=" * 70)
 print(f"Test Loss:                    {test_loss.item():.4f}")
 print(f"Test Accuracy:                {test_acc:.4f} ({test_acc*100:.2f}%)")
-print(f"Correct predictions:          {correct_predictions}/{total_predictions}")
+print(
+    f"Correct predictions:          {correct_predictions}/{total_predictions}")
 print(f"Actual logical errors:        {int(total_actual_errors)}")
 print(f"Predicted logical errors:     {int(total_predicted_errors)}")
-print("="*70)
+print("=" * 70)
 
 # --------------------------
 # Export to ONNX
 # --------------------------
 print("\nExporting model to ONNX...")
-torch.onnx.export(
-    model,
-    X_train[:1],
-    "surface_code_decoder.onnx",
-    input_names=["detectors"],
-    output_names=["data_qubit_probs"],
-    opset_version=17
-)
+torch.onnx.export(model,
+                  X_train[:1],
+                  "surface_code_decoder.onnx",
+                  input_names=["detectors"],
+                  output_names=["data_qubit_probs"],
+                  opset_version=17)
 print("ONNX model saved as surface_code_decoder.onnx")
 print("PyTorch weights saved as surface_code_decoder_best.pth")
