@@ -45,7 +45,7 @@ gtest_discover_tests(test_qec)
 
 # TensorRT decoder test is only built for x86 architectures
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD64|amd64)|(^i.86$)")
-  add_executable(test_trt_decoder test_trt_decoder.cpp)
+  add_executable(test_trt_decoder ./decoders/trt_decoder/test_trt_decoder.cpp)
 
   # Find TensorRT for the test
   find_path(TENSORRT_INCLUDE_DIR NvInfer.h
