@@ -504,11 +504,7 @@ class TestTRTDecoderSetup:
             os.remove(self.test_file_path)
 
 
-@pytest.mark.skipif(
-    IS_ARM,
-    reason=
-    "ARM architecture not supported"
-)
+@pytest.mark.skipif(IS_ARM, reason="ARM architecture not supported")
 class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
     """Tests for TRT decoder parameter validation."""
 
@@ -538,11 +534,7 @@ class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
         assert decoder is not None
 
 
-@pytest.mark.skipif(
-    IS_ARM,
-    reason=
-    "ARM architecture not supported"
-)
+@pytest.mark.skipif(IS_ARM, reason="ARM architecture not supported")
 class TestTRTDecoderFileOperations(TestTRTDecoderSetup):
     """Tests for TRT decoder file loading operations."""
 
@@ -728,11 +720,7 @@ class TestTRTDecoderInference(TestTRTDecoderSetup):
             assert error < TOLERANCE, f"Batch test case {i} failed with error {error}"
 
 
-@pytest.mark.skipif(
-    IS_ARM,
-    reason=
-    "ARM architecture not supported"
-)
+@pytest.mark.skipif(IS_ARM, reason="ARM architecture not supported")
 class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
     """Tests for TRT decoder edge cases. Requires GPU access."""
 
