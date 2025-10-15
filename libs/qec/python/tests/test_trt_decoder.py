@@ -22,6 +22,7 @@ import numpy as np
 import cudaq_qec as qec
 import os
 import tempfile
+import platform
 
 # Test data constants
 NUM_TEST_SAMPLES = 200
@@ -43,7 +44,14 @@ def _is_cuda_available():
         return False
 
 
+def _is_arm_architecture():
+    """Check if the current architecture is ARM."""
+    machine = platform.machine().lower()
+    return any(arch in machine for arch in ['arm', 'aarch64'])
+
+
 CUDA_AVAILABLE = _is_cuda_available()
+IS_ARM = _is_arm_architecture()
 
 # Test inputs - 100 test cases with 24 detectors each
 TEST_INPUTS = [[
@@ -551,8 +559,10 @@ class TestTRTDecoderFileOperations(TestTRTDecoderSetup):
 
 
 @pytest.mark.skipif(
-    not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE,
-    reason="ONNX model file not found or CUDA/GPU not available")
+    not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE or IS_ARM,
+    reason=
+    "ONNX model file not found, CUDA/GPU not available, or ARM architecture not supported"
+)
 class TestTRTDecoderInference(TestTRTDecoderSetup):
     """Tests for TRT decoder inference with actual model.
     
@@ -713,8 +723,10 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
 
     def test_decoder_with_zero_syndrome(self):
         """Test decoder with all-zero syndrome."""
-        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
-            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE or IS_ARM:
+            pytest.skip(
+                "ONNX model file not found, CUDA/GPU not available, or ARM architecture not supported"
+            )
 
         num_detectors = NUM_DETECTORS
         H = np.eye(num_detectors, dtype=np.uint8)
@@ -735,8 +747,10 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
 
     def test_decoder_with_all_ones_syndrome(self):
         """Test decoder with all-ones syndrome."""
-        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
-            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE or IS_ARM:
+            pytest.skip(
+                "ONNX model file not found, CUDA/GPU not available, or ARM architecture not supported"
+            )
 
         num_detectors = NUM_DETECTORS
         H = np.eye(num_detectors, dtype=np.uint8)
