@@ -58,3 +58,6 @@ tensor_network_decoder = [
   "torch",
   "cuquantum-python-cu12==25.06"
 ]
+trt_decoder = [
+  "tensorrt-cu12"
+]
