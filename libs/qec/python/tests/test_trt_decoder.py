@@ -504,6 +504,11 @@ class TestTRTDecoderSetup:
             os.remove(self.test_file_path)
 
 
+@pytest.mark.skipif(
+    IS_ARM,
+    reason=
+    "ARM architecture not supported"
+)
 class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
     """Tests for TRT decoder parameter validation."""
 
@@ -533,6 +538,11 @@ class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
         assert decoder is not None
 
 
+@pytest.mark.skipif(
+    IS_ARM,
+    reason=
+    "ARM architecture not supported"
+)
 class TestTRTDecoderFileOperations(TestTRTDecoderSetup):
     """Tests for TRT decoder file loading operations."""
 
@@ -718,15 +728,18 @@ class TestTRTDecoderInference(TestTRTDecoderSetup):
             assert error < TOLERANCE, f"Batch test case {i} failed with error {error}"
 
 
+@pytest.mark.skipif(
+    IS_ARM,
+    reason=
+    "ARM architecture not supported"
+)
 class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
     """Tests for TRT decoder edge cases. Requires GPU access."""
 
     def test_decoder_with_zero_syndrome(self):
         """Test decoder with all-zero syndrome."""
-        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE or IS_ARM:
-            pytest.skip(
-                "ONNX model file not found, CUDA/GPU not available, or ARM architecture not supported"
-            )
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
 
         num_detectors = NUM_DETECTORS
         H = np.eye(num_detectors, dtype=np.uint8)
@@ -747,10 +760,8 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
 
     def test_decoder_with_all_ones_syndrome(self):
         """Test decoder with all-ones syndrome."""
-        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE or IS_ARM:
-            pytest.skip(
-                "ONNX model file not found, CUDA/GPU not available, or ARM architecture not supported"
-            )
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
 
         num_detectors = NUM_DETECTORS
         H = np.eye(num_detectors, dtype=np.uint8)
