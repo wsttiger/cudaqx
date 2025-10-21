@@ -45,7 +45,14 @@ qec_wheel=$(ls /wheels/cudaq_qec-*-cp${python_version_no_dot}-cp${python_version
 # Install QEC library with tensor network decoder (requires Python >=3.11)
 echo "Installing QEC library with tensor network decoder"
 ${python} -m pip install "${qec_wheel}[tensor_network_decoder]"
-${python} -m pytest -v -s libs/qec/python/tests/
+# Check if CUDA is available
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+  # CUDA available - run all tests
+  ${python} -m pytest -v -s libs/qec/python/tests/
+else
+  # No CUDA - skip TRT decoder tests
+  ${python} -m pytest -v -s libs/qec/python/tests/ --ignore=libs/qec/python/tests/test_trt_decoder.py
+fi
 
 # Solvers library
 # ======================================
