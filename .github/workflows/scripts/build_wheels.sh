@@ -124,8 +124,6 @@ export CUDAQX_SOLVERS_VERSION=$wheels_version
 
 cd libs/qec
 
-echo "TENSORRT_ROOT: /trt_download/TensorRT-10.13.3.9"
-find /trt_download/TensorRT-10.13.3.9 -name "NvInfer.h"
 SKBUILD_CMAKE_ARGS="-DCUDAQ_DIR=$cudaq_prefix/lib/cmake/cudaq;-DTENSORRT_ROOT=/trt_download/TensorRT-10.13.3.9"
 if ! $devdeps; then
   SKBUILD_CMAKE_ARGS+=";-DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/opt/rh/gcc-toolset-11/root/usr/lib/gcc/${ARCH}-redhat-linux/11/"
@@ -136,7 +134,7 @@ $python -m build --wheel
 
 CUDAQ_EXCLUDE_LIST=$(for f in $(find $cudaq_prefix/lib -name "*.so" -printf "%P\n" | sort); do echo "--exclude $f"; done | tr '\n' ' ')
 
-LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$(pwd)/_skbuild/lib" \
+LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$(pwd)/_skbuild/lib:/trt_download/TensorRT-10.13.3.9/lib" \
 $python -m auditwheel -v repair dist/*.whl $CUDAQ_EXCLUDE_LIST \
   --wheel-dir /wheels \
   ${PLAT_STR}
