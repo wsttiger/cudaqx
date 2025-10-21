@@ -63,6 +63,20 @@ jobs:
             build-type: Release
 
     steps:
+      - name: Install TensorRT (x86_64 only)
+        shell: bash
+        if: matrix.platform == 'amd64'
+        run: |
+          mkdir -p /trt_download
+          pushd /trt_download
+          pwd
+          wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/tars/TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
+          tar -zxvf TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
+          pwd
+          popd
+          find /trt_download/TensorRT-10.13.3.9 -name "NvInfer.h"
+          find /trt_download/TensorRT-10.13.3.9 -name "NvInferRuntime.h"
+
       - name: Get code
         uses: actions/checkout@v4
         with:
@@ -96,22 +110,6 @@ jobs:
       - name: Build CUDAQ toolchain
         run: |
           .github/workflows/scripts/build_cudaq.sh --python-version ${{ matrix.python }}
-
-      - name: Install TensorRT (x86_64 only)
-        shell: bash
-        if: matrix.platform == 'amd64'
-        run: |
-          mkdir -p /trt_download
-          pushd /trt_download
-          pwd
-          wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/tars/TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
-          tar -zxvf TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
-          pwd
-          find . -name "NvInfer.h"
-          find . -name "NvInferRuntime.h"
-          ls -la
-          popd
-          pwd
 
       - name: Build CUDA-QX wheels
         env:
