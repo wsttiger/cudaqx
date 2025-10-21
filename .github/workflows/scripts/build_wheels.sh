@@ -124,8 +124,9 @@ export CUDAQX_SOLVERS_VERSION=$wheels_version
 
 cd libs/qec
 
-ls -la /trt_download/TensorRT-10.13.3.9
-SKBUILD_CMAKE_ARGS="-DCUDAQ_DIR=$cudaq_prefix/lib/cmake/cudaq -DTENSORRT_ROOT=/trt_download/TensorRT-10.13.3.9"
+echo "TENSORRT_ROOT: /trt_download/TensorRT-10.13.3.9"
+find /trt_download/TensorRT-10.13.3.9 -name "NvInfer.h"
+SKBUILD_CMAKE_ARGS="-DCUDAQ_DIR=$cudaq_prefix/lib/cmake/cudaq;-DTENSORRT_ROOT=/trt_download/TensorRT-10.13.3.9"
 if ! $devdeps; then
   SKBUILD_CMAKE_ARGS+=";-DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/opt/rh/gcc-toolset-11/root/usr/lib/gcc/${ARCH}-redhat-linux/11/"
 fi
