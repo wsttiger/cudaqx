@@ -103,9 +103,15 @@ jobs:
         run: |
           mkdir -p /trt_download
           pushd /trt_download
+          pwd
           wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/tars/TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
           tar -zxvf TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
+          pwd
+          find . -name "NvInfer.h"
+          find . -name "NvInferRuntime.h"
+          ls -la
           popd
+          pwd
 
       - name: Build CUDA-QX wheels
         env:
