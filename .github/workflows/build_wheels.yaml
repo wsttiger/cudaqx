@@ -63,6 +63,14 @@ jobs:
             build-type: Release
 
     steps:
+      - name: Configure
+        id: config
+        run: |
+          cuda_major=`echo ${{ matrix.cuda_version }} | cut -d . -f1`
+          echo "cuda_major=$cuda_major" >> $GITHUB_OUTPUT
+          tensorrt_version="10.13.3.9"
+          echo "tensorrt_version=$tensorrt_version" >> $GITHUB_OUTPUT
+
       - name: Install TensorRT (x86_64 only)
         shell: bash
         if: matrix.platform == 'amd64'
@@ -70,23 +78,17 @@ jobs:
           mkdir -p /trt_download
           pushd /trt_download
           pwd
-          wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/tars/TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
-          tar -zxvf TensorRT-10.13.3.9.Linux.x86_64-gnu.cuda-12.9.tar.gz
+          wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/tars/TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.x86_64-gnu.cuda-12.9.tar.gz
+          tar -zxvf TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.x86_64-gnu.cuda-12.9.tar.gz
           pwd
           popd
-          find /trt_download/TensorRT-10.13.3.9 -name "NvInfer.h"
-          find /trt_download/TensorRT-10.13.3.9 -name "NvInferRuntime.h"
+          find /trt_download/TensorRT-${{ steps.config.outputs.tensorrt_version }} -name "NvInfer.h"
+          find /trt_download/TensorRT-${{ steps.config.outputs.tensorrt_version }} -name "NvInferRuntime.h"
 
       - name: Get code
         uses: actions/checkout@v4
         with:
           set-safe-directory: true
-
-      - name: Configure
-        id: config
-        run: |
-          cuda_major=`echo ${{ matrix.cuda_version }} | cut -d . -f1`
-          echo "cuda_major=$cuda_major" >> $GITHUB_OUTPUT
 
       # Do this early to help validate user inputs (if present)
       - name: Fetch assets
@@ -137,6 +139,7 @@ jobs:
               --cudaq-prefix /usr/local/cudaq \
               --build-type ${{ inputs.build_type }} \
               --python-version ${{ matrix.python }} \
+              --tensorrt-path /trt_download/TensorRT-${{ steps.config.outputs.tensorrt_version }} \
               --version ${{ inputs.version || '0.99.99' }}
 
       - name: Upload artifact
