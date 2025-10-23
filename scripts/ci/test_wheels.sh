@@ -74,7 +74,7 @@ fi
 
 # Install QEC library with tensor network decoder and trt_decoder (requires Python >=3.11)
 echo "Installing QEC library with tensor network decoder and trt_decoder"
-${python} -m pip install ${FIND_LINKS} "cudaq-qec[all]==${cudaqx_version}"
+${python} -m pip install ${FIND_LINKS} --extra-index-url https://pypi.nvidia.com/ "cudaq-qec[all]==${cudaqx_version}"
 # Check if CUDA is available
 if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
   # CUDA available - run all tests
