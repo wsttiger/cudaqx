@@ -349,11 +349,19 @@ jobs:
         cuda_version: ['12.6', '13.0']
   
     steps:
+
+      - name: Install git for LFS
+        shell: bash
+        run: |
+          apt update
+          apt install -y --no-install-recommends git git-lfs
+
       - name: Get code
         uses: actions/checkout@v4
         with:
           set-safe-directory: true
-  
+          lfs: true # download assets file(s) for TRT tests
+ 
       - name: Configure
         id: config
         run: |
