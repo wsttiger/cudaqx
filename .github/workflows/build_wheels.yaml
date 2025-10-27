@@ -92,7 +92,7 @@ jobs:
           pushd /trt_download
           pwd
           wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/${{ steps.config.outputs.tensorrt_major_version }}/tars/TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.x86_64-gnu.cuda-${{ steps.config.outputs.tensorrt_cuda_version }}.tar.gz
-          tar -zxvf TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.x86_64-gnu.cuda-${{ steps.config.outputs.tensorrt_cuda_major }}.tar.gz
+          tar -zxvf TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.x86_64-gnu.cuda-${{ steps.config.outputs.tensorrt_cuda_version }}.tar.gz
           pwd
           popd
           find /trt_download/TensorRT-${{ steps.config.outputs.tensorrt_version }} -name "NvInfer.h"
@@ -106,7 +106,7 @@ jobs:
           pushd /trt_download
           pwd
           wget https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/${{ steps.config.outputs.tensorrt_major_version }}/tars/TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.aarch64-gnu.cuda-13.0.tar.gz
-          tar -zxvf TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.aarch64-gnu.cuda-13.tar.gz
+          tar -zxvf TensorRT-${{ steps.config.outputs.tensorrt_version }}.Linux.aarch64-gnu.cuda-13.0.tar.gz
           pwd
           popd
           find /trt_download/TensorRT-${{ steps.config.outputs.tensorrt_version }} -name "NvInfer.h"
