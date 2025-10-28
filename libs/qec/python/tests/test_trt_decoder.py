@@ -22,7 +22,6 @@ import numpy as np
 import cudaq_qec as qec
 import os
 import tempfile
-import platform
 
 # Test data constants
 NUM_TEST_SAMPLES = 200
@@ -44,14 +43,7 @@ def _is_cuda_available():
         return False
 
 
-def _is_arm_architecture():
-    """Check if the current architecture is ARM."""
-    machine = platform.machine().lower()
-    return any(arch in machine for arch in ['arm', 'aarch64'])
-
-
 CUDA_AVAILABLE = _is_cuda_available()
-IS_ARM = _is_arm_architecture()
 
 # Test inputs - 100 test cases with 24 detectors each
 TEST_INPUTS = [[
@@ -68,38 +60,6 @@ TEST_INPUTS = [[
                ],
                [
                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-               ],
-               [
-                   0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
                ],
                [
@@ -456,9 +416,8 @@ TEST_INPUTS = [[
                ]]
 
 # Expected outputs from PyTorch model
-TEST_OUTPUTS = [[0.527120], [0.546192], [0.546192], [0.555534], [0.546192],
-                [0.546192], [0.546192], [0.546192], [0.546192], [0.546192],
-                [0.546192], [0.546192], [0.564633], [0.546192], [0.546192],
+TEST_OUTPUTS = [[0.527120], [0.546192], [0.546192], [0.555534], 
+                [0.564633], [0.546192], [0.546192],
                 [0.546192], [0.546192], [0.546192], [0.501822], [0.514081],
                 [0.546192], [0.546192], [0.546192], [0.546192], [0.546192],
                 [0.546192], [0.504422], [0.546192], [0.546192], [0.546192],
@@ -504,7 +463,6 @@ class TestTRTDecoderSetup:
             os.remove(self.test_file_path)
 
 
-@pytest.mark.skipif(IS_ARM, reason="ARM architecture not supported")
 class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
     """Tests for TRT decoder parameter validation."""
 
@@ -534,7 +492,6 @@ class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
         assert decoder is not None
 
 
-@pytest.mark.skipif(IS_ARM, reason="ARM architecture not supported")
 class TestTRTDecoderFileOperations(TestTRTDecoderSetup):
     """Tests for TRT decoder file loading operations."""
 
@@ -561,9 +518,9 @@ class TestTRTDecoderFileOperations(TestTRTDecoderSetup):
 
 
 @pytest.mark.skipif(
-    not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE or IS_ARM,
+    not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE,
     reason=
-    "ONNX model file not found, CUDA/GPU not available, or ARM architecture not supported"
+    "ONNX model file not found or CUDA/GPU not available"
 )
 class TestTRTDecoderInference(TestTRTDecoderSetup):
     """Tests for TRT decoder inference with actual model.
@@ -720,7 +677,6 @@ class TestTRTDecoderInference(TestTRTDecoderSetup):
             assert error < TOLERANCE, f"Batch test case {i} failed with error {error}"
 
 
-@pytest.mark.skipif(IS_ARM, reason="ARM architecture not supported")
 class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
     """Tests for TRT decoder edge cases. Requires GPU access."""
 
