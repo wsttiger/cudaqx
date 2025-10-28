@@ -490,8 +490,7 @@ class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
         # Decoder is created but logs a warning - it won't be usable for inference
         # Create the TRT decoder
         try:
-            decoder = qec.get_decoder('trt_decoder',
-                                       self.H)
+            decoder = qec.get_decoder('trt_decoder', self.H)
             # If decoder is None or doesn't initialize properly, skip these tests
             if decoder is None:
                 pytest.skip(
@@ -499,6 +498,7 @@ class TestTRTDecoderParameterValidation(TestTRTDecoderSetup):
         except (RuntimeError, SystemError, Exception) as e:
             pytest.skip(
                 f"Failed to create TRT decoder (GPU may be unavailable): {e}")
+
 
 class TestTRTDecoderFileOperations(TestTRTDecoderSetup):
     """Tests for TRT decoder file loading operations."""
