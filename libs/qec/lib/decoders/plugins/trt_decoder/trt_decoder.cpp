@@ -74,7 +74,7 @@ class Logger : public nvinfer1::ILogger {
 public:
   void log(Severity severity, const char *msg) noexcept override {
     // filter out info-level messages
-    if (severity <= Severity::kWARNING) {
+    if (severity >= Severity::kWARNING) {
       CUDAQ_INFO("[TensorRT] {}", msg);
     } else {
       CUDAQ_WARN("[TensorRT] {}", msg);
