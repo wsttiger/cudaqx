@@ -124,6 +124,9 @@ public:
       // Validate parameters
       trt_decoder_internal::validate_trt_decoder_parameters(params);
 
+      // Check if CUDA is available
+      check_cuda();
+
       bool has_engine_path = params.contains("engine_load_path");
 
       if (has_engine_path) {
@@ -275,6 +278,20 @@ public:
     }
   }
 
+private:
+  void check_cuda() {
+    int deviceCount = 0;
+    cudaError_t error = cudaGetDeviceCount(&deviceCount);
+    if (error != cudaSuccess || deviceCount == 0) {
+      throw std::runtime_error(
+          "CUDA is not available or no CUDA-capable devices found. "
+          "TensorRT decoder requires CUDA to be installed and at least one "
+          "CUDA-capable GPU. Error: " +
+          std::string(cudaGetErrorString(error)));
+    }
+  }
+
+public:
   CUDAQ_EXTENSION_CUSTOM_CREATOR_FUNCTION(
       trt_decoder, static std::unique_ptr<decoder> create(
                        const cudaqx::tensor<uint8_t> &H,
