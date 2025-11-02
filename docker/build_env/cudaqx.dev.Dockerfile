@@ -19,8 +19,20 @@ LABEL org.opencontainers.image.url="https://github.com/NVIDIA/cudaqx"
 # FIXME: Remove the cmake install once private repos are updated.
 RUN apt-get update && CUDA_DASH=$(echo $cuda_version | tr '.' '-') \
   && apt-get install -y gfortran libblas-dev jq cuda-nvtx-${CUDA_DASH} \
+  && apt-get install -y git-lfs \
   && python3 -m pip install "cmake<4" --user \
   && apt-get autoremove -y --purge && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install tensorrt-dev, unless this is CUDA 12 w/ arm64
+RUN CUDA_MAJOR_VERSION=$(echo $cuda_version | cut -d . -f1); \
+  ARCH="${ARCH:-$(dpkg --print-architecture)}"; \
+  if [ "$CUDA_MAJOR_VERSION" != "12" ] || [ "$ARCH" = "amd64" ]; then \
+    apt-get update \
+    && apt-cache search tensorrt | awk '{print "Package: "$1"\nPin: version *+cuda'${cuda_version}'\nPin-Priority: 1001\n"}' | tee /etc/apt/preferences.d/tensorrt-cuda${cuda_version}.pref > /dev/null \
+    && apt update \
+    && apt-get install -y tensorrt-dev \
+    && apt-get autoremove -y --purge && apt-get clean && rm -rf /var/lib/apt/lists/*; \
+  fi
 
 COPY .cudaq_version /cudaq_version
 
