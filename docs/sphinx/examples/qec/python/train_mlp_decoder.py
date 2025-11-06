@@ -1,3 +1,4 @@
+# [Begin Documentation]
 import stim
 import torch
 import torch.nn as nn
@@ -13,7 +14,7 @@ num_train_samples = 5000  # Training samples (more data)
 num_val_samples = 1000  # Validation samples
 num_test_samples = 1000  # Test samples
 hidden_dim = 128  # Larger model capacity
-error_prob = 0.18  # Balanced error rate for better learning
+error_prob = 0.005 # Balanced error rate for better learning
 
 # --------------------------
 # Build the surface code circuit
@@ -30,7 +31,7 @@ circuit = stim.Circuit.generated("surface_code:rotated_memory_x",
 # Convert to detector error model
 dem = circuit.detector_error_model()
 num_detectors = dem.num_detectors
-num_data_qubits = circuit.num_qubits - num_detectors  # approx
+num_data_qubits = circuit.num_qubits - num_detectors 
 
 print(f"Num data qubits: {num_data_qubits}, Num detectors: {num_detectors}")
 
@@ -68,10 +69,6 @@ X_test, Y_test = sample_data(num_test_samples)
 
 num_observables = Y_train.shape[1]
 print(f"Num observables: {num_observables}")
-
-print(f"X_test: {X_test}")
-print(f"Y_test: {Y_test}")
-
 
 # --------------------------
 # Improved Torch NN decoder with dropout and deeper architecture
@@ -178,8 +175,8 @@ for epoch in range(epochs):
             val_correct += ((val_output > 0.5).float() == batch_Y).sum().item()
             val_total += batch_Y.numel()
 
-    print(f"logical_error_rate (raw): {batch_Y.sum().item() / batch_Y.numel()}")
-    print(f"cum_ler: {cum_ler / len(val_loader.dataset)}")
+    # print(f"logical_error_rate (raw): {batch_Y.sum().item() / batch_Y.numel()}")
+    # print(f"cum_ler: {cum_ler / len(val_loader.dataset)}")
 
     val_loss_avg = val_loss_total / len(val_loader.dataset)
     val_acc = val_correct / val_total
