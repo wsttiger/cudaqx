@@ -14,7 +14,7 @@ num_train_samples = 5000  # Training samples (more data)
 num_val_samples = 1000  # Validation samples
 num_test_samples = 1000  # Test samples
 hidden_dim = 128  # Larger model capacity
-error_prob = 0.005 # Balanced error rate for better learning
+error_prob = 0.005  # Balanced error rate for better learning
 
 # --------------------------
 # Build the surface code circuit
@@ -31,7 +31,7 @@ circuit = stim.Circuit.generated("surface_code:rotated_memory_x",
 # Convert to detector error model
 dem = circuit.detector_error_model()
 num_detectors = dem.num_detectors
-num_data_qubits = circuit.num_qubits - num_detectors 
+num_data_qubits = circuit.num_qubits - num_detectors
 
 print(f"Num data qubits: {num_data_qubits}, Num detectors: {num_detectors}")
 
@@ -69,6 +69,7 @@ X_test, Y_test = sample_data(num_test_samples)
 
 num_observables = Y_train.shape[1]
 print(f"Num observables: {num_observables}")
+
 
 # --------------------------
 # Improved Torch NN decoder with dropout and deeper architecture
