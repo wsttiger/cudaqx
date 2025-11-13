@@ -121,7 +121,7 @@ jobs:
       - name: Install python requirements
         env:
           LD_LIBRARY_PATH: ${{ env.MPI_PATH }}/lib:${{ env.LD_LIBRARY_PATH }}
-        run: pip install numpy pytest cupy-cuda${{ steps.config.outputs.cuda_major }}x cuquantum-cu${{ steps.config.outputs.cuda_major }} torch lightning ml_collections mpi4py transformers quimb opt_einsum torch
+        run: pip install numpy pytest cupy-cuda${{ steps.config.outputs.cuda_major }}x cuquantum-cu${{ steps.config.outputs.cuda_major }} torch onnxscript lightning ml_collections mpi4py transformers quimb opt_einsum 
 
       - name: Run Python tests
         env:

@@ -86,7 +86,7 @@ PyTorch
 
 PyTorch (``torch``) is required for several CUDA-QX features:
 
-* **Tensor Network Decoder**: Used by the QEC library for tensor network-based decoding
+* **Tensor Network Decoder**: Used by the QEC library for tensor network-based decoding (CPU version of PyTorch is sufficient)
 * **GQE Algorithm**: Used by the Solvers library for the Generative Quantum Eigensolver
 * **Training AI Decoders**: Optionally used for training custom neural network decoders (see :ref:`Deploying AI Decoders with TensorRT <deploying-ai-decoders>`)
 
@@ -106,5 +106,5 @@ Alternatively, you can install PyTorch directly. For detailed installation instr
     pip install torch
 
 .. note::
-    CUDA-QX requires PyTorch with CUDA 12.8 or later support. When installing PyTorch, make sure to 
-    select the appropriate CUDA version for your system.
+    Users with NVIDIA Blackwell architecture GPUs require PyTorch with CUDA 12.8 or later support. 
+    When installing PyTorch, make sure to select the appropriate CUDA version for your system.

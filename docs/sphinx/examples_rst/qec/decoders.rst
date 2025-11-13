@@ -271,7 +271,7 @@ Dependencies and Requirements
 The TensorRT decoder requires:
 
 - **TensorRT**: Version 10.13.3.9 or higher
-- **CUDA**: Version 12.0 or higher
+- **CUDA**: Version 12.0 or higher for x86 and 13.0 for ARM.
 - **GPU**: NVIDIA GPU with compute capability 6.0+ (Pascal architecture or newer)
 
 For training:
