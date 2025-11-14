@@ -6,6 +6,14 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 # [Begin Documentation]
+
+import platform
+if platform.machine().lower() in ("arm64", "aarch64"):
+    print(
+        "Warning: stim is not supported on manylinux ARM64/aarch64. Skipping this example..."
+    )
+    sys.exit(0)
+
 import stim
 import torch
 import torch.nn as nn
