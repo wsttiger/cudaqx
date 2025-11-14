@@ -76,13 +76,10 @@ Building from Source
 The instructions for building CUDA-QX from source are maintained on our GitHub
 repository: `Building CUDA-QX from Source <https://github.com/NVIDIA/cudaqx/blob/main/Building.md>`__.
 
-.. _optional-dependencies:
+.. _installing-pytorch:
 
-Optional Dependencies
----------------------
-
-PyTorch
-^^^^^^^
+Installing PyTorch
+------------------
 
 PyTorch (``torch``) is required for several CUDA-QX features:
 

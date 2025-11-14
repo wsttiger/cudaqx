@@ -155,7 +155,7 @@ Training a Neural Network Decoder with PyTorch and Stim
 
 The following example shows how to generate training data using Stim's built-in surface code
 generator, train an MLP decoder with PyTorch, and export the model to ONNX format.
-For instructions on installing PyTorch, see :ref:`Optional Dependencies <optional-dependencies>`.
+For instructions on installing PyTorch, see :ref:`Installing PyTorch <installing-pytorch>`.
 
 .. literalinclude:: ../../examples/qec/python/train_mlp_decoder.py
    :language: python
