@@ -7,6 +7,7 @@
 # ============================================================================ #
 # [Begin Documentation]
 
+import sys
 import platform
 if platform.machine().lower() in ("arm64", "aarch64"):
     print(
