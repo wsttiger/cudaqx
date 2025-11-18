@@ -184,11 +184,10 @@ inference. The decoder can be used in both C++ and Python workflows.
 
       # Create TensorRT decoder from ONNX model
       decoder = qec.get_decoder("trt_decoder", H,
-                                onnx_load_path="surface_code_decoder.onnx",
-                                precision="fp16")
+                                onnx_load_path="ai_decoder.onnx")
 
       # Decode a syndrome
-      syndrome = np.array([1, 0, 1], dtype=np.uint8)
+      syndrome = np.array([1.0, 0.0, 1.0], dtype=np.float32)
       result = decoder.decode(syndrome)
       print(f"Predicted error: {result}")
 
@@ -196,27 +195,37 @@ inference. The decoder can be used in both C++ and Python workflows.
 
    .. code-block:: cpp
 
-      #include <cudaq/qec.h>
+      #include "cudaq/qec/decoder.h"
+      #include "cuda-qx/core/tensor.h"
+      #include "cuda-qx/core/heterogeneous_map.h"
 
       int main() {
           // Note: The AI decoder doesn't use the parity check matrix.
           // A placeholder matrix is provided here to satisfy the API.
-          std::vector<std::vector<uint8_t>> H = {
+          std::vector<std::vector<uint8_t>> H_vec = {
               {1, 0, 0, 1, 0, 1, 1},
               {0, 1, 0, 1, 1, 0, 1},
               {0, 0, 1, 0, 1, 1, 1}
           };
+          
+          // Convert to tensor
+          cudaqx::tensor<uint8_t> H({3, 7});
+          for (size_t i = 0; i < 3; ++i) {
+              for (size_t j = 0; j < 7; ++j) {
+                  H.at({i, j}) = H_vec[i][j];
+              }
+          }
 
           // Create decoder parameters
-          cudaq::heterogeneous_map params;
-          params.insert("onnx_load_path", "surface_code_decoder.onnx");
+          cudaqx::heterogeneous_map params;
+          params.insert("onnx_load_path", "ai_decoder.onnx");
           params.insert("precision", "fp16");
 
           // Create TensorRT decoder
           auto decoder = cudaq::qec::get_decoder("trt_decoder", H, params);
 
           // Decode syndrome
-          std::vector<uint8_t> syndrome = {1, 0, 1};
+          std::vector<cudaq::qec::float_t> syndrome = {1.0, 0.0, 1.0};
           auto result = decoder->decode(syndrome);
 
           return 0;
