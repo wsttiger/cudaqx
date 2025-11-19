@@ -113,7 +113,7 @@ private:
   void *buffers_[2] = {nullptr, nullptr};
   cudaStream_t stream_;
   bool initialized_ = false;
-  
+
   // CUDA graph members for optimized inference
   bool cuda_graph_captured_ = false;
   cudaGraph_t cuda_graph_;
@@ -244,9 +244,10 @@ public:
       // First call: capture CUDA graph for optimized subsequent inference
       if (!cuda_graph_captured_) {
         CUDAQ_INFO("Capturing CUDA graph for TensorRT inference optimization");
-        
+
         // Begin CUDA graph capture
-        HANDLE_CUDA_ERROR(cudaStreamBeginCapture(stream_, cudaStreamCaptureModeGlobal));
+        HANDLE_CUDA_ERROR(
+            cudaStreamBeginCapture(stream_, cudaStreamCaptureModeGlobal));
 
         // Set tensor addresses for TensorRT V1 API
         context_->setTensorAddress(engine_->getIOTensorName(input_index_),
@@ -261,7 +262,8 @@ public:
         HANDLE_CUDA_ERROR(cudaStreamEndCapture(stream_, &cuda_graph_));
 
         // Create executable graph instance
-        HANDLE_CUDA_ERROR(cudaGraphInstantiate(&cuda_graph_exec_, cuda_graph_, 0));
+        HANDLE_CUDA_ERROR(
+            cudaGraphInstantiate(&cuda_graph_exec_, cuda_graph_, 0));
 
         cuda_graph_captured_ = true;
         CUDAQ_INFO("CUDA graph captured successfully");
@@ -302,7 +304,7 @@ public:
       HANDLE_CUDA_ERROR(cudaGraphExecDestroy(cuda_graph_exec_));
       HANDLE_CUDA_ERROR(cudaGraphDestroy(cuda_graph_));
     }
-    
+
     // Clean up TensorRT resources
     if (initialized_) {
       HANDLE_CUDA_ERROR(cudaStreamDestroy(stream_));
