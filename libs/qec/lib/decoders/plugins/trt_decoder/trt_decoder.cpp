@@ -113,6 +113,11 @@ private:
   void *buffers_[2] = {nullptr, nullptr};
   cudaStream_t stream_;
   bool initialized_ = false;
+  
+  // CUDA graph members for optimized inference
+  bool cuda_graph_captured_ = false;
+  cudaGraph_t cuda_graph_;
+  cudaGraphExec_t cuda_graph_exec_;
 
 public:
   trt_decoder(const cudaqx::tensor<uint8_t> &H,
@@ -236,15 +241,39 @@ public:
                                    input_size_ * sizeof(float),
                                    cudaMemcpyHostToDevice));
 
-      // Set tensor addresses for TensorRT V1 API
-      context_->setTensorAddress(engine_->getIOTensorName(input_index_),
-                                 buffers_[input_index_]);
-      context_->setTensorAddress(engine_->getIOTensorName(output_index_),
-                                 buffers_[output_index_]);
+      // First call: capture CUDA graph for optimized subsequent inference
+      if (!cuda_graph_captured_) {
+        CUDAQ_INFO("Capturing CUDA graph for TensorRT inference optimization");
+        
+        // Begin CUDA graph capture
+        HANDLE_CUDA_ERROR(cudaStreamBeginCapture(stream_, cudaStreamCaptureModeGlobal));
 
-      // Run inference
-      context_->enqueueV3(stream_);
-      HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream_));
+        // Set tensor addresses for TensorRT V1 API
+        context_->setTensorAddress(engine_->getIOTensorName(input_index_),
+                                   buffers_[input_index_]);
+        context_->setTensorAddress(engine_->getIOTensorName(output_index_),
+                                   buffers_[output_index_]);
+
+        // Run inference (this will be captured in the graph)
+        context_->enqueueV3(stream_);
+
+        // End CUDA graph capture
+        HANDLE_CUDA_ERROR(cudaStreamEndCapture(stream_, &cuda_graph_));
+
+        // Create executable graph instance
+        HANDLE_CUDA_ERROR(cudaGraphInstantiate(&cuda_graph_exec_, cuda_graph_, 0));
+
+        cuda_graph_captured_ = true;
+        CUDAQ_INFO("CUDA graph captured successfully");
+
+        // Execute the newly captured graph for the first inference
+        HANDLE_CUDA_ERROR(cudaGraphLaunch(cuda_graph_exec_, stream_));
+        HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream_));
+      } else {
+        // Subsequent calls: execute the captured CUDA graph
+        HANDLE_CUDA_ERROR(cudaGraphLaunch(cuda_graph_exec_, stream_));
+        HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream_));
+      }
 
       // Copy output back from GPU
       std::vector<float> output_host(output_size_);
@@ -268,6 +297,12 @@ public:
   }
 
   virtual ~trt_decoder() {
+    // Clean up CUDA graph resources
+    if (cuda_graph_captured_) {
+      HANDLE_CUDA_ERROR(cudaGraphExecDestroy(cuda_graph_exec_));
+      HANDLE_CUDA_ERROR(cudaGraphDestroy(cuda_graph_));
+    }
+    
     // Clean up TensorRT resources
     if (initialized_) {
       HANDLE_CUDA_ERROR(cudaStreamDestroy(stream_));
