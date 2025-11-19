@@ -82,13 +82,14 @@
           (defaults to 1). Ignored unless `use_osd` is true.
         - `osd_order` (int): OSD postprocessor order (defaults to 0). Ref:
           `Decoding Across the Quantum LDPC Code Landscape <https://arxiv.org/pdf/2005.07016>`_
-            - For `osd_method=2` (Exhaustive), the number of possible
-              permutations searched after OSD-0 grows by 2^osd_order.
-            - For `osd_method=3` (Combination Sweep), this is the λ parameter. All
-              weight 1 permutations and the first λ bits worth of weight 2
-              permutations are searched after OSD-0. This is (syndrome_length -
-              block_size + λ * (λ - 1) / 2) additional permutations.
-            - For other `osd_method` values, this is ignored.
+
+          - For `osd_method=2` (Exhaustive), the number of possible
+            permutations searched after OSD-0 grows by 2^osd_order.
+          - For `osd_method=3` (Combination Sweep), this is the λ parameter. All
+            weight 1 permutations and the first λ bits worth of weight 2
+            permutations are searched after OSD-0. This is (syndrome_length -
+            block_size + λ * (λ - 1) / 2) additional permutations.
+          - For other `osd_method` values, this is ignored.
         - `bp_batch_size` (int): Number of syndromes that will be decoded in
           parallel for the BP decoder (defaults to 1)
         - `osd_batch_size` (int): Number of syndromes that will be decoded in
@@ -113,6 +114,8 @@
         - `scale_factor` (float): The scale factor to use for min-sum. Defaults to 1.0.
           When set to 0.0, the scale factor is dynamically computed based on the
           number of iterations. Introduced in 0.4.0.
+        - `proc_float` (string): The processing float type to use. Defaults to
+          "fp64". Valid values are "fp32" and "fp64". Introduced in 0.5.0.
         - `gamma0` (float): Memory strength parameter. Required for `bp_method=2`, and for
           `composition=1` (sequential relay). Introduced in 0.5.0.
         - `gamma_dist` (vector<float>): Gamma distribution interval [min, max] for disordered
