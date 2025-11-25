@@ -352,7 +352,7 @@ TEST_F(TRTDecoderTest, PerformanceComparisonCudaGraphVsTraditional) {
   // =========================================================================
   const int warmup_iterations = 5;
   std::cout << "\n=== Warming up decoders ===" << std::endl;
-  
+
   for (int i = 0; i < warmup_iterations; ++i) {
     decoder_cuda_graph->decode(syndrome);
     decoder_traditional->decode(syndrome);
@@ -363,49 +363,57 @@ TEST_F(TRTDecoderTest, PerformanceComparisonCudaGraphVsTraditional) {
   // =========================================================================
   const int benchmark_iterations = 200;
   std::cout << "Benchmarking CUDA Graph executor..." << std::endl;
-  
+
   auto start_cuda_graph = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < benchmark_iterations; ++i) {
     auto result = decoder_cuda_graph->decode(syndrome);
-    ASSERT_TRUE(result.converged) << "CUDA graph decoder failed at iteration " << i;
+    ASSERT_TRUE(result.converged)
+        << "CUDA graph decoder failed at iteration " << i;
   }
   auto end_cuda_graph = std::chrono::high_resolution_clock::now();
-  
-  auto duration_cuda_graph = std::chrono::duration_cast<std::chrono::microseconds>(
-      end_cuda_graph - start_cuda_graph);
-  double avg_time_cuda_graph = duration_cuda_graph.count() / 
-                               static_cast<double>(benchmark_iterations);
+
+  auto duration_cuda_graph =
+      std::chrono::duration_cast<std::chrono::microseconds>(end_cuda_graph -
+                                                            start_cuda_graph);
+  double avg_time_cuda_graph =
+      duration_cuda_graph.count() / static_cast<double>(benchmark_iterations);
 
   // =========================================================================
   // Benchmark Traditional Executor
   // =========================================================================
   std::cout << "Benchmarking Traditional executor..." << std::endl;
-  
+
   auto start_traditional = std::chrono::high_resolution_clock::now();
   for (int i = 0; i < benchmark_iterations; ++i) {
     auto result = decoder_traditional->decode(syndrome);
-    ASSERT_TRUE(result.converged) << "Traditional decoder failed at iteration " << i;
+    ASSERT_TRUE(result.converged)
+        << "Traditional decoder failed at iteration " << i;
   }
   auto end_traditional = std::chrono::high_resolution_clock::now();
-  
-  auto duration_traditional = std::chrono::duration_cast<std::chrono::microseconds>(
-      end_traditional - start_traditional);
-  double avg_time_traditional = duration_traditional.count() / 
-                                static_cast<double>(benchmark_iterations);
+
+  auto duration_traditional =
+      std::chrono::duration_cast<std::chrono::microseconds>(end_traditional -
+                                                            start_traditional);
+  double avg_time_traditional =
+      duration_traditional.count() / static_cast<double>(benchmark_iterations);
 
   // =========================================================================
   // Calculate and report performance improvement
   // =========================================================================
   double speedup = avg_time_traditional / avg_time_cuda_graph;
-  double improvement_percent = ((avg_time_traditional - avg_time_cuda_graph) / 
-                                avg_time_traditional) * 100.0;
+  double improvement_percent =
+      ((avg_time_traditional - avg_time_cuda_graph) / avg_time_traditional) *
+      100.0;
 
   std::cout << "\n=== Performance Comparison Results ===" << std::endl;
   std::cout << "Iterations: " << benchmark_iterations << std::endl;
-  std::cout << "CUDA Graph avg time:   " << avg_time_cuda_graph << " μs" << std::endl;
-  std::cout << "Traditional avg time:  " << avg_time_traditional << " μs" << std::endl;
+  std::cout << "CUDA Graph avg time:   " << avg_time_cuda_graph << " μs"
+            << std::endl;
+  std::cout << "Traditional avg time:  " << avg_time_traditional << " μs"
+            << std::endl;
   std::cout << "Speedup:               " << speedup << "x" << std::endl;
-  std::cout << "Improvement:           " << improvement_percent << "%" << std::endl;
+  std::cout << "Improvement:           " << improvement_percent << "%"
+            << std::endl;
   std::cout << "======================================\n" << std::endl;
 
   // =========================================================================
@@ -413,15 +421,18 @@ TEST_F(TRTDecoderTest, PerformanceComparisonCudaGraphVsTraditional) {
   // =========================================================================
   // CUDA graphs should provide at least 5% improvement
   // (Conservative threshold - typical improvement is 10-20%)
-  EXPECT_GT(speedup, 1.05) 
+  EXPECT_GT(speedup, 1.05)
       << "CUDA graph execution should be at least 5% faster than traditional. "
-      << "Speedup: " << speedup << "x, Improvement: " << improvement_percent << "%";
-  
+      << "Speedup: " << speedup << "x, Improvement: " << improvement_percent
+      << "%";
+
   // Sanity check: both should be reasonably fast (< 100ms per decode)
-  EXPECT_LT(avg_time_cuda_graph, 100000.0) 
-      << "CUDA graph execution unexpectedly slow: " << avg_time_cuda_graph << " μs";
-  EXPECT_LT(avg_time_traditional, 100000.0) 
-      << "Traditional execution unexpectedly slow: " << avg_time_traditional << " μs";
+  EXPECT_LT(avg_time_cuda_graph, 100000.0)
+      << "CUDA graph execution unexpectedly slow: " << avg_time_cuda_graph
+      << " μs";
+  EXPECT_LT(avg_time_traditional, 100000.0)
+      << "Traditional execution unexpectedly slow: " << avg_time_traditional
+      << " μs";
 }
 
 // Note: Constructor tests and parse_precision tests are disabled because they
