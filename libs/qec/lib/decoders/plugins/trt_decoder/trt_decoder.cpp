@@ -194,18 +194,28 @@ bool supports_cuda_graphs(const nvinfer1::ICudaEngine *engine) {
 
 class trt_decoder : public decoder {
 private:
-  // Forward declaration of implementation
+  // Forward declaration, of implementation
   struct Impl;
   std::unique_ptr<Impl> impl_;
 
   // True when decoder is fully configured and ready for inference
   bool decoder_ready_ = false;
 
+  // Batch dimension from TensorRT model (first dimension of input tensor)
+  size_t model_batch_size_ = 1;
+  
+  // Per-sample sizes (without batch dimension)
+  size_t syndrome_size_per_sample_ = 0;
+  size_t output_size_per_sample_ = 0;
+
 public:
   trt_decoder(const cudaqx::tensor<uint8_t> &H,
               const cudaqx::heterogeneous_map &params);
 
   virtual decoder_result decode(const std::vector<float_t> &syndrome) override;
+  
+  virtual std::vector<decoder_result>
+  decode_batch(const std::vector<std::vector<float_t>> &syndromes) override;
 
   virtual ~trt_decoder();
 
@@ -339,15 +349,34 @@ trt_decoder::trt_decoder(const cudaqx::tensor<uint8_t> &H,
 
     auto inputDims = impl_->engine->getTensorShape(
         impl_->engine->getIOTensorName(impl_->input_index));
+    
+    // Extract batch size from first dimension
+    // If first dimension is -1, it's dynamic (not supported for batching)
+    if (inputDims.nbDims > 0 && inputDims.d[0] > 0) {
+      model_batch_size_ = static_cast<size_t>(inputDims.d[0]);
+    } else {
+      model_batch_size_ = 1;
+    }
+    
+    // Calculate total input size and per-sample size
     impl_->input_size = 1;
     for (int j = 0; j < inputDims.nbDims; ++j)
       impl_->input_size *= inputDims.d[j];
+    
+    syndrome_size_per_sample_ = impl_->input_size / model_batch_size_;
 
     auto outputDims = impl_->engine->getTensorShape(
         impl_->engine->getIOTensorName(impl_->output_index));
     impl_->output_size = 1;
     for (int j = 0; j < outputDims.nbDims; ++j)
       impl_->output_size *= outputDims.d[j];
+    
+    output_size_per_sample_ = impl_->output_size / model_batch_size_;
+    
+    CUDAQ_INFO("TensorRT model configuration: batch_size={}, "
+               "syndrome_size_per_sample={}, output_size_per_sample={}",
+               model_batch_size_, syndrome_size_per_sample_, 
+               output_size_per_sample_);
 
     // Allocate GPU buffers
     HANDLE_CUDA_ERROR(cudaMalloc(&impl_->buffers[impl_->input_index],
@@ -397,46 +426,121 @@ trt_decoder::trt_decoder(const cudaqx::tensor<uint8_t> &H,
 }
 
 decoder_result trt_decoder::decode(const std::vector<float_t> &syndrome) {
-  decoder_result result{false, std::vector<float_t>(impl_->output_size, 0.0)};
+  // Validate syndrome size
+  if (syndrome.size() != syndrome_size_per_sample_) {
+    throw std::runtime_error(
+        "Syndrome size mismatch: expected " + 
+        std::to_string(syndrome_size_per_sample_) + 
+        " but got " + std::to_string(syndrome.size()));
+  }
+  
+  // decode() is for single syndrome decoding and only works with batch_size=1 models
+  if (model_batch_size_ != 1) {
+    throw std::runtime_error(
+        "decode() is only supported for models with batch_size=1. "
+        "This model has batch_size=" + std::to_string(model_batch_size_) + 
+        ". Please use decode_batch() with " + std::to_string(model_batch_size_) + 
+        " syndromes at a time.");
+  }
+  
+  // Delegate to decode_batch with single syndrome
+  auto results = decode_batch({syndrome});
+  return results[0];
+}
 
+std::vector<decoder_result>
+trt_decoder::decode_batch(const std::vector<std::vector<float_t>> &syndromes) {
+  // Validate that we have syndromes to decode
+  if (syndromes.empty()) {
+    return {};
+  }
+  
+  // Validate all syndrome sizes match expected size
+  for (size_t i = 0; i < syndromes.size(); ++i) {
+    if (syndromes[i].size() != syndrome_size_per_sample_) {
+      throw std::runtime_error(
+          "Syndrome size mismatch at index " + std::to_string(i) + 
+          ": expected " + std::to_string(syndrome_size_per_sample_) + 
+          " but got " + std::to_string(syndromes[i].size()));
+    }
+  }
+  
+  // Check if number of syndromes is an integral multiple of batch size
+  if (syndromes.size() % model_batch_size_ != 0) {
+    throw std::runtime_error(
+        "Number of syndromes (" + std::to_string(syndromes.size()) + 
+        ") must be an integral multiple of the model batch size (" + 
+        std::to_string(model_batch_size_) + ")");
+  }
+  
   if (!decoder_ready_) {
-    // Return unconverged result if decoder is not ready
-    return result;
+    // Return unconverged results if decoder is not ready
+    std::vector<decoder_result> results(syndromes.size());
+    for (auto& result : results) {
+      result.converged = false;
+      result.result.resize(output_size_per_sample_, 0.0);
+    }
+    return results;
   }
-
+  
+  std::vector<decoder_result> results;
+  results.reserve(syndromes.size());
+  
   try {
-    // Preprocess syndrome data for TensorRT input
-    // Ensure input size matches expected TensorRT input size
-    assert(syndrome.size() == impl_->input_size);
-    std::vector<float> input_host(syndrome.begin(), syndrome.end());
-
-    // Copy input to GPU
-    HANDLE_CUDA_ERROR(
-        cudaMemcpy(impl_->buffers[impl_->input_index], input_host.data(),
-                   impl_->input_size * sizeof(float), cudaMemcpyHostToDevice));
-
-    // Execute inference (variant handles both traditional and CUDA graph paths)
-    impl_->execute_inference();
-
-    // Copy output back from GPU
-    std::vector<float> output_host(impl_->output_size);
-    HANDLE_CUDA_ERROR(
-        cudaMemcpy(output_host.data(), impl_->buffers[impl_->output_index],
-                   impl_->output_size * sizeof(float), cudaMemcpyDeviceToHost));
-
-    // Postprocess output to get error probabilities
-    std::transform(output_host.begin(), output_host.end(),
-                   result.result.begin(),
-                   [](float val) { return static_cast<float_t>(val); });
-
-    result.converged = true;
-
+    // Process syndromes in batches of model_batch_size_
+    for (size_t batch_start = 0; batch_start < syndromes.size(); 
+         batch_start += model_batch_size_) {
+      
+      // Prepare input buffer with current batch
+      std::vector<float> input_host(impl_->input_size);
+      for (size_t batch_idx = 0; batch_idx < model_batch_size_; ++batch_idx) {
+        const auto& syndrome = syndromes[batch_start + batch_idx];
+        for (size_t i = 0; i < syndrome_size_per_sample_; ++i) {
+          input_host[batch_idx * syndrome_size_per_sample_ + i] = 
+              static_cast<float>(syndrome[i]);
+        }
+      }
+      
+      // Copy input to GPU
+      HANDLE_CUDA_ERROR(
+          cudaMemcpy(impl_->buffers[impl_->input_index], input_host.data(),
+                     impl_->input_size * sizeof(float), cudaMemcpyHostToDevice));
+      
+      // Execute inference
+      impl_->execute_inference();
+      
+      // Copy output back from GPU
+      std::vector<float> output_host(impl_->output_size);
+      HANDLE_CUDA_ERROR(
+          cudaMemcpy(output_host.data(), impl_->buffers[impl_->output_index],
+                     impl_->output_size * sizeof(float), cudaMemcpyDeviceToHost));
+      
+      // Extract results for each syndrome in the batch
+      for (size_t batch_idx = 0; batch_idx < model_batch_size_; ++batch_idx) {
+        decoder_result result;
+        result.converged = true;
+        result.result.resize(output_size_per_sample_);
+        
+        // Extract output for this batch index
+        std::transform(
+            output_host.begin() + batch_idx * output_size_per_sample_,
+            output_host.begin() + (batch_idx + 1) * output_size_per_sample_,
+            result.result.begin(),
+            [](float val) { return static_cast<float_t>(val); });
+        
+        results.push_back(std::move(result));
+      }
+    }
+    
   } catch (const std::exception &e) {
-    CUDAQ_WARN("TensorRT inference failed: {}", e.what());
-    result.converged = false;
+    CUDAQ_WARN("TensorRT batch inference failed: {}", e.what());
+    // Mark all results as unconverged
+    for (auto& result : results) {
+      result.converged = false;
+    }
   }
-
-  return result;
+  
+  return results;
 }
 
 trt_decoder::~trt_decoder() = default;

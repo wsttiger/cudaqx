@@ -470,5 +470,172 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
         assert len(result.result) > 0
 
 
+class TestTRTDecoderBatchValidation(TestTRTDecoderSetup):
+    """Tests for TRT decoder batch size validation. Requires GPU access."""
+
+    def test_decode_batch_non_integral_multiple_should_fail(self):
+        """Test that decode_batch fails when syndrome count is not an integral multiple of batch size."""
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+
+        # We need to figure out what the batch size is first
+        # Most models have batch size 1, 2, 4, 8, 16, etc.
+        # We'll test with various syndrome counts that are likely non-integral
+        
+        # Test with 3 syndromes (not divisible by 2, 4, 8, etc.)
+        syndromes = TEST_INPUTS[:3]
+        
+        # Get the actual batch size from the model by introspection
+        # We'll try decoding and see if it fails
+        try:
+            # First, let's try with 1 - this should always work
+            results_1 = self.decoder.decode_batch(TEST_INPUTS[:1])
+            assert len(results_1) == 1, "Single syndrome batch should work"
+            
+            # Try with 2 - should work for batch_size 1 or 2
+            results_2 = self.decoder.decode_batch(TEST_INPUTS[:2])
+            assert len(results_2) == 2, "Two syndrome batch should work"
+            
+            # Try with 3 - should fail for batch_size 2, 4, 8, etc but work for batch_size 1
+            try:
+                results_3 = self.decoder.decode_batch(TEST_INPUTS[:3])
+                # If we get here, batch_size is likely 1
+                assert len(results_3) == 3
+                print("Batch size appears to be 1 (3 syndromes succeeded)")
+                
+                # For batch_size 1, all counts work, so we can't test non-integral error
+                pytest.skip("Model has batch_size=1, cannot test non-integral batch error")
+                
+            except RuntimeError as e:
+                # Good! This means batch_size > 1 and 3 is not a multiple
+                assert "integral multiple" in str(e), \
+                    f"Expected 'integral multiple' error message, got: {e}"
+                print(f"Successfully caught non-integral batch size error: {e}")
+                
+        except Exception as e:
+            pytest.fail(f"Unexpected error during batch validation test: {e}")
+
+    def test_decode_batch_with_batch_size_2_model(self):
+        """Test batch decoding with various counts to find and validate batch size."""
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+
+        # Try to determine batch size by testing different syndrome counts
+        test_counts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        working_counts = []
+        failing_counts = []
+        
+        for count in test_counts:
+            if count > len(TEST_INPUTS):
+                break
+            try:
+                results = self.decoder.decode_batch(TEST_INPUTS[:count])
+                working_counts.append(count)
+                assert len(results) == count, \
+                    f"Expected {count} results, got {len(results)}"
+            except RuntimeError as e:
+                if "integral multiple" in str(e):
+                    failing_counts.append(count)
+                else:
+                    # Different error, re-raise
+                    raise
+        
+        print(f"Working counts: {working_counts}")
+        print(f"Failing counts: {failing_counts}")
+        
+        # Determine batch size from the pattern
+        if len(working_counts) == len(test_counts):
+            # All counts work - batch size is 1
+            batch_size = 1
+        elif len(working_counts) > 0:
+            # Find GCD of working counts
+            from math import gcd
+            from functools import reduce
+            batch_size = reduce(gcd, working_counts)
+        else:
+            pytest.fail("No syndrome counts worked!")
+        
+        print(f"Detected batch size: {batch_size}")
+        
+        # Verify that multiples of batch_size work and non-multiples fail
+        if batch_size > 1:
+            # Test a multiple that should work
+            multiple = batch_size * 2
+            if multiple <= len(TEST_INPUTS):
+                results = self.decoder.decode_batch(TEST_INPUTS[:multiple])
+                assert len(results) == multiple
+            
+            # Test a non-multiple that should fail
+            non_multiple = batch_size + 1
+            if non_multiple <= len(TEST_INPUTS) and non_multiple not in working_counts:
+                with pytest.raises(RuntimeError, match="integral multiple"):
+                    self.decoder.decode_batch(TEST_INPUTS[:non_multiple])
+
+    def test_decode_batch_syndrome_size_mismatch(self):
+        """Test that decode_batch validates individual syndrome sizes."""
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+
+        # Create syndromes with wrong size
+        wrong_size_syndrome = [0.0] * (NUM_DETECTORS + 5)  # Too long
+        syndromes = [TEST_INPUTS[0], wrong_size_syndrome]
+        
+        with pytest.raises(RuntimeError, match="Syndrome size mismatch"):
+            self.decoder.decode_batch(syndromes)
+
+    def test_decode_single_syndrome_size_mismatch(self):
+        """Test that decode validates syndrome size."""
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+
+        # Create syndrome with wrong size
+        wrong_size_syndrome = [0.0] * (NUM_DETECTORS + 5)  # Too long
+        
+        with pytest.raises(RuntimeError, match="Syndrome size mismatch"):
+            self.decoder.decode(wrong_size_syndrome)
+
+    def test_decode_batch_empty_list(self):
+        """Test that decode_batch handles empty syndrome list."""
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+
+        results = self.decoder.decode_batch([])
+        assert len(results) == 0, "Empty batch should return empty results"
+
+    def test_decode_batch_large_integral_multiple(self):
+        """Test batch decoding with a larger integral multiple of batch size."""
+        if not os.path.exists(ONNX_MODEL_PATH) or not CUDA_AVAILABLE:
+            pytest.skip("ONNX model file not found or CUDA/GPU not available")
+
+        # Try different counts to find valid batch sizes
+        # Start with powers of 2 which are common
+        for count in [2, 4, 8, 16]:
+            if count > len(TEST_INPUTS):
+                break
+            
+            try:
+                syndromes = TEST_INPUTS[:count]
+                results = self.decoder.decode_batch(syndromes)
+                
+                # Verify results
+                assert len(results) == count, f"Expected {count} results"
+                
+                # Verify all results are valid
+                for i, result in enumerate(results):
+                    assert result.converged, f"Result {i} did not converge"
+                    assert len(result.result) > 0, f"Result {i} has empty output"
+                
+                print(f"Successfully decoded batch of {count} syndromes")
+                break  # Test passed, exit loop
+                
+            except RuntimeError as e:
+                if "integral multiple" in str(e):
+                    # This count doesn't match batch size, try next
+                    continue
+                else:
+                    # Different error, re-raise
+                    raise
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
