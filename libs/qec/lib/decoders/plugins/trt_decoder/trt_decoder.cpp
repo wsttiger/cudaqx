@@ -434,16 +434,32 @@ decoder_result trt_decoder::decode(const std::vector<float_t> &syndrome) {
         " but got " + std::to_string(syndrome.size()));
   }
   
-  // decode() is for single syndrome decoding and only works with batch_size=1 models
-  if (model_batch_size_ != 1) {
-    throw std::runtime_error(
-        "decode() is only supported for models with batch_size=1. "
-        "This model has batch_size=" + std::to_string(model_batch_size_) + 
-        ". Please use decode_batch() with " + std::to_string(model_batch_size_) + 
-        " syndromes at a time.");
+  // For models with batch_size > 1, zero-pad to fill the batch
+  // This allows decode() to work with any batch size by filling unused slots with zeros
+  if (model_batch_size_ > 1) {
+    CUDAQ_INFO("Model has batch_size={}, zero-padding single syndrome to fill batch",
+               model_batch_size_);
+    
+    // Create a batch with the real syndrome plus zero-padded syndromes
+    std::vector<std::vector<float_t>> padded_batch;
+    padded_batch.reserve(model_batch_size_);
+    
+    // First syndrome is the real one
+    padded_batch.push_back(syndrome);
+    
+    // Fill remaining batch slots with zero syndromes
+    std::vector<float_t> zero_syndrome(syndrome_size_per_sample_, 0.0f);
+    for (size_t i = 1; i < model_batch_size_; ++i) {
+      padded_batch.push_back(zero_syndrome);
+    }
+    
+    auto results = decode_batch(padded_batch);
+    
+    // Return only the first result (the real syndrome)
+    return results[0];
   }
   
-  // Delegate to decode_batch with single syndrome
+  // For batch_size == 1, directly delegate to decode_batch
   auto results = decode_batch({syndrome});
   return results[0];
 }
@@ -475,6 +491,10 @@ trt_decoder::decode_batch(const std::vector<std::vector<float_t>> &syndromes) {
   
   if (!decoder_ready_) {
     // Return unconverged results if decoder is not ready
+    CUDAQ_WARN("Decoder not ready for inference, returning {} unconverged results. "
+               "Check decoder initialization logs for errors.",
+               syndromes.size());
+    
     std::vector<decoder_result> results(syndromes.size());
     for (auto& result : results) {
       result.converged = false;
