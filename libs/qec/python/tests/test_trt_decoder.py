@@ -490,9 +490,8 @@ class TestTRTDecoderBatchValidation:
             pytest.skip("TensorRT Python API not available")
         
         try:
-            # Create dummy H matrix
-            H = qec.tensor([[1 if i == j else 0 for j in range(syndrome_size)] 
-                            for i in range(syndrome_size)], dtype=qec.uint8)
+            # Create dummy H matrix (identity matrix for syndrome_size)
+            H = np.eye(syndrome_size, dtype=np.uint8)
             
             # Build TensorRT engine with explicit batch size
             logger = trt.Logger(trt.Logger.WARNING)
@@ -503,25 +502,23 @@ class TestTRTDecoderBatchValidation:
             # Input: [batch_size, syndrome_size]
             input_tensor = network.add_input("syndrome", trt.float32, (batch_size, syndrome_size))
             
-            # Simple MLP: Input -> Dense(16) -> ReLU -> Dense(output_size)
-            # This creates a lightweight but realistic decoder network
+            # Simple network: Just use matrix multiplication with random weights
+            # This is sufficient for testing batch validation logic
+            # weights shape: [syndrome_size, output_size]
+            weights_data = np.random.randn(syndrome_size, output_size).astype(np.float32) * 0.1
+            weights = trt.Weights(weights_data)
+            weights_const = network.add_constant((syndrome_size, output_size), weights)
             
-            # Layer 1: Dense (syndrome_size -> 16)
-            hidden_size = 16
-            weights1 = np.random.randn(hidden_size, syndrome_size).astype(np.float32) * 0.01
-            bias1 = np.zeros(hidden_size, dtype=np.float32)
-            
-            fc1 = network.add_fully_connected(input_tensor, hidden_size, weights1, bias1)
-            relu1 = network.add_activation(fc1.get_output(0), trt.ActivationType.RELU)
-            
-            # Layer 2: Dense (16 -> output_size)
-            weights2 = np.random.randn(output_size, hidden_size).astype(np.float32) * 0.01
-            bias2 = np.zeros(output_size, dtype=np.float32)
-            
-            fc2 = network.add_fully_connected(relu1.get_output(0), output_size, weights2, bias2)
+            # Matrix multiply: [batch, syndrome_size] x [syndrome_size, output_size] -> [batch, output_size]
+            matmul = network.add_matrix_multiply(
+                input_tensor, 
+                trt.MatrixOperation.NONE,
+                weights_const.get_output(0),
+                trt.MatrixOperation.NONE
+            )
             
             # Output
-            output = fc2.get_output(0)
+            output = matmul.get_output(0)
             output.name = "correction"
             network.mark_output(output)
             
@@ -536,11 +533,8 @@ class TestTRTDecoderBatchValidation:
                 f.write(serialized_engine)
             
             # Create decoder from engine
-            params = qec.heterogeneous_map()
-            params["engine_load_path"] = str(engine_path)
-            
             try:
-                decoder = qec.get_decoder("trt_decoder", H, params)
+                decoder = qec.get_decoder("trt_decoder", H, engine_load_path=str(engine_path))
             except Exception as e:
                 pytest.skip(f"Failed to create decoder: {e}")
             
