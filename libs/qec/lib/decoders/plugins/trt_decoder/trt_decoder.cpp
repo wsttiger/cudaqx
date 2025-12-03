@@ -123,43 +123,147 @@ struct TraditionalExecutor {
 
 // CUDA graph-based execution for optimized performance
 struct CudaGraphExecutor {
-  bool captured = false;
   cudaGraph_t graph;
   cudaGraphExec_t graph_exec;
+
+  // Constructor now takes ownership of pre-captured graph
+  CudaGraphExecutor(cudaGraph_t g, cudaGraphExec_t ge)
+      : graph(g), graph_exec(ge) {}
+
+  // Delete copy constructor and assignment to prevent double-free
+  CudaGraphExecutor(const CudaGraphExecutor &) = delete;
+  CudaGraphExecutor &operator=(const CudaGraphExecutor &) = delete;
+
+  // Move constructor - transfer ownership
+  CudaGraphExecutor(CudaGraphExecutor &&other) noexcept
+      : graph(other.graph), graph_exec(other.graph_exec) {
+    other.graph = nullptr;
+    other.graph_exec = nullptr;
+  }
+
+  // Move assignment - transfer ownership
+  CudaGraphExecutor &operator=(CudaGraphExecutor &&other) noexcept {
+    if (this != &other) {
+      // Clean up existing resources
+      if (graph_exec) {
+        HANDLE_CUDA_ERROR_NO_THROW(cudaGraphExecDestroy(graph_exec));
+      }
+      if (graph) {
+        HANDLE_CUDA_ERROR_NO_THROW(cudaGraphDestroy(graph));
+      }
+      // Transfer ownership
+      graph = other.graph;
+      graph_exec = other.graph_exec;
+      other.graph = nullptr;
+      other.graph_exec = nullptr;
+    }
+    return *this;
+  }
 
   void execute(nvinfer1::IExecutionContext *context, cudaStream_t stream,
                void *input_buffer, void *output_buffer, int input_index,
                int output_index, nvinfer1::ICudaEngine *engine) {
-
-    if (!captured) {
-      CUDAQ_INFO("Capturing CUDA graph for TensorRT inference optimization");
-
-      HANDLE_CUDA_ERROR(
-          cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
-      context->setTensorAddress(engine->getIOTensorName(input_index),
-                                input_buffer);
-      context->setTensorAddress(engine->getIOTensorName(output_index),
-                                output_buffer);
-      context->enqueueV3(stream);
-      HANDLE_CUDA_ERROR(cudaStreamEndCapture(stream, &graph));
-
-      HANDLE_CUDA_ERROR(cudaGraphInstantiate(&graph_exec, graph, 0));
-      captured = true;
-
-      CUDAQ_INFO("CUDA graph captured successfully");
-    }
-
+    // Just launch the graph - no lazy capture needed!
     HANDLE_CUDA_ERROR(cudaGraphLaunch(graph_exec, stream));
     HANDLE_CUDA_ERROR(cudaStreamSynchronize(stream));
   }
 
   ~CudaGraphExecutor() {
-    if (captured) {
+    if (graph_exec) {
       HANDLE_CUDA_ERROR_NO_THROW(cudaGraphExecDestroy(graph_exec));
+    }
+    if (graph) {
       HANDLE_CUDA_ERROR_NO_THROW(cudaGraphDestroy(graph));
     }
   }
 };
+
+// Result structure for CUDA graph capture attempts
+struct CaptureResult {
+  bool success = false;
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t graph_exec = nullptr;
+  std::string error_message;
+};
+
+// Attempt to capture a CUDA graph for TensorRT inference
+// Uses dummy input data to perform the capture during initialization
+CaptureResult try_capture_cuda_graph(nvinfer1::IExecutionContext *context,
+                                     cudaStream_t stream, void *input_buffer,
+                                     void *output_buffer, int input_index,
+                                     int output_index,
+                                     nvinfer1::ICudaEngine *engine,
+                                     size_t input_size) {
+  CaptureResult result;
+
+  try {
+    // Generate dummy input data (values don't matter for capture, just shape)
+    std::vector<float> dummy_input(input_size, 0.0f);
+
+    // Copy dummy data to GPU
+    cudaError_t err =
+        cudaMemcpy(input_buffer, dummy_input.data(), input_size * sizeof(float),
+                   cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) {
+      result.error_message =
+          "Failed to copy dummy data: " + std::string(cudaGetErrorString(err));
+      return result;
+    }
+
+    // Attempt to capture the graph
+    CUDAQ_INFO("Attempting to capture CUDA graph during initialization...");
+
+    err = cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+    if (err != cudaSuccess) {
+      result.error_message = "cudaStreamBeginCapture failed: " +
+                             std::string(cudaGetErrorString(err));
+      return result;
+    }
+
+    // Record TensorRT operations
+    context->setTensorAddress(engine->getIOTensorName(input_index),
+                              input_buffer);
+    context->setTensorAddress(engine->getIOTensorName(output_index),
+                              output_buffer);
+    context->enqueueV3(stream);
+
+    err = cudaStreamEndCapture(stream, &result.graph);
+    if (err != cudaSuccess) {
+      result.error_message = "cudaStreamEndCapture failed: " +
+                             std::string(cudaGetErrorString(err));
+      return result;
+    }
+
+    // Instantiate the graph
+    err = cudaGraphInstantiate(&result.graph_exec, result.graph, 0);
+    if (err != cudaSuccess) {
+      result.error_message = "cudaGraphInstantiate failed: " +
+                             std::string(cudaGetErrorString(err));
+      if (result.graph) {
+        cudaGraphDestroy(result.graph);
+        result.graph = nullptr;
+      }
+      return result;
+    }
+
+    CUDAQ_INFO("CUDA graph captured successfully during initialization");
+    result.success = true;
+
+  } catch (const std::exception &e) {
+    result.error_message = "Exception during capture: " + std::string(e.what());
+    // Clean up on failure
+    if (result.graph_exec) {
+      cudaGraphExecDestroy(result.graph_exec);
+      result.graph_exec = nullptr;
+    }
+    if (result.graph) {
+      cudaGraphDestroy(result.graph);
+      result.graph = nullptr;
+    }
+  }
+
+  return result;
+}
 
 // Check if CUDA graphs are supported for this engine
 bool supports_cuda_graphs(const nvinfer1::ICudaEngine *engine) {
@@ -378,10 +482,24 @@ trt_decoder::trt_decoder(const cudaqx::tensor<uint8_t> &H,
       use_cuda_graph = false;
     }
 
-    // Initialize the executor variant (NEVER CHANGES AFTER THIS)
+    // Attempt to capture CUDA graph if enabled
     if (use_cuda_graph) {
-      impl_->executor = CudaGraphExecutor{};
-      CUDAQ_INFO("TensorRT decoder initialized with CUDA graph execution");
+      auto capture_result = try_capture_cuda_graph(
+          impl_->context.get(), impl_->stream,
+          impl_->buffers[impl_->input_index],
+          impl_->buffers[impl_->output_index], impl_->input_index,
+          impl_->output_index, impl_->engine.get(), impl_->input_size);
+
+      if (capture_result.success) {
+        impl_->executor =
+            CudaGraphExecutor{capture_result.graph, capture_result.graph_exec};
+        CUDAQ_INFO("TensorRT decoder initialized with CUDA graph execution");
+      } else {
+        CUDAQ_WARN("CUDA graph capture failed: {}. Falling back to traditional "
+                   "execution.",
+                   capture_result.error_message);
+        impl_->executor = TraditionalExecutor{};
+      }
     } else {
       impl_->executor = TraditionalExecutor{};
       CUDAQ_INFO("TensorRT decoder initialized with traditional execution");
