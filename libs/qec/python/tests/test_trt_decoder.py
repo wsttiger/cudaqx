@@ -54,10 +54,10 @@ CUDA_AVAILABLE = _is_cuda_available()
 
 
 def build_simple_mlp_engine(input_size,
-                             hidden_size,
-                             output_size,
-                             engine_path,
-                             use_dynamic_shapes=False):
+                            hidden_size,
+                            output_size,
+                            engine_path,
+                            use_dynamic_shapes=False):
     """
     Build a simple MLP TensorRT engine using the TensorRT Python API.
     
@@ -93,9 +93,9 @@ def build_simple_mlp_engine(input_size,
             # According to trt_decoder.cpp: multiple profiles = CUDA graphs not supported
             input_shape = (-1, input_size)
             input_tensor = network.add_input(name="input",
-                                              dtype=trt.float32,
-                                              shape=input_shape)
-            
+                                             dtype=trt.float32,
+                                             shape=input_shape)
+
             # Add MULTIPLE optimization profiles (this makes CUDA graphs unsupported)
             # Profile 1: batch size = 1
             profile1 = builder.create_optimization_profile()
@@ -104,7 +104,7 @@ def build_simple_mlp_engine(input_size,
                                opt=(1, input_size),
                                max=(1, input_size))
             config.add_optimization_profile(profile1)
-            
+
             # Profile 2: batch size = 2 (adding a second profile disables CUDA graphs)
             profile2 = builder.create_optimization_profile()
             profile2.set_shape("input",
@@ -115,8 +115,8 @@ def build_simple_mlp_engine(input_size,
         else:
             # Static shape
             input_tensor = network.add_input(name="input",
-                                              dtype=trt.float32,
-                                              shape=(1, input_size))
+                                             dtype=trt.float32,
+                                             shape=(1, input_size))
 
         # Layer 1: Fully Connected (Input -> Hidden) using matrix multiply
         # Initialize random weights and biases
@@ -127,24 +127,24 @@ def build_simple_mlp_engine(input_size,
 
         # Add weights as constant
         weights1_const = network.add_constant(shape=(input_size, hidden_size),
-                                               weights=trt.Weights(weights1))
+                                              weights=trt.Weights(weights1))
 
         # Matrix multiply: (1, input_size) @ (input_size, hidden_size) = (1, hidden_size)
         mm1 = network.add_matrix_multiply(input_tensor,
-                                           trt.MatrixOperation.NONE,
-                                           weights1_const.get_output(0),
-                                           trt.MatrixOperation.NONE)
+                                          trt.MatrixOperation.NONE,
+                                          weights1_const.get_output(0),
+                                          trt.MatrixOperation.NONE)
 
         # Add bias
         bias1_const = network.add_constant(shape=(1, hidden_size),
-                                            weights=trt.Weights(bias1))
+                                           weights=trt.Weights(bias1))
         fc1 = network.add_elementwise(mm1.get_output(0),
-                                       bias1_const.get_output(0),
-                                       trt.ElementWiseOperation.SUM)
+                                      bias1_const.get_output(0),
+                                      trt.ElementWiseOperation.SUM)
 
         # Activation: ReLU
         relu = network.add_activation(input=fc1.get_output(0),
-                                       type=trt.ActivationType.RELU)
+                                      type=trt.ActivationType.RELU)
 
         # Layer 2: Fully Connected (Hidden -> Output) using matrix multiply
         weights2 = np.random.randn(hidden_size, output_size).astype(np.float32)
@@ -152,20 +152,20 @@ def build_simple_mlp_engine(input_size,
 
         # Add weights as constant
         weights2_const = network.add_constant(shape=(hidden_size, output_size),
-                                               weights=trt.Weights(weights2))
+                                              weights=trt.Weights(weights2))
 
         # Matrix multiply: (1, hidden_size) @ (hidden_size, output_size) = (1, output_size)
         mm2 = network.add_matrix_multiply(relu.get_output(0),
-                                           trt.MatrixOperation.NONE,
-                                           weights2_const.get_output(0),
-                                           trt.MatrixOperation.NONE)
+                                          trt.MatrixOperation.NONE,
+                                          weights2_const.get_output(0),
+                                          trt.MatrixOperation.NONE)
 
         # Add bias
         bias2_const = network.add_constant(shape=(1, output_size),
-                                            weights=trt.Weights(bias2))
+                                           weights=trt.Weights(bias2))
         fc2 = network.add_elementwise(mm2.get_output(0),
-                                       bias2_const.get_output(0),
-                                       trt.ElementWiseOperation.SUM)
+                                      bias2_const.get_output(0),
+                                      trt.ElementWiseOperation.SUM)
 
         # Mark output
         output_tensor = fc2.get_output(0)
@@ -634,10 +634,10 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
         # =====================================================================
         try:
             decoder_cuda_graph = qec.get_decoder('trt_decoder',
-                                                  H,
-                                                  onnx_load_path=ONNX_MODEL_PATH,
-                                                  precision='fp16',
-                                                  use_cuda_graph=True)
+                                                 H,
+                                                 onnx_load_path=ONNX_MODEL_PATH,
+                                                 precision='fp16',
+                                                 use_cuda_graph=True)
         except Exception as e:
             pytest.skip(f"Failed to create CUDA graph decoder: {e}")
 
@@ -645,11 +645,12 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
         # Create decoder WITHOUT CUDA graphs (traditional)
         # =====================================================================
         try:
-            decoder_traditional = qec.get_decoder('trt_decoder',
-                                                   H,
-                                                   onnx_load_path=ONNX_MODEL_PATH,
-                                                   precision='fp16',
-                                                   use_cuda_graph=False)
+            decoder_traditional = qec.get_decoder(
+                'trt_decoder',
+                H,
+                onnx_load_path=ONNX_MODEL_PATH,
+                precision='fp16',
+                use_cuda_graph=False)
         except Exception as e:
             pytest.skip(f"Failed to create traditional decoder: {e}")
 
@@ -677,7 +678,7 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
         end_cuda_graph = time.perf_counter()
 
         duration_cuda_graph = (end_cuda_graph -
-                                start_cuda_graph) * 1_000_000  # Convert to μs
+                               start_cuda_graph) * 1_000_000  # Convert to μs
         avg_time_cuda_graph = duration_cuda_graph / benchmark_iterations
 
         # =====================================================================
@@ -692,16 +693,15 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
         end_traditional = time.perf_counter()
 
         duration_traditional = (end_traditional -
-                                 start_traditional) * 1_000_000  # Convert to μs
+                                start_traditional) * 1_000_000  # Convert to μs
         avg_time_traditional = duration_traditional / benchmark_iterations
 
         # =====================================================================
         # Calculate and report performance improvement
         # =====================================================================
         speedup = avg_time_traditional / avg_time_cuda_graph
-        improvement_percent = (
-            (avg_time_traditional - avg_time_cuda_graph) /
-            avg_time_traditional) * 100.0
+        improvement_percent = ((avg_time_traditional - avg_time_cuda_graph) /
+                               avg_time_traditional) * 100.0
 
         print("\n=== Performance Comparison Results ===")
         print(f"Iterations: {benchmark_iterations}")
@@ -749,9 +749,11 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
             engine_path = os.path.join(tmpdir, "test_mlp.engine")
 
             # Build TensorRT engine
-            print(f"\nBuilding simple MLP engine ({input_size}->{hidden_size}->{output_size})...")
+            print(
+                f"\nBuilding simple MLP engine ({input_size}->{hidden_size}->{output_size})..."
+            )
             success = build_simple_mlp_engine(input_size, hidden_size,
-                                               output_size, engine_path)
+                                              output_size, engine_path)
             if not success:
                 pytest.skip("Failed to build TensorRT engine")
 
@@ -795,13 +797,12 @@ class TestTRTDecoderEdgeCases(TestTRTDecoderSetup):
 
             for test_idx in range(num_test_cases):
                 # Generate random syndrome (values between -1 and 1)
-                random_syndrome = (np.random.rand(input_size) * 2 -
-                                    1).astype(np.float32).tolist()
+                random_syndrome = (np.random.rand(input_size) * 2 - 1).astype(
+                    np.float32).tolist()
 
                 # Run both decoders
                 result_cuda_graph = decoder_cuda_graph.decode(random_syndrome)
-                result_traditional = decoder_traditional.decode(
-                    random_syndrome)
+                result_traditional = decoder_traditional.decode(random_syndrome)
 
                 # Verify both converged (if applicable)
                 assert result_cuda_graph.converged == result_traditional.converged, (
