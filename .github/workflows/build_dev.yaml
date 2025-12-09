@@ -193,22 +193,23 @@ jobs:
         BUILDARGS="--build-arg base_image=ghcr.io/nvidia/cuda-quantum-devdeps:manylinux-${{ matrix.platform }}-cu${{ matrix.cuda_version }}-gcc11-main"
         BUILDARGS+=" --build-arg python_version=${{ matrix.python }}"
         BUILDARGS+=" --build-arg cuda_version=${{ matrix.cuda_version }}"
+        BUILDARGS+=" --ulimit nofile=1048576:1048576"
         # For some reason, this fails on amd64 unless DOCKER_BUILDKIT=0 is set.
         # The exact error is: too many open files.
         DOCKER_BUILDKIT=0 docker build $TAGS $BUILDARGS -f docker/build_env/cudaqx.wheel.Dockerfile .
         docker push -a ghcr.io/nvidia/cudaqx-dev
       shell: bash --noprofile --norc -euo pipefail {0}
 
-  cleanup:
-    name: Cleanup
-    needs: [build-cudaqx-dev, build-cudaqx-pydev]
-    runs-on: ubuntu-latest
-    if: ${{ github.repository == 'NVIDIA/cudaqx' }}
-    steps:
-    - name: Delete untagged images
-      uses: actions/delete-package-versions@v5
-      with: 
-        package-name: cudaqx-dev
-        package-type: 'container'
-        min-versions-to-keep: 0
-        delete-only-untagged-versions: 'true'
+  # cleanup:
+  #   name: Cleanup
+  #   needs: [build-cudaqx-dev, build-cudaqx-pydev]
+  #   runs-on: ubuntu-latest
+  #   if: ${{ github.repository == 'NVIDIA/cudaqx' }}
+  #   steps:
+  #   - name: Delete untagged images
+  #     uses: actions/delete-package-versions@v5
+  #     with: 
+  #       package-name: cudaqx-dev
+  #       package-type: 'container'
+  #       min-versions-to-keep: 0
+  #       delete-only-untagged-versions: 'true'
