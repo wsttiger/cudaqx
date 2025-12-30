@@ -8,6 +8,7 @@
 
 #include "solvers/py_optim.h"
 #include "solvers/py_solvers.h"
+#include "solvers/py_block_encoding.h"
 
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
@@ -16,4 +17,5 @@ PYBIND11_MODULE(_pycudaqx_solvers_the_suffix_matters_cudaq_solvers, mod) {
   mod.doc() = "Python bindings for the CUDA-Q Solver Libraries.";
   cudaq::optim::bindOptim(mod);
   cudaq::solvers::bindSolvers(mod);
+  cudaq::solvers::bindBlockEncoding(mod);
 }
