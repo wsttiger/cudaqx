@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "operators/block_encoding.h"
 #include "operators/graph/clique.h"
 #include "operators/graph/max_cut.h"
 #include "operators/molecule.h"
