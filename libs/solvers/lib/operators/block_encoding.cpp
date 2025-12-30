@@ -44,6 +44,7 @@ struct pauli_prepare_kernel {
 
         // Controlled rotation - explicitly handle cases up to 10 ancilla
         // This covers all practical molecular Hamiltonians
+        // NOTE: Cannot use qview with ry<cudaq::ctrl> unlike Pauli gates
         if (layer == 1) {
           ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1]);
         } else if (layer == 2) {
