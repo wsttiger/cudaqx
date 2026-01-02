@@ -42,8 +42,8 @@ struct pauli_prepare_kernel {
           }
         }
 
-        // Controlled rotation - explicitly handle cases up to 10 ancilla
-        // This covers all practical molecular Hamiltonians
+        // Controlled rotation - explicitly handle cases up to 20 ancilla
+        // This covers large molecular Hamiltonians (up to 2^20 = 1,048,576 terms)
         // NOTE: Cannot use qview with ry<cudaq::ctrl> unlike Pauli gates
         if (layer == 1) {
           ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1]);
@@ -63,10 +63,31 @@ struct pauli_prepare_kernel {
           ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8]);
         } else if (layer == 9) {
           ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9]);
+        } else if (layer == 10) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10]);
+        } else if (layer == 11) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11]);
+        } else if (layer == 12) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12]);
+        } else if (layer == 13) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13]);
+        } else if (layer == 14) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14]);
+        } else if (layer == 15) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15]);
+        } else if (layer == 16) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16]);
+        } else if (layer == 17) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16], anc[17]);
+        } else if (layer == 18) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16], anc[17], anc[18]);
+        } else if (layer == 19) {
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16], anc[17], anc[18], anc[19]);
         } else {
-          // Hamiltonian with > 1024 terms - very rare in practice
-          // This would require > 10 ancilla qubits
+          // Hamiltonian with > 2^20 terms - extremely rare
+          // This would require > 20 ancilla qubits
           // Users should consider Hamiltonian truncation for such large systems
+          throw std::runtime_error("Block encoding requires > 20 ancilla qubits. Consider Hamiltonian truncation.");
         }
         angle_idx++;
 

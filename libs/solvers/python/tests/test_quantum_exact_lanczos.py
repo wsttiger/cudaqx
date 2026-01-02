@@ -21,6 +21,11 @@ import pytest
 import numpy as np
 from cudaq import spin
 import cudaq_solvers as solvers
+try:
+    from scipy.linalg import eigh
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 
 def test_pauli_lcu_simple():
@@ -169,6 +174,288 @@ def test_quantum_exact_lanczos_default_parameters():
     assert result.num_system == 1
 
 
+@pytest.mark.skipif(not HAS_SCIPY, reason="SciPy required for eigenvalue solving")
+def test_quantum_exact_lanczos_h2_molecule():
+    """Test QEL with full H2 Hamiltonian from lanczos_h2_complete.py."""
+    # H2 Hamiltonian terms (from lanczos_h2_complete.py lines 21-36)
+    # FCI ground state: -1.137284 Ha
+    # Constant term: -0.09706627 Ha
+    terms = [
+        ("Z0", 0.17141283),
+        ("Z1", 0.17141283),
+        ("Z2", -0.22343154),
+        ("Z3", -0.22343154),
+        ("Z0Z1", 0.16868898),
+        ("Z0Z2", 0.12062523),
+        ("Z1Z2", 0.16592785),
+        ("Z0Z3", 0.16592785),
+        ("Z1Z3", 0.12062523),
+        ("Z2Z3", 0.17441288),
+        ("X0X1Y2Y3", -0.04530262),
+        ("X0Y1Y2X3", 0.04530262),
+        ("Y0X1X2Y3", 0.04530262),
+        ("Y0Y1X2X3", -0.04530262),
+    ]
+    
+    CONSTANT_TERM = -0.09706627
+    FCI_ENERGY = -1.137284
+    
+    # Build Hamiltonian using cudaq.spin
+    def parse_pauli_term(pauli_str, coeff):
+        """Convert Pauli string like 'Z0', 'X0Y1Z2' to spin operator."""
+        if not pauli_str or pauli_str == 'I':
+            return coeff * spin.i(0)
+        
+        op = None
+        i = 0
+        while i < len(pauli_str):
+            pauli_char = pauli_str[i]
+            i += 1
+            qubit_str = ""
+            while i < len(pauli_str) and pauli_str[i].isdigit():
+                qubit_str += pauli_str[i]
+                i += 1
+            
+            qubit_idx = int(qubit_str)
+            
+            if pauli_char == 'X':
+                term = spin.x(qubit_idx)
+            elif pauli_char == 'Y':
+                term = spin.y(qubit_idx)
+            elif pauli_char == 'Z':
+                term = spin.z(qubit_idx)
+            else:
+                raise ValueError(f"Invalid Pauli character: {pauli_char}")
+            
+            if op is None:
+                op = term
+            else:
+                op = op * term
+        
+        return coeff * op
+    
+    # Build the Hamiltonian (WITHOUT constant term)
+    # The constant term is kept separate to avoid inflating the 1-norm
+    # This matches the approach in lanczos_h2_complete.py
+    h2_hamiltonian = parse_pauli_term(*terms[0])
+    for pauli_str, coeff in terms[1:]:
+        h2_hamiltonian += parse_pauli_term(pauli_str, coeff)
+    
+    # Run QEL algorithm
+    print("\nRunning QEL for H2 molecule...")
+    result = solvers.quantum_exact_lanczos(
+        h2_hamiltonian,
+        num_qubits=4,
+        n_electrons=2,
+        krylov_dim=5,
+        shots=-1,  # Exact simulation
+        verbose=True
+    )
+    
+    # Check result metadata
+    assert result.num_system == 4, "Expected 4 system qubits"
+    assert result.krylov_dimension == 5, "Expected Krylov dimension 5"
+    
+    # Get Krylov matrices
+    H = result.get_hamiltonian_matrix()
+    S = result.get_overlap_matrix()
+    moments = result.get_moments()
+    
+    print(f"\nH matrix shape: {H.shape}")
+    print(f"S matrix shape: {S.shape}")
+    print(f"Number of moments: {len(moments)}")
+    
+    # Check shapes
+    assert H.shape == (5, 5), "H matrix should be 5x5"
+    assert S.shape == (5, 5), "S matrix should be 5x5"
+    assert len(moments) == 10, "Should have 10 moments (2*krylov_dim)"
+    
+    # Solve generalized eigenvalue problem: H v = E S v
+    # Following the approach in lanczos_h2_complete.py (lines 579-602)
+    # Filter S matrix to keep only positive eigenvalues above threshold
+    threshold = 1e-4
+    evals_S, evecs_S = np.linalg.eigh(S)
+    
+    print(f"\nS eigenvalues before filtering: {evals_S}")
+    
+    # Keep eigenvalues that are positive and above threshold
+    keep_indices = [i for i, e in enumerate(evals_S) if e > threshold]
+    assert len(keep_indices) > 0, "S matrix collapsed, no positive eigenvalues"
+    
+    print(f"Keeping {len(keep_indices)}/{result.krylov_dimension} eigenvectors (threshold={threshold})")
+    print(f"Filtered S eigenvalues: {evals_S[keep_indices]}")
+    
+    # Project onto the subspace with positive S eigenvalues
+    S_filtered = np.diag(evals_S[keep_indices])
+    V_filtered = evecs_S[:, keep_indices]
+    
+    H_proj = V_filtered.T @ H @ V_filtered
+    S_inv_sqrt = np.diag(1.0 / np.sqrt(np.diag(S_filtered)))
+    H_final = S_inv_sqrt @ H_proj @ S_inv_sqrt
+    
+    eigenvalues = np.linalg.eigvalsh(H_final)
+    
+    print(f"\nFinal eigenvalues: {eigenvalues}")
+    
+    # Ground state energy: eigenvalue * normalization + constant_term
+    # The QEL eigenvalues are scaled by the 1-norm during block encoding
+    # NOTE: Constant term was not added to Hamiltonian, so we add it manually here
+    estimated_energy_scaled = eigenvalues[0]
+    estimated_energy = estimated_energy_scaled * result.normalization + CONSTANT_TERM
+    
+    print(f"\nScaled eigenvalue: {estimated_energy_scaled:.6f}")
+    print(f"1-Norm: {result.normalization:.6f}")
+    print(f"Constant: {CONSTANT_TERM:.6f} Ha (from data, not QEL)")
+    print(f"Estimated ground state energy: {estimated_energy:.6f} Ha")
+    print(f"Expected FCI energy:           {FCI_ENERGY:.6f} Ha")
+    error = abs(estimated_energy - FCI_ENERGY)
+    print(f"Absolute error:                {error:.6f} Ha ({error*1000:.2f} mHa)")
+    
+    # Check accuracy (allow reasonable tolerance for quantum simulation)
+    # Using exact simulation (shots=-1), we should get excellent accuracy
+    assert error < 0.01, f"Error too large: {error:.6f} Ha (expected < 0.01 Ha)"
+    
+    print("\n✅ H2 QEL test passed!")
+
+
+@pytest.mark.skipif(not HAS_SCIPY, reason="SciPy required for eigenvalue solving")
+def test_quantum_exact_lanczos_lih_molecule():
+    """Test QEL with LiH Hamiltonian from saved data file."""
+    # Import LiH Hamiltonian data (no PySCF/OpenFermion required)
+    try:
+        from . import lih_hamiltonian_data
+    except ImportError:
+        try:
+            import lih_hamiltonian_data
+        except ImportError:
+            pytest.skip("LiH Hamiltonian data file not found")
+    
+    terms = lih_hamiltonian_data.PAULI_TERMS
+    CONSTANT_TERM = lih_hamiltonian_data.CONSTANT_TERM
+    FCI_ENERGY = lih_hamiltonian_data.FCI_ENERGY
+    NUM_QUBITS = lih_hamiltonian_data.NUM_QUBITS
+    NUM_ELECTRONS = lih_hamiltonian_data.NUM_ELECTRONS
+    
+    print(f"\nLiH Molecule:")
+    print(f"  Qubits: {NUM_QUBITS}")
+    print(f"  Electrons: {NUM_ELECTRONS}")
+    print(f"  Pauli terms: {len(terms)}")
+    print(f"  Target FCI energy: {FCI_ENERGY:.6f} Ha")
+    
+    # Build Hamiltonian using cudaq.spin
+    def parse_pauli_term(pauli_str, coeff):
+        """Convert Pauli string like 'Z0', 'X0Y1Z2' to spin operator."""
+        if not pauli_str or pauli_str == 'I':
+            return coeff * spin.i(0)
+        
+        op = None
+        i = 0
+        while i < len(pauli_str):
+            pauli_char = pauli_str[i]
+            i += 1
+            qubit_str = ""
+            while i < len(pauli_str) and pauli_str[i].isdigit():
+                qubit_str += pauli_str[i]
+                i += 1
+            
+            qubit_idx = int(qubit_str)
+            
+            if pauli_char == 'X':
+                term = spin.x(qubit_idx)
+            elif pauli_char == 'Y':
+                term = spin.y(qubit_idx)
+            elif pauli_char == 'Z':
+                term = spin.z(qubit_idx)
+            else:
+                raise ValueError(f"Invalid Pauli character: {pauli_char}")
+            
+            if op is None:
+                op = term
+            else:
+                op = op * term
+        
+        return coeff * op
+    
+    # Build the Hamiltonian (WITHOUT constant term)
+    # The constant term is kept separate to avoid inflating the 1-norm
+    # This matches the approach in lih_complete.py
+    lih_hamiltonian = parse_pauli_term(*terms[0])
+    for pauli_str, coeff in terms[1:]:
+        lih_hamiltonian += parse_pauli_term(pauli_str, coeff)
+    
+    # Run QEL algorithm with Krylov dimension 8 (matches Python script)
+    print("\nRunning QEL for LiH molecule...")
+    result = solvers.quantum_exact_lanczos(
+        lih_hamiltonian,
+        num_qubits=NUM_QUBITS,
+        n_electrons=NUM_ELECTRONS,
+        krylov_dim=8,  # Increased from 5 to match Python implementation
+        shots=-1,  # Exact simulation
+        verbose=True
+    )
+    
+    # Check result metadata
+    assert result.num_system == NUM_QUBITS
+    assert result.krylov_dimension == 8
+    
+    # Get Krylov matrices
+    H = result.get_hamiltonian_matrix()
+    S = result.get_overlap_matrix()
+    moments = result.get_moments()
+    
+    print(f"\nH matrix shape: {H.shape}")
+    print(f"S matrix shape: {S.shape}")
+    print(f"Number of moments: {len(moments)}")
+    
+    # Check shapes
+    assert H.shape == (8, 8), "H matrix should be 8x8"
+    assert S.shape == (8, 8), "S matrix should be 8x8"
+    assert len(moments) == 16, "Should have 16 moments (2*krylov_dim)"
+    
+    # Solve generalized eigenvalue problem with S matrix filtering
+    threshold = 1e-4
+    evals_S, evecs_S = np.linalg.eigh(S)
+    
+    print(f"\nS eigenvalues before filtering: {evals_S}")
+    
+    keep_indices = [i for i, e in enumerate(evals_S) if e > threshold]
+    assert len(keep_indices) > 0, "S matrix collapsed, no positive eigenvalues"
+    
+    print(f"Keeping {len(keep_indices)}/{result.krylov_dimension} eigenvectors (threshold={threshold})")
+    print(f"Filtered S eigenvalues: {evals_S[keep_indices]}")
+    
+    # Project onto the subspace with positive S eigenvalues
+    S_filtered = np.diag(evals_S[keep_indices])
+    V_filtered = evecs_S[:, keep_indices]
+    
+    H_proj = V_filtered.T @ H @ V_filtered
+    S_inv_sqrt = np.diag(1.0 / np.sqrt(np.diag(S_filtered)))
+    H_final = S_inv_sqrt @ H_proj @ S_inv_sqrt
+    
+    eigenvalues = np.linalg.eigvalsh(H_final)
+    
+    print(f"\nFinal eigenvalues: {eigenvalues}")
+    
+    # Ground state energy: eigenvalue * normalization + constant_term
+    # The QEL eigenvalues are scaled by the 1-norm during block encoding
+    # NOTE: Constant term was not added to Hamiltonian, so we add it manually here
+    estimated_energy_scaled = eigenvalues[0]
+    estimated_energy = estimated_energy_scaled * result.normalization + CONSTANT_TERM
+    
+    print(f"\nScaled eigenvalue: {estimated_energy_scaled:.6f}")
+    print(f"1-Norm: {result.normalization:.6f}")
+    print(f"Constant: {CONSTANT_TERM:.6f} Ha (from data, not QEL)")
+    print(f"Estimated ground state energy: {estimated_energy:.6f} Ha")
+    print(f"Expected FCI energy:           {FCI_ENERGY:.6f} Ha")
+    error = abs(estimated_energy - FCI_ENERGY)
+    print(f"Absolute error:                {error:.6f} Ha ({error*1000:.2f} mHa)")
+    
+    # Check accuracy - should match Python script accuracy (~0.3 mHa)
+    assert error < 0.01, f"Error too large: {error:.6f} Ha (expected < 0.01 Ha = 10 mHa)"
+    
+    print("\n✅ LiH QEL test passed!")
+
+
 def test_inheritance_hierarchy():
     """Test that PauliLCU properly inherits from BlockEncoding."""
     h = 0.7 * spin.z(0) + 0.3 * spin.x(0)
@@ -203,7 +490,11 @@ if __name__ == "__main__":
     test_quantum_exact_lanczos_function_exists()
     test_quantum_exact_lanczos_simple_hamiltonian()
     test_quantum_exact_lanczos_default_parameters()
+    if HAS_SCIPY:
+        test_quantum_exact_lanczos_h2_molecule()
+    else:
+        print("Skipping H2 molecule test (SciPy not available)")
     test_inheritance_hierarchy()
     
-    print("All tests passed!")
+    print("\nAll tests passed!")
 
