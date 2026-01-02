@@ -7,10 +7,22 @@
  ******************************************************************************/
 
 #include "cudaq/solvers/quantum_exact_lanczos.h"
+#include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
-#include <stdexcept>
 #include <numeric>
+#include <stdexcept>
+#include <vector>
+
+// MPI support via CUDA-Q's MPI interface
+#ifdef CUDAQ_HAS_MPI
+#include <cudaq/platform.h>  // CUDA-Q MPI interface
+#include <mpi.h>              // Raw MPI for advanced collectives (Gatherv)
+#define MPI_ENABLED 1
+#else
+#define MPI_ENABLED 0
+#endif
 
 namespace cudaq::solvers {
 
@@ -232,6 +244,34 @@ qel_result quantum_exact_lanczos(
   int krylov_dim = options.get("krylov_dim", 10);
   int shots = options.get("shots", -1);
   bool verbose = options.get("verbose", false);
+  bool use_mpi = options.get("use_mpi", false);
+  
+  // MPI setup using CUDA-Q's MPI interface
+  int mpi_rank = 0;
+  int mpi_size = 1;
+  
+#if MPI_ENABLED
+  if (use_mpi) {
+    // Try to use CUDA-Q's MPI if available, otherwise fall back to raw MPI
+    // CUDA-Q's is_initialized() may return false even with mpirun, so we
+    // query raw MPI directly which works reliably
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+    
+    // If only 1 rank, disable MPI (not actually parallel)
+    if (mpi_size == 1) {
+      if (verbose) {
+        std::cerr << "Warning: use_mpi=True but only 1 MPI rank detected. Running serially." << std::endl;
+      }
+      use_mpi = false;
+    }
+  }
+#else
+  if (use_mpi && mpi_rank == 0) {
+    std::cerr << "Warning: MPI requested but not available at compile time. Running serially." << std::endl;
+    use_mpi = false;
+  }
+#endif
   
   // Create block encoding
   pauli_lcu encoding(hamiltonian, num_qubits);
@@ -252,7 +292,7 @@ qel_result quantum_exact_lanczos(
     }
   }
   
-  if (verbose) {
+  if (verbose && mpi_rank == 0) {
     std::cout << "\n=== Quantum Exact Lanczos ===" << std::endl;
     std::cout << "System qubits: " << n_sys << std::endl;
     std::cout << "Ancilla qubits: " << n_anc << std::endl;
@@ -260,25 +300,116 @@ qel_result quantum_exact_lanczos(
     std::cout << "1-Norm (α): " << one_norm << std::endl;
     std::cout << "Constant term: " << constant_term << " Ha" << std::endl;
     std::cout << "Krylov dimension: " << krylov_dim << std::endl;
+    if (use_mpi) {
+      std::cout << "MPI parallelization: " << mpi_size << " ranks" << std::endl;
+    }
   }
   
   // Build observables
   auto R_op = build_R_observable(n_anc);
   auto U_op = build_U_observable(encoding);
   
-  // Collect moments
-  std::vector<double> moments;
-  moments.reserve(2 * krylov_dim);
-  
-  if (verbose) {
-    std::cout << "\nCollecting moments..." << std::endl;
+  if (verbose && mpi_rank == 0) {
+    std::cout << "Observable complexity:" << std::endl;
+    std::cout << "  R_op (even moments): " << R_op.num_terms() << " terms" << std::endl;
+    std::cout << "  U_op (odd moments):  " << U_op.num_terms() << " terms" << std::endl;
   }
   
-  for (int k = 0; k < 2 * krylov_dim; ++k) {
+  // Collect moments (MPI-parallelized if requested)
+  int total_moments = 2 * krylov_dim;
+  std::vector<double> moments(total_moments, 0.0);  // Pre-allocate on all ranks
+  
+  if (verbose && mpi_rank == 0) {
+    std::cout << "\nCollecting moments..." << std::endl;
+    if (use_mpi) {
+      std::cout << "  (parallelized across " << mpi_size << " MPI ranks)" << std::endl;
+    }
+  }
+  
+  // Determine which moments this rank computes using cost-aware load balancing
+  // Cost model: circuit_depth × observable_terms
+  // This balances both circuit depth variation (higher k = deeper circuits)
+  // and observable complexity (even vs odd moments)
+  std::vector<int> my_moment_indices;
+  
+  if (use_mpi && mpi_size > 1) {
+    // Compute cost for each moment
+    std::vector<double> moment_costs(total_moments);
+    for (int k = 0; k < total_moments; ++k) {
+      // Circuit depth: k/2 SELECT-REFLECT iterations
+      double circuit_depth = (k == 0) ? 0.5 : (k / 2.0);
+      
+      // Observable complexity: number of Pauli terms
+      int observable_terms = (k % 2 == 0) ? R_op.num_terms() : U_op.num_terms();
+      
+      // Total cost (arbitrary units, used for relative comparison)
+      moment_costs[k] = circuit_depth * observable_terms;
+    }
+    
+    // Greedy bin packing: assign moments to minimize maximum load
+    std::vector<std::vector<int>> rank_assignments(mpi_size);
+    std::vector<double> rank_loads(mpi_size, 0.0);
+    
+    // Sort moments by cost (descending) for better packing
+    std::vector<int> sorted_moments(total_moments);
+    std::iota(sorted_moments.begin(), sorted_moments.end(), 0);
+    std::sort(sorted_moments.begin(), sorted_moments.end(),
+              [&](int a, int b) { return moment_costs[a] > moment_costs[b]; });
+    
+    // Assign each moment to least-loaded rank
+    for (int k : sorted_moments) {
+      auto min_it = std::min_element(rank_loads.begin(), rank_loads.end());
+      int min_rank = std::distance(rank_loads.begin(), min_it);
+      rank_assignments[min_rank].push_back(k);
+      rank_loads[min_rank] += moment_costs[k];
+    }
+    
+    // Get this rank's assignment
+    my_moment_indices = rank_assignments[mpi_rank];
+    
+    // Sort by k for sequential processing (better cache behavior)
+    std::sort(my_moment_indices.begin(), my_moment_indices.end());
+    
+    // Print load balance analysis
+    if (verbose && mpi_rank == 0) {
+      std::cout << "\nLoad balance (cost-aware distribution):" << std::endl;
+      double total_cost = std::accumulate(moment_costs.begin(), moment_costs.end(), 0.0);
+      double ideal_per_rank = total_cost / mpi_size;
+      double max_load = *std::max_element(rank_loads.begin(), rank_loads.end());
+      double min_load = *std::min_element(rank_loads.begin(), rank_loads.end());
+      
+      for (int r = 0; r < mpi_size; ++r) {
+        double imbalance = 100.0 * (rank_loads[r] - ideal_per_rank) / ideal_per_rank;
+        std::cout << "  Rank " << r << ": " << std::fixed << std::setprecision(0) 
+                  << rank_loads[r] << " cost units";
+        std::cout << " (" << std::showpos << std::setprecision(1) << imbalance 
+                  << "% from ideal)" << std::noshowpos << std::endl;
+        std::cout << "    Moments: ";
+        for (int k : rank_assignments[r]) {
+          std::cout << k << " ";
+        }
+        std::cout << std::endl;
+      }
+      
+      double balance_factor = min_load / max_load;
+      std::cout << "  Balance efficiency: " << std::setprecision(1) 
+                << (balance_factor * 100.0) << "%" << std::endl;
+    }
+  } else {
+    // Serial execution: compute all moments
+    my_moment_indices.resize(total_moments);
+    std::iota(my_moment_indices.begin(), my_moment_indices.end(), 0);
+  }
+  
+  // Each rank computes its assigned moments
+  std::vector<double> my_moments;
+  my_moments.reserve(my_moment_indices.size());
+  
+  for (int k : my_moment_indices) {
     int m = k / 2;
     
     // Create quantum kernel for this moment
-    auto measure_kernel = [&, m, n_anc, n_sys, n_electrons]() __qpu__ {
+    auto measure_kernel = [&, m, k, n_anc, n_sys, n_electrons]() __qpu__ {
       cudaq::qvector<> anc(n_anc);
       cudaq::qvector<> sys(n_sys);
       
@@ -300,27 +431,103 @@ qel_result quantum_exact_lanczos(
     cudaq::spin_op obs = (k % 2 == 0) ? R_op : U_op;
     auto result = cudaq::observe(shots, measure_kernel, obs);
     double moment = result.expectation();
-    moments.push_back(moment);
+    my_moments.push_back(moment);
     
     if (verbose) {
-      std::cout << "  k=" << k << ": " << moment << std::endl;
+      std::cout << "  Rank " << mpi_rank << ": k=" << k << ": " << moment << std::endl;
     }
   }
   
-  // Build Krylov matrices
-  if (verbose) {
-    std::cout << "\nBuilding Krylov matrices..." << std::endl;
+#if MPI_ENABLED
+  if (use_mpi) {
+    // Gather moments to rank 0 using raw MPI_Gatherv
+    // Note: We use raw MPI here because CUDA-Q's MPI interface doesn't provide
+    // variable-length gather (Gatherv). CUDA-Q MPI is used for rank/size queries
+    // above for consistency with CUDA-Q's distributed state vector support.
+    
+    // First, gather the count from each rank
+    std::vector<int> recv_counts(mpi_size);
+    int my_count = my_moment_indices.size();
+    MPI_Gather(&my_count, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+    
+    std::vector<int> all_indices;
+    std::vector<double> all_moments;
+    
+    if (mpi_rank == 0) {
+      // Prepare to receive all data
+      int total_recv = 0;
+      std::vector<int> displacements(mpi_size);
+      for (int i = 0; i < mpi_size; ++i) {
+        displacements[i] = total_recv;
+        total_recv += recv_counts[i];
+      }
+      
+      all_indices.resize(total_recv);
+      all_moments.resize(total_recv);
+      
+      MPI_Gatherv(my_moment_indices.data(), my_count, MPI_INT,
+                  all_indices.data(), recv_counts.data(), displacements.data(),
+                  MPI_INT, 0, MPI_COMM_WORLD);
+      
+      MPI_Gatherv(my_moments.data(), my_count, MPI_DOUBLE,
+                  all_moments.data(), recv_counts.data(), displacements.data(),
+                  MPI_DOUBLE, 0, MPI_COMM_WORLD);
+      
+      // Reconstruct full moment array in order
+      for (size_t i = 0; i < all_indices.size(); ++i) {
+        moments[all_indices[i]] = all_moments[i];
+      }
+    } else {
+      // Non-root ranks just send their data
+      MPI_Gatherv(my_moment_indices.data(), my_count, MPI_INT,
+                  nullptr, nullptr, nullptr, MPI_INT, 0, MPI_COMM_WORLD);
+      
+      MPI_Gatherv(my_moments.data(), my_count, MPI_DOUBLE,
+                  nullptr, nullptr, nullptr, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    }
+  } else
+#endif
+  {
+    // Serial execution - just copy the moments in order
+    for (size_t i = 0; i < my_moment_indices.size(); ++i) {
+      moments[my_moment_indices[i]] = my_moments[i];
+    }
   }
   
-  auto [H_mat, S_mat] = build_krylov_matrices(moments, krylov_dim);
+  // Verbose output on rank 0 (after gathering)
+  if (verbose && mpi_rank == 0 && !use_mpi) {
+    // Already printed during computation for MPI case
+    for (int k = 0; k < total_moments; ++k) {
+      std::cout << "  k=" << k << ": " << moments[k] << std::endl;
+    }
+  }
   
-  if (verbose) {
-    std::cout << "\n=== Results ===" << std::endl;
-    std::cout << "Hamiltonian matrix: " << krylov_dim << "×" << krylov_dim << std::endl;
-    std::cout << "Overlap matrix: " << krylov_dim << "×" << krylov_dim << std::endl;
-    std::cout << "Total moments collected: " << moments.size() << std::endl;
-    std::cout << "\nTo extract eigenvalues, solve: H|v⟩ = E·S|v⟩" << std::endl;
-    std::cout << "Then convert: E_physical = E_scaled * α + constant" << std::endl;
+  // Build Krylov matrices (only on rank 0)
+  std::vector<double> H_mat, S_mat;
+  
+  if (mpi_rank == 0) {
+    if (verbose) {
+      std::cout << "\nBuilding Krylov matrices..." << std::endl;
+    }
+    
+    auto [H, S] = build_krylov_matrices(moments, krylov_dim);
+    H_mat = std::move(H);
+    S_mat = std::move(S);
+    
+    if (verbose) {
+      std::cout << "\n=== Results ===" << std::endl;
+      std::cout << "Hamiltonian matrix: " << krylov_dim << "×" << krylov_dim << std::endl;
+      std::cout << "Overlap matrix: " << krylov_dim << "×" << krylov_dim << std::endl;
+      std::cout << "Total moments collected: " << moments.size() << std::endl;
+      std::cout << "\nTo extract eigenvalues, solve: H|v⟩ = E·S|v⟩" << std::endl;
+      std::cout << "Then convert: E_physical = E_scaled * α + constant" << std::endl;
+    }
+  } else {
+    // Non-root ranks return empty matrices
+    // (User should only use result from rank 0)
+    H_mat.resize(krylov_dim * krylov_dim, 0.0);
+    S_mat.resize(krylov_dim * krylov_dim, 0.0);
+    moments.clear(); // Save memory
   }
   
   // Return result

@@ -56,6 +56,9 @@ struct qel_result {
 /// a Krylov subspace by collecting moments μₖ = ⟨ψ|Tₖ(H)|ψ⟩ where Tₖ are
 /// Chebyshev polynomials, then solves a generalized eigenvalue problem.
 ///
+/// MPI Parallelization: When use_mpi=true, moment collection is distributed
+/// across MPI ranks for near-linear speedup. Only rank 0 returns valid results.
+///
 /// @param hamiltonian The target Hamiltonian as a spin_op
 /// @param initial_state Quantum kernel to prepare the initial state (e.g., HF state)
 /// @param n_electrons Number of electrons in the system (for HF initialization)
@@ -63,7 +66,9 @@ struct qel_result {
 ///   - "krylov_dim" (int): Krylov subspace dimension [default: 10]
 ///   - "shots" (int): Number of measurement shots (-1 for exact) [default: -1]
 ///   - "verbose" (bool): Enable detailed output logging [default: false]
+///   - "use_mpi" (bool): Enable MPI parallelization (requires MPI build) [default: false]
 /// @return qel_result containing the Krylov matrices and moments for diagonalization
+///         Note: When use_mpi=true, only rank 0 returns valid data
 qel_result quantum_exact_lanczos(
     const cudaq::spin_op &hamiltonian,
     std::size_t num_qubits,

@@ -308,6 +308,7 @@ Example:
         opts.insert("krylov_dim", getValueOr<int>(options, "krylov_dim", 10));
         opts.insert("shots", getValueOr<int>(options, "shots", -1));
         opts.insert("verbose", getValueOr<bool>(options, "verbose", false));
+        opts.insert("use_mpi", getValueOr<bool>(options, "use_mpi", false));
         
         return quantum_exact_lanczos(hamiltonian, num_qubits, n_electrons, opts);
       },
@@ -329,6 +330,7 @@ Keyword Args:
     krylov_dim (int): Dimension of Krylov subspace (default: 10)
     shots (int): Number of measurement shots, -1 for exact (default: -1)
     verbose (bool): Enable detailed output (default: False)
+    use_mpi (bool): Enable MPI parallelization (requires mpirun) (default: False)
 
 Returns:
     QELResult: Contains Krylov matrices and metadata

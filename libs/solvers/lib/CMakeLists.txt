@@ -56,6 +56,16 @@ target_link_libraries(cudaq-solvers
     cppitertools::cppitertools
 )
 
+# Optional MPI support for parallel moment collection
+find_package(MPI QUIET)
+if(MPI_CXX_FOUND)
+  message(STATUS "MPI found - enabling parallel QEL moment collection")
+  target_link_libraries(cudaq-solvers PRIVATE MPI::MPI_CXX)
+  target_compile_definitions(cudaq-solvers PRIVATE CUDAQ_HAS_MPI)
+else()
+  message(STATUS "MPI not found - QEL will run serially")
+endif()
+
 set_target_properties(cudaq-solvers PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
