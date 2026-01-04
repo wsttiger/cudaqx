@@ -725,6 +725,140 @@ def test_quantum_exact_lanczos_h2o_molecule():
     print("\n✅ H2O QEL test passed!")
 
 
+@pytest.mark.skipif(not HAS_SCIPY, reason="SciPy required for eigenvalue solving")
+def test_quantum_exact_lanczos_benzene_molecule():
+    """Test QEL on Benzene (C6H6) molecule with (4e, 4o) active space."""
+    try:
+        from . import benzene_hamiltonian_data
+    except ImportError:
+        import benzene_hamiltonian_data
+    
+    NUM_QUBITS = benzene_hamiltonian_data.NUM_QUBITS
+    NUM_ELECTRONS = benzene_hamiltonian_data.NUM_ELECTRONS
+    CONSTANT_TERM = benzene_hamiltonian_data.CONSTANT_TERM
+    CASCI_ENERGY = benzene_hamiltonian_data.CASCI_ENERGY
+    
+    terms = benzene_hamiltonian_data.PAULI_TERMS
+    
+    print(f"\n{'='*70}")
+    print(f"Testing Benzene (C6H6) molecule - (4e, 4o) active space")
+    print(f"{'='*70}")
+    print(f"Number of qubits: {NUM_QUBITS}")
+    print(f"Number of electrons: {NUM_ELECTRONS}")
+    print(f"Number of Pauli terms: {len(terms)}")
+    print(f"Constant term: {CONSTANT_TERM:.6f} Ha")
+    print(f"Expected CASCI energy: {CASCI_ENERGY:.6f} Ha")
+    
+    def parse_pauli_term(pauli_str, coeff):
+        """Convert Pauli string to spin operator."""
+        import re
+        
+        if not pauli_str or pauli_str.strip() == 'I':
+            return coeff * spin.i(0)
+        
+        # Extract all Pauli operators with their qubit indices
+        # Handles: "Z0", "X0Y1", "X0Y1Z2Z3", etc.
+        matches = re.findall(r'([XYZ])(\d+)', pauli_str.strip())
+        
+        if not matches:
+            raise ValueError(f"Invalid Pauli string: {pauli_str}")
+        
+        op = None
+        for pauli_char, qubit_str in matches:
+            qubit_idx = int(qubit_str)
+            
+            if pauli_char == 'X':
+                term = spin.x(qubit_idx)
+            elif pauli_char == 'Y':
+                term = spin.y(qubit_idx)
+            elif pauli_char == 'Z':
+                term = spin.z(qubit_idx)
+            else:
+                raise ValueError(f"Invalid Pauli character: {pauli_char}")
+            
+            if op is None:
+                op = term
+            else:
+                op = op * term
+        
+        return coeff * op
+    
+    # Build the Hamiltonian (WITHOUT constant term)
+    # The constant term is kept separate to avoid inflating the 1-norm
+    benzene_hamiltonian = parse_pauli_term(*terms[0])
+    for pauli_str, coeff in terms[1:]:
+        benzene_hamiltonian += parse_pauli_term(pauli_str, coeff)
+    
+    print("\nRunning QEL for Benzene molecule...")
+    
+    # Run QEL
+    result = solvers.quantum_exact_lanczos(
+        benzene_hamiltonian,
+        num_qubits=NUM_QUBITS,
+        n_electrons=NUM_ELECTRONS,
+        krylov_dim=8,
+        shots=-1,
+        verbose=True
+    )
+    
+    # Get Krylov matrices
+    H = result.get_hamiltonian_matrix()
+    S = result.get_overlap_matrix()
+    moments = result.get_moments()
+    
+    print(f"\nH matrix shape: {H.shape}")
+    print(f"S matrix shape: {S.shape}")
+    print(f"Number of moments: {len(moments)}")
+    
+    # Check shapes
+    assert H.shape == (8, 8), "H matrix should be 8x8"
+    assert S.shape == (8, 8), "S matrix should be 8x8"
+    assert len(moments) == 16, "Should have 16 moments (2*krylov_dim)"
+    
+    # Solve generalized eigenvalue problem with S matrix filtering
+    threshold = 1e-4
+    evals_S, evecs_S = np.linalg.eigh(S)
+    
+    print(f"\nS eigenvalues before filtering: {evals_S}")
+    
+    keep_indices = [i for i, e in enumerate(evals_S) if e > threshold]
+    assert len(keep_indices) > 0, "S matrix collapsed, no positive eigenvalues"
+    
+    print(f"Keeping {len(keep_indices)}/{result.krylov_dimension} eigenvectors (threshold={threshold})")
+    print(f"Filtered S eigenvalues: {evals_S[keep_indices]}")
+    
+    # Project onto the subspace with positive S eigenvalues
+    S_filtered = np.diag(evals_S[keep_indices])
+    V_filtered = evecs_S[:, keep_indices]
+    
+    H_proj = V_filtered.T @ H @ V_filtered
+    S_inv_sqrt = np.diag(1.0 / np.sqrt(np.diag(S_filtered)))
+    H_final = S_inv_sqrt @ H_proj @ S_inv_sqrt
+    
+    eigenvalues = np.linalg.eigvalsh(H_final)
+    
+    print(f"\nFinal eigenvalues: {eigenvalues}")
+    
+    # Ground state energy: eigenvalue * normalization + constant_term
+    # The QEL eigenvalues are scaled by the 1-norm during block encoding
+    # NOTE: Constant term was not added to Hamiltonian, so we add it manually here
+    estimated_energy_scaled = eigenvalues[0]
+    estimated_energy = estimated_energy_scaled * result.normalization + CONSTANT_TERM
+    
+    print(f"\nScaled eigenvalue: {estimated_energy_scaled:.6f}")
+    print(f"1-Norm: {result.normalization:.6f}")
+    print(f"Constant: {CONSTANT_TERM:.6f} Ha (from data, not QEL)")
+    print(f"Estimated ground state energy: {estimated_energy:.6f} Ha")
+    print(f"Expected CASCI energy:         {CASCI_ENERGY:.6f} Ha")
+    error = abs(estimated_energy - CASCI_ENERGY)
+    print(f"Absolute error:                {error:.6f} Ha ({error*1000:.2f} mHa)")
+    
+    # Check accuracy - should be reasonably close
+    assert error < 0.01, f"Error too large: {error:.6f} Ha (expected < 0.01 Ha = 10 mHa)"
+    
+    print("\n✅ Benzene QEL test passed!")
+
+
 def test_inheritance_hierarchy():
     """Test that PauliLCU properly inherits from BlockEncoding."""
     h = 0.7 * spin.z(0) + 0.3 * spin.x(0)
