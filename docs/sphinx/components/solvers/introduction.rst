@@ -509,6 +509,12 @@ CUDA-QX provides several pre-built operator pools for ADAPT-VQE:
     single and double excitations, regardless of their occupied/virtual status in the reference state.
     Capable of capturing both dynamic and static (strong) correlation
     but at the cost of increased circuit depth and parameter count.
+* **ceo**: CEO (Coupled Exchange Operator) pool.
+    This pool is based on qubit excitation operators, which preserve the particle number and 
+    Sz quantum numbers, but are not antisymmetric, which reduces their implementation cost 
+    compared to UCCGSD excitation operators. In CEO, the qubit excitation operators are 
+    combined to reduce the circuit implementation cost. It uses generalized qubit excitations
+    that are spin-dependent. See the CEO paper (https://arxiv.org/abs/2407.08696) for more details.
 * **upccgsd**: UCC generalized singles and paired doubles.
     A structured, lower-depth variant of UCCGSD in which double excitations are restricted to paired electron 
     transfers between spatial orbitals, following the UpCC (pair-cluster) construction.
@@ -548,6 +554,11 @@ CUDA-QX provides several pre-built operator pools for ADAPT-VQE:
         num_orbitals=molecule.n_orbitals
 )
 
+    ceo_ops = solvers.get_operator_pool(
+        "ceo",
+        num_orbitals=molecule.n_orbitals
+    )
+
 Available Ansatz
 ^^^^^^^^^^^^^^^^^^
 
@@ -555,6 +566,7 @@ CUDA-QX provides several state preparations ansatz for VQE.
 
 * **uccsd**: UCCSD operators
 * **uccgsd**: UCC generalized singles and doubles
+* **ceo**: CEO (Coupled Exchange Operator) ansatz
 * **upccgsd**: UCC generalized singles and paired doubles
 
 .. code-block:: python
@@ -616,6 +628,27 @@ CUDA-QX provides several state preparations ansatz for VQE.
         for i in range(numElectrons):
             x(q[i])
         solvers.stateprep.upccgsd(q, thetas, pauliWordsList, coefficientsList)
+
+    
+    # Using CEO ansatz
+    geometry = [('H', (0., 0., 0.)), ('H', (0., 0., .7474))]
+    molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
+
+    numOrbitals = molecule.n_orbitals
+    numQubits = 2 * numOrbitals
+    numElectrons = molecule.n_electrons
+
+    # Get grouped Pauli words and coefficients from CEO pool
+    pauliWordsList, coefficientsList = solvers.stateprep.get_ceo_pauli_lists(numOrbitals)
+    
+    @cudaq.kernel
+    def ansatz(numQubits: int, numElectrons: int, thetas: list[float],
+               pauliWordsList: list[list[cudaq.pauli_word]],
+               coefficientsList: list[list[float]]):
+        q = cudaq.qvector(numQubits)
+        for i in range(numElectrons):
+            x(q[i])
+        solvers.stateprep.ceo(q, thetas, pauliWordsList, coefficientsList)
 
 
 Algorithm Parameters
