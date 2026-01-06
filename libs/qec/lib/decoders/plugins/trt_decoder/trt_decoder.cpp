@@ -77,13 +77,15 @@ public:
     // Suppress the harmless warning about logger reuse that appears when
     // Python tests build engines with Python's trt.Logger and C++ decoders
     // load those engines. Both loggers remain valid; TensorRT uses whichever
-    // was registered first. This is expected behavior for mixed Python/C++ usage.
+    // was registered first. This is expected behavior for mixed Python/C++
+    // usage.
     std::string_view msg_view(msg);
     if (msg_view.find("logger passed into") != std::string_view::npos &&
-        msg_view.find("differs from one already registered") != std::string_view::npos) {
-      return;  // Suppress this specific warning
+        msg_view.find("differs from one already registered") !=
+            std::string_view::npos) {
+      return; // Suppress this specific warning
     }
-    
+
     // filter out info-level messages
     if (severity >= Severity::kWARNING) {
       CUDAQ_INFO("[TensorRT] {}", msg);
@@ -333,7 +335,6 @@ public:
 
   virtual ~trt_decoder();
 
-
   CUDAQ_EXTENSION_CUSTOM_CREATOR_FUNCTION(
       trt_decoder, static std::unique_ptr<decoder> create(
                        const cudaqx::tensor<uint8_t> &H,
@@ -492,7 +493,6 @@ trt_decoder::trt_decoder(const cudaqx::tensor<uint8_t> &H,
                "syndrome_size_per_sample={}, output_size_per_sample={}",
                model_batch_size_, syndrome_size_per_sample_,
                output_size_per_sample_);
-
 
     // Allocate GPU buffers
     HANDLE_CUDA_ERROR(cudaMalloc(&impl_->buffers[impl_->input_index],
