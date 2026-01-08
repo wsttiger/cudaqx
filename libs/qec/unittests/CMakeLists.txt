@@ -70,6 +70,18 @@ if(CUDAQ_QEC_BUILD_TRT_DECODER AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD
   target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq)
   add_dependencies(CUDAQXQECUnitTests test_trt_decoder)
   gtest_discover_tests(test_trt_decoder)
+
+  # Persistent decoder test (requires compute capability 7.0+)
+  add_executable(test_persistent_decoder ./decoders/trt_decoder/test_persistent_decoder.cpp)
+
+  target_include_directories(test_persistent_decoder PRIVATE
+      ${CUDAToolkit_INCLUDE_DIRS}
+      ${CMAKE_SOURCE_DIR}/libs/qec/lib/decoders/plugins/trt_decoder
+  )
+
+  target_link_libraries(test_persistent_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq CUDA::cudart)
+  add_dependencies(CUDAQXQECUnitTests test_persistent_decoder)
+  gtest_discover_tests(test_persistent_decoder)
 endif()
 
 # ==============================================================================

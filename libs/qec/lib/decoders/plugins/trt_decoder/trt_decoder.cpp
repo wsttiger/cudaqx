@@ -9,6 +9,7 @@
 #include "common/Logger.h"
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/trt_decoder_internal.h"
+#include "cuda_graph_utils.h"
 #include <algorithm>
 #include <cassert>
 #include <fstream>
@@ -189,119 +190,6 @@ struct CudaGraphExecutor {
     }
   }
 };
-
-// Result structure for CUDA graph capture attempts
-struct CaptureResult {
-  bool success = false;
-  cudaGraph_t graph = nullptr;
-  cudaGraphExec_t graph_exec = nullptr;
-  std::string error_message;
-};
-
-// Attempt to capture a CUDA graph for TensorRT inference
-// Uses dummy input data to perform the capture during initialization
-CaptureResult try_capture_cuda_graph(nvinfer1::IExecutionContext *context,
-                                     cudaStream_t stream, void *input_buffer,
-                                     void *output_buffer, int input_index,
-                                     int output_index,
-                                     nvinfer1::ICudaEngine *engine,
-                                     size_t input_size) {
-  CaptureResult result;
-
-  try {
-    // Generate dummy input data (values don't matter for capture, just shape)
-    std::vector<float> dummy_input(input_size, 0.0f);
-
-    // Copy dummy data to GPU
-    cudaError_t err =
-        cudaMemcpy(input_buffer, dummy_input.data(), input_size * sizeof(float),
-                   cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) {
-      result.error_message =
-          "Failed to copy dummy data: " + std::string(cudaGetErrorString(err));
-      return result;
-    }
-
-    // Attempt to capture the graph
-    CUDAQ_INFO("Attempting to capture CUDA graph during initialization...");
-
-    err = cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
-    if (err != cudaSuccess) {
-      result.error_message = "cudaStreamBeginCapture failed: " +
-                             std::string(cudaGetErrorString(err));
-      return result;
-    }
-
-    // Record TensorRT operations
-    context->setTensorAddress(engine->getIOTensorName(input_index),
-                              input_buffer);
-    context->setTensorAddress(engine->getIOTensorName(output_index),
-                              output_buffer);
-    context->enqueueV3(stream);
-
-    err = cudaStreamEndCapture(stream, &result.graph);
-    if (err != cudaSuccess) {
-      result.error_message = "cudaStreamEndCapture failed: " +
-                             std::string(cudaGetErrorString(err));
-      return result;
-    }
-
-    // Instantiate the graph
-    err = cudaGraphInstantiate(&result.graph_exec, result.graph, 0);
-    if (err != cudaSuccess) {
-      result.error_message = "cudaGraphInstantiate failed: " +
-                             std::string(cudaGetErrorString(err));
-      if (result.graph) {
-        cudaGraphDestroy(result.graph);
-        result.graph = nullptr;
-      }
-      return result;
-    }
-
-    CUDAQ_INFO("CUDA graph captured successfully during initialization");
-    result.success = true;
-
-  } catch (const std::exception &e) {
-    result.error_message = "Exception during capture: " + std::string(e.what());
-    // Clean up on failure
-    if (result.graph_exec) {
-      cudaGraphExecDestroy(result.graph_exec);
-      result.graph_exec = nullptr;
-    }
-    if (result.graph) {
-      cudaGraphDestroy(result.graph);
-      result.graph = nullptr;
-    }
-  }
-
-  return result;
-}
-
-// Check if CUDA graphs are supported for this engine
-bool supports_cuda_graphs(const nvinfer1::ICudaEngine *engine) {
-  // Check for dynamic shapes
-  for (int i = 0; i < engine->getNbIOTensors(); ++i) {
-    const char *name = engine->getIOTensorName(i);
-    auto dims = engine->getTensorShape(name);
-    for (int j = 0; j < dims.nbDims; ++j) {
-      if (dims.d[j] == -1) {
-        CUDAQ_INFO(
-            "Dynamic shape detected in tensor '{}', CUDA graphs not supported",
-            name);
-        return false;
-      }
-    }
-  }
-
-  // Check for multiple optimization profiles (often used with dynamic shapes)
-  if (engine->getNbOptimizationProfiles() > 1) {
-    CUDAQ_INFO(
-        "Multiple optimization profiles detected, CUDA graphs not supported");
-    return false;
-  }
-
-  return true;
-}
 } // anonymous namespace
 
 // ============================================================================
@@ -517,7 +405,8 @@ trt_decoder::trt_decoder(const cudaqx::tensor<uint8_t> &H,
     }
 
     // Check engine compatibility
-    if (use_cuda_graph && !supports_cuda_graphs(impl_->engine.get())) {
+    if (use_cuda_graph &&
+        !cuda_graph_utils::supports_cuda_graphs(impl_->engine.get())) {
       CUDAQ_WARN("Model has dynamic shapes or multiple profiles, "
                  "CUDA graphs not supported. Using traditional execution.");
       use_cuda_graph = false;
@@ -525,7 +414,7 @@ trt_decoder::trt_decoder(const cudaqx::tensor<uint8_t> &H,
 
     // Attempt to capture CUDA graph if enabled
     if (use_cuda_graph) {
-      auto capture_result = try_capture_cuda_graph(
+      auto capture_result = cuda_graph_utils::capture_cuda_graph(
           impl_->context.get(), impl_->stream,
           impl_->buffers[impl_->input_index],
           impl_->buffers[impl_->output_index], impl_->input_index,
