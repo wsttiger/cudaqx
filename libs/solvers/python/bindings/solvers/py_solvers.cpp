@@ -1220,27 +1220,8 @@ Notes:
       "Generate Clique Hamiltonian from a NetworkX graph", py::arg("graph"),
       py::arg("penalty") = 4.0);
 
-  // Bind SKQD configuration structure
-  py::class_<cudaq::solvers::skqd_config>(solvers, "SKQDConfig",
-                                           "Configuration for Sample-based Krylov Quantum Diagonalization")
-      .def(py::init<>())
-      .def_readwrite("krylov_dim", &cudaq::solvers::skqd_config::krylov_dim,
-                     "Number of Krylov subspace time steps (default: 15)")
-      .def_readwrite("dt", &cudaq::solvers::skqd_config::dt,
-                     "Time step size for time evolution (default: 0.1)")
-      .def_readwrite("shots", &cudaq::solvers::skqd_config::shots,
-                     "Number of measurement samples per time step (default: 10000)")
-      .def_readwrite("num_eigenvalues", &cudaq::solvers::skqd_config::num_eigenvalues,
-                     "Number of lowest eigenvalues to compute (default: 1)")
-      .def_readwrite("trotter_order", &cudaq::solvers::skqd_config::trotter_order,
-                     "Trotter order for time evolution: 1 (first-order, O(t²) error) or 2 (symmetric Suzuki, O(t³) error, default: 1)")
-      .def_readwrite("max_basis_size", &cudaq::solvers::skqd_config::max_basis_size,
-                     "Maximum dimension of subspace basis (0 = unlimited, default: 0)")
-      .def_readwrite("verbose", &cudaq::solvers::skqd_config::verbose,
-                     "Verbosity level (0 = quiet, 1 = normal, 2 = debug, default: 0)");
-
   // Bind SKQD result structure
-  py::class_<cudaq::solvers::skqd_result>(solvers, "SKQDResult",
+  py::class_<cudaq::solvers::skqd_result>(solvers, "skqd_result",
                                            "Result from Sample-based Krylov Quantum Diagonalization")
       .def(py::init<>())
       .def_readwrite("ground_state_energy", &cudaq::solvers::skqd_result::ground_state_energy,
@@ -1261,54 +1242,113 @@ Notes:
         return r.ground_state_energy;
       });
 
-  // Bind SampleBasedKrylov class
-  py::class_<cudaq::solvers::SampleBasedKrylov>(solvers, "SampleBasedKrylov",
-                                                 R"#(
-      Sample-based Krylov Quantum Diagonalization solver.
-      
-      This solver enables simulation of large-scale quantum systems (80+ qubits) by combining
-      quantum subspace sampling with GPU-accelerated classical post-processing.
-      
-      The method generates a Krylov subspace through time evolution, samples quantum states,
-      and constructs a reduced Hamiltonian matrix in the sampled subspace for diagonalization.
-      
-      Example:
-          >>> import cudaq_solvers as solvers
-          >>> hamiltonian = ... # Create your Hamiltonian
-          >>> solver = solvers.SampleBasedKrylov(hamiltonian)
-          >>> config = solvers.SKQDConfig()
-          >>> config.krylov_dim = 20
-          >>> config.shots = 5000
-          >>> config.verbose = 1
-          >>> result = solver.solve(config)
-          >>> print(f"Ground state energy: {result.ground_state_energy}")
-      )#")
-      .def(py::init<const cudaq::spin_op&>(), py::arg("hamiltonian"),
-           "Construct a SampleBasedKrylov solver with the given Hamiltonian")
-      .def("solve", &cudaq::solvers::SampleBasedKrylov::solve,
-           py::arg("config") = cudaq::solvers::skqd_config(),
-           R"#(
-           Solve for the ground state energy.
-           
-           Args:
-               config: Configuration parameters for the algorithm
-               
-           Returns:
-               SKQDResult containing the ground state energy and additional information
-           )#")
-      .def("get_eigenvalues", &cudaq::solvers::SampleBasedKrylov::get_eigenvalues,
-           py::arg("k"),
-           R"#(
-           Get multiple eigenvalues from the last solve.
-           
-           Args:
-               k: Number of lowest eigenvalues to return
-               
-           Returns:
-               List of eigenvalues
-           )#")
-      .def("get_last_result", &cudaq::solvers::SampleBasedKrylov::get_last_result,
-           "Get the result from the most recent solve() call");
+  // Bind sample_based_krylov function
+  solvers.def(
+      "sample_based_krylov",
+      [](cudaq::spin_op hamiltonian, py::kwargs options) {
+        heterogeneous_map optOptions;
+        optOptions.insert("krylov_dim", getValueOr<int>(options, "krylov_dim", 15));
+        optOptions.insert("dt", getValueOr<double>(options, "dt", 0.1));
+        optOptions.insert("shots", getValueOr<int>(options, "shots", 10000));
+        optOptions.insert("num_eigenvalues", getValueOr<int>(options, "num_eigenvalues", 1));
+        optOptions.insert("trotter_order", getValueOr<int>(options, "trotter_order", 1));
+        optOptions.insert("max_basis_size", getValueOr<int>(options, "max_basis_size", 0));
+        optOptions.insert("verbose", getValueOr<int>(options, "verbose", 0));
+        
+        return cudaq::solvers::sample_based_krylov(hamiltonian, optOptions);
+      },
+      py::arg("hamiltonian"),
+      R"#(
+Execute the Sample-based Krylov Quantum Diagonalization (SKQD) algorithm.
+
+This function implements a hybrid quantum-classical algorithm for computing ground state 
+energies of large quantum systems (80+ qubits) by combining quantum subspace sampling 
+with GPU-accelerated classical post-processing.
+
+The method generates a Krylov subspace through time evolution, samples quantum states,
+and constructs a reduced Hamiltonian matrix in the sampled subspace for efficient 
+diagonalization on GPU.
+
+Parameters:
+-----------
+hamiltonian : cudaq.SpinOperator
+    The Hamiltonian operator for which to find the ground state energy.
+
+**options : keyword arguments
+    Additional options for the SKQD algorithm. Supported options include:
+    - krylov_dim : int, optional
+        Number of Krylov subspace time steps. Default is 15.
+    - dt : float, optional
+        Time step size for time evolution. Default is 0.1.
+    - shots : int, optional
+        Number of measurement samples per time step. Default is 10000.
+    - num_eigenvalues : int, optional
+        Number of lowest eigenvalues to compute. Default is 1.
+    - trotter_order : int, optional
+        Trotter order for time evolution (1 or 2). 
+        Order 1: exp(-iHt) ≈ ∏ exp(-i c_k P_k t) - O(t²) error
+        Order 2: Symmetric Suzuki formula - O(t³) error, more accurate
+        Default is 1.
+    - max_basis_size : int, optional
+        Maximum dimension of subspace basis (0 = unlimited). Default is 0.
+    - verbose : int, optional
+        Verbosity level (0 = quiet, 1 = normal, 2 = debug). Default is 0.
+
+Returns:
+--------
+skqd_result
+    A result object containing:
+    - ground_state_energy : float
+        The computed ground state energy.
+    - eigenvalues : List[float]
+        All computed eigenvalues.
+    - basis_size : int
+        Size of the constructed subspace basis.
+    - nnz : int
+        Number of non-zero matrix elements in the subspace Hamiltonian.
+    - sampling_time : float
+        Time spent in quantum sampling (seconds).
+    - matrix_construction_time : float
+        Time spent constructing the matrix (seconds).
+    - diagonalization_time : float
+        Time spent in eigenvalue computation (seconds).
+
+Raises:
+-------
+RuntimeError
+    If the Hamiltonian has zero qubits, exceeds 128 qubits, or if the 
+    algorithm fails to converge.
+
+Examples:
+---------
+>>> import cudaq_solvers as solvers
+>>> from cudaq import spin
+>>> 
+>>> # Create a simple Hamiltonian
+>>> hamiltonian = 0.7 * spin.z(0) - 1.2 * spin.x(1)
+>>> 
+>>> # Run SKQD with custom parameters
+>>> result = solvers.sample_based_krylov(
+...     hamiltonian,
+...     krylov_dim=20,
+...     shots=5000,
+...     trotter_order=2,
+...     verbose=1
+... )
+>>> 
+>>> print(f"Ground state energy: {result.ground_state_energy}")
+>>> print(f"Basis size: {result.basis_size}")
+
+Notes:
+------
+- The algorithm is most efficient for systems with 80+ qubits where traditional
+  state-vector methods become intractable.
+- Using trotter_order=2 provides higher accuracy at the cost of twice as many
+  quantum gates per time step.
+- The max_basis_size parameter can be used to limit memory usage for very large systems.
+- GPU acceleration requires NVIDIA hardware and CUDA libraries.
+
+)#");
 
   std::stringstream ss;
   ss << "CUDA-Q Solvers " << cudaq::solvers::getVersion() << " ("

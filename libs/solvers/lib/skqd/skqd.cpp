@@ -30,9 +30,9 @@
 // Forward declarations for CUDA kernel launchers
 extern "C" {
 void launch_construct_matrix_kernel(
-    const cudaq::solvers::Bitstring128* d_basis,
+    const cudaq::solvers::bit_string_128* d_basis,
     int num_basis,
-    const cudaq::solvers::GpuPauliHamiltonian& d_gpu_ham,
+    const cudaq::solvers::gpu_pauli_hamiltonian& d_gpu_ham,
     int* d_rows,
     int* d_cols,
     double* d_vals,
@@ -40,9 +40,9 @@ void launch_construct_matrix_kernel(
     cudaStream_t stream);
 
 void launch_count_nnz_per_row_kernel(
-    const cudaq::solvers::Bitstring128* d_basis,
+    const cudaq::solvers::bit_string_128* d_basis,
     int num_basis,
-    const cudaq::solvers::GpuPauliHamiltonian& d_gpu_ham,
+    const cudaq::solvers::gpu_pauli_hamiltonian& d_gpu_ham,
     int* d_nnz_per_row,
     cudaStream_t stream);
 }
@@ -51,9 +51,9 @@ namespace cudaq::solvers {
 
 namespace {
 
-// Helper function to convert bitstring to Bitstring128
-Bitstring128 string_to_bitstring128(const std::string& bitstring) {
-  Bitstring128 result;
+// Helper function to convert bitstring to bit_string_128
+bit_string_128 string_to_bitstring128(const std::string& bitstring) {
+  bit_string_128 result;
   for (size_t i = 0; i < bitstring.length() && i < 128; i++) {
     if (bitstring[bitstring.length() - 1 - i] == '1') {
       result.set_bit(i, true);
@@ -62,255 +62,17 @@ Bitstring128 string_to_bitstring128(const std::string& bitstring) {
   return result;
 }
 
-// Helper struct to allow Bitstring128 as hash key
-struct Bitstring128Hash {
-  std::size_t operator()(const Bitstring128& bs) const {
+// Helper struct to allow bit_string_128 as hash key
+struct bit_string_128_hash {
+  std::size_t operator()(const bit_string_128& bs) const {
     return std::hash<uint64_t>()(bs.low) ^ (std::hash<uint64_t>()(bs.high) << 1);
   }
 };
 
-} // anonymous namespace
-
-SampleBasedKrylov::SampleBasedKrylov(const cudaq::spin_op& hamiltonian)
-    : hamiltonian_(hamiltonian) {
-  // Extract number of qubits from the Hamiltonian
-  num_qubits_ = hamiltonian_.num_qubits();
-  
-  if (num_qubits_ == 0) {
-    throw std::runtime_error("[SKQD] Hamiltonian has zero qubits");
-  }
-  
-  if (num_qubits_ > 128) {
-    throw std::runtime_error("[SKQD] Currently supports up to 128 qubits");
-  }
-}
-
-SampleBasedKrylov::~SampleBasedKrylov() {
-  // Cleanup if needed
-}
-
-skqd_result SampleBasedKrylov::solve(const skqd_config& config) {
-  auto solve_start = std::chrono::high_resolution_clock::now();
-  
-  skqd_result result;
-  
-  // Phase 1: Quantum Sampling
-  if (config.verbose > 0) {
-    std::cout << "[SKQD] Starting quantum sampling phase..." << std::endl;
-    std::cout << "[SKQD] System size: " << num_qubits_ << " qubits" << std::endl;
-    std::cout << "[SKQD] Krylov dimension: " << config.krylov_dim << std::endl;
-    std::cout << "[SKQD] Shots per step: " << config.shots << std::endl;
-  }
-  
-  auto sampling_start = std::chrono::high_resolution_clock::now();
-  
-  // Collect all samples across all time steps
-  std::unordered_set<Bitstring128, Bitstring128Hash> unique_samples_set;
-  
-  // Create initial state |+...+> (equal superposition)
-  auto initial_state_kernel = [this]() __qpu__ {
-    cudaq::qvector q(num_qubits_);
-    // Apply Hadamard to all qubits
-    for (size_t i = 0; i < num_qubits_; i++) {
-      h(q[i]);
-    }
-    mz(q);
-  };
-  
-  // Sample at t=0 (initial state)
-  if (config.verbose > 1) {
-    std::cout << "[SKQD] Sampling at t = 0.0" << std::endl;
-  }
-  
-  auto counts_0 = cudaq::sample(config.shots, initial_state_kernel);
-  for (auto& [bits, count] : counts_0) {
-    unique_samples_set.insert(string_to_bitstring128(bits));
-  }
-  
-  // Sample at each Krylov time step
-  for (int k = 1; k < config.krylov_dim; k++) {
-    double t = k * config.dt;
-    
-    if (config.verbose > 1) {
-      std::cout << "[SKQD] Sampling at t = " << t << std::endl;
-    }
-    
-    // Apply proper Trotterization for time evolution
-    // exp(-iHt) ≈ ∏ exp(-i c_k P_k t) for each Hamiltonian term c_k P_k
-    auto evolved_kernel = [this, t, &config]() __qpu__ {
-      cudaq::qvector q(num_qubits_);
-      
-      // Prepare initial state |+...+> (equal superposition)
-      for (size_t i = 0; i < num_qubits_; i++) {
-        h(q[i]);
-      }
-      
-      // Apply Trotterized time evolution
-      if (config.trotter_order == 1) {
-        // First-order Trotter: exp(-iHt) ≈ ∏_k exp(-i c_k P_k t)
-        for (const auto& term : hamiltonian_) {
-          double coeff = term.evaluate_coefficient().real();
-          auto pauli_word = term.get_pauli_word(num_qubits_);
-          
-          // Apply exp(-i * coeff * t * P) where P is the Pauli string
-          // exp_pauli applies exp(i * theta * P), so we use theta = -coeff * t
-          exp_pauli(-coeff * t, q, pauli_word.c_str());
-        }
-      } else if (config.trotter_order == 2) {
-        // Second-order Trotter (Suzuki formula):
-        // exp(-iHt) ≈ ∏_k exp(-i c_k P_k t/2) * ∏_k exp(-i c_k P_k t/2) (reverse)
-        // This is symmetric and has O(t³) error vs O(t²) for first-order
-        
-        // Store terms for reverse iteration
-        std::vector<std::pair<double, std::string>> terms;
-        for (const auto& term : hamiltonian_) {
-          double coeff = term.evaluate_coefficient().real();
-          auto pauli_word = term.get_pauli_word(num_qubits_);
-          terms.emplace_back(coeff, pauli_word);
-        }
-        
-        // Forward sweep with t/2
-        for (const auto& [coeff, pauli_word] : terms) {
-          exp_pauli(-coeff * t * 0.5, q, pauli_word.c_str());
-        }
-        
-        // Backward sweep with t/2 (reverse order)
-        for (auto it = terms.rbegin(); it != terms.rend(); ++it) {
-          exp_pauli(-it->first * t * 0.5, q, it->second.c_str());
-        }
-      } else {
-        // Fallback to first order for unsupported orders
-        for (const auto& term : hamiltonian_) {
-          double coeff = term.evaluate_coefficient().real();
-          auto pauli_word = term.get_pauli_word(num_qubits_);
-          exp_pauli(-coeff * t, q, pauli_word.c_str());
-        }
-      }
-      
-      mz(q);
-    };
-    
-    try {
-      auto counts = cudaq::sample(config.shots, evolved_kernel);
-      
-      // Add unique bitstrings to the set
-      for (auto& [bits, count] : counts) {
-        unique_samples_set.insert(string_to_bitstring128(bits));
-        
-        // Limit basis size if configured
-        if (config.max_basis_size > 0 && 
-            unique_samples_set.size() >= static_cast<size_t>(config.max_basis_size)) {
-          break;
-        }
-      }
-    } catch (const std::exception& e) {
-      if (config.verbose > 0) {
-        std::cerr << "[SKQD] Warning: Error during sampling at t=" << t 
-                  << ": " << e.what() << std::endl;
-      }
-    }
-    
-    if (config.max_basis_size > 0 && 
-        unique_samples_set.size() >= static_cast<size_t>(config.max_basis_size)) {
-      if (config.verbose > 0) {
-        std::cout << "[SKQD] Reached maximum basis size limit" << std::endl;
-      }
-      break;
-    }
-  }
-  
-  // Convert set to sorted vector for binary search
-  std::vector<Bitstring128> basis(unique_samples_set.begin(), unique_samples_set.end());
-  std::sort(basis.begin(), basis.end());
-  
-  auto sampling_end = std::chrono::high_resolution_clock::now();
-  result.sampling_time = std::chrono::duration<double>(sampling_end - sampling_start).count();
-  result.basis_size = basis.size();
-  
-  if (config.verbose > 0) {
-    std::cout << "[SKQD] Sampling complete. Basis size: " << result.basis_size << std::endl;
-    std::cout << "[SKQD] Sampling time: " << result.sampling_time << " seconds" << std::endl;
-  }
-  
-  if (basis.size() == 0) {
-    throw std::runtime_error("[SKQD] No samples collected");
-  }
-  
-  // Phase 2: Matrix Construction on GPU
-  if (config.verbose > 0) {
-    std::cout << "[SKQD] Building subspace Hamiltonian matrix..." << std::endl;
-  }
-  
-  auto matrix_start = std::chrono::high_resolution_clock::now();
-  
-  std::vector<int> rows, cols;
-  std::vector<double> vals;
-  
-  result.nnz = build_subspace_matrix_gpu(basis, rows, cols, vals);
-  
-  auto matrix_end = std::chrono::high_resolution_clock::now();
-  result.matrix_construction_time = std::chrono::duration<double>(matrix_end - matrix_start).count();
-  
-  if (config.verbose > 0) {
-    std::cout << "[SKQD] Matrix construction complete. NNZ: " << result.nnz << std::endl;
-    std::cout << "[SKQD] Matrix construction time: " << result.matrix_construction_time 
-              << " seconds" << std::endl;
-  }
-  
-  if (result.nnz == 0) {
-    throw std::runtime_error("[SKQD] Matrix has no non-zero elements");
-  }
-  
-  // Phase 3: Convert to CSR format
-  std::vector<int> csr_row_ptr, csr_col_ind;
-  std::vector<double> csr_vals;
-  convert_coo_to_csr(basis.size(), rows, cols, vals, csr_row_ptr, csr_col_ind, csr_vals);
-  
-  // Phase 4: Diagonalization
-  if (config.verbose > 0) {
-    std::cout << "[SKQD] Computing eigenvalues..." << std::endl;
-  }
-  
-  auto diag_start = std::chrono::high_resolution_clock::now();
-  
-  result.eigenvalues = compute_eigenvalues_gpu(
-      basis.size(), csr_row_ptr, csr_col_ind, csr_vals, config.num_eigenvalues);
-  
-  auto diag_end = std::chrono::high_resolution_clock::now();
-  result.diagonalization_time = std::chrono::duration<double>(diag_end - diag_start).count();
-  
-  if (result.eigenvalues.size() > 0) {
-    result.ground_state_energy = result.eigenvalues[0];
-  }
-  
-  if (config.verbose > 0) {
-    std::cout << "[SKQD] Diagonalization complete." << std::endl;
-    std::cout << "[SKQD] Ground state energy: " << result.ground_state_energy << std::endl;
-    std::cout << "[SKQD] Diagonalization time: " << result.diagonalization_time 
-              << " seconds" << std::endl;
-    
-    auto solve_end = std::chrono::high_resolution_clock::now();
-    double total_time = std::chrono::duration<double>(solve_end - solve_start).count();
-    std::cout << "[SKQD] Total time: " << total_time << " seconds" << std::endl;
-  }
-  
-  last_result_ = result;
-  return result;
-}
-
-std::vector<double> SampleBasedKrylov::get_eigenvalues(int k) {
-  if (last_result_.eigenvalues.size() == 0) {
-    throw std::runtime_error("[SKQD] No eigenvalues computed yet. Call solve() first.");
-  }
-  
-  int num_to_return = std::min(k, static_cast<int>(last_result_.eigenvalues.size()));
-  return std::vector<double>(
-      last_result_.eigenvalues.begin(), 
-      last_result_.eigenvalues.begin() + num_to_return);
-}
-
-GpuPauliHamiltonian SampleBasedKrylov::convert_to_gpu_hamiltonian() {
-  GpuPauliHamiltonian gpu_ham;
+// Convert cudaq::spin_op to gpu_pauli_hamiltonian
+gpu_pauli_hamiltonian convert_to_gpu_hamiltonian(const cudaq::spin_op& hamiltonian, 
+                                                  std::size_t num_qubits) {
+  gpu_pauli_hamiltonian gpu_ham;
   
   // Count terms in the Hamiltonian
   std::vector<double> coeffs;
@@ -321,17 +83,17 @@ GpuPauliHamiltonian SampleBasedKrylov::convert_to_gpu_hamiltonian() {
   int current_offset = 0;
   
   // Iterate through Hamiltonian terms
-  for (const auto& term : hamiltonian_) {
+  for (const auto& term : hamiltonian) {
     double coeff = term.evaluate_coefficient().real();
     coeffs.push_back(coeff);
     
     int num_ops = 0;
     
     // Get the Pauli word for this term (returns a string like "IXYZ")
-    auto pauli_word = term.get_pauli_word(num_qubits_);
+    auto pauli_word = term.get_pauli_word(num_qubits);
     
     // Extract Pauli operations from the word string
-    for (std::size_t qubit_idx = 0; qubit_idx < pauli_word.size() && qubit_idx < num_qubits_; qubit_idx++) {
+    for (std::size_t qubit_idx = 0; qubit_idx < pauli_word.size() && qubit_idx < num_qubits; qubit_idx++) {
       char p_char = pauli_word[qubit_idx];
       int pauli_code = 0;
       switch (p_char) {
@@ -355,7 +117,7 @@ GpuPauliHamiltonian SampleBasedKrylov::convert_to_gpu_hamiltonian() {
   }
   
   gpu_ham.num_terms = coeffs.size();
-  gpu_ham.num_qubits = num_qubits_;
+  gpu_ham.num_qubits = num_qubits;
   
   // Allocate GPU memory
   cudaMalloc(&gpu_ham.coeffs, coeffs.size() * sizeof(double));
@@ -376,15 +138,19 @@ GpuPauliHamiltonian SampleBasedKrylov::convert_to_gpu_hamiltonian() {
   return gpu_ham;
 }
 
-void SampleBasedKrylov::free_gpu_hamiltonian(GpuPauliHamiltonian& gpu_ham) {
+// Free GPU memory for Hamiltonian
+void free_gpu_hamiltonian(gpu_pauli_hamiltonian& gpu_ham) {
   cudaFree(gpu_ham.coeffs);
   cudaFree(gpu_ham.flattened_ops);
   cudaFree(gpu_ham.ops_per_term);
   cudaFree(gpu_ham.ops_offsets);
 }
 
-std::size_t SampleBasedKrylov::build_subspace_matrix_gpu(
-    const std::vector<Bitstring128>& basis,
+// Build the subspace Hamiltonian matrix on the GPU
+std::size_t build_subspace_matrix_gpu(
+    const cudaq::spin_op& hamiltonian,
+    std::size_t num_qubits,
+    const std::vector<bit_string_128>& basis,
     std::vector<int>& rows,
     std::vector<int>& cols,
     std::vector<double>& vals) {
@@ -392,13 +158,13 @@ std::size_t SampleBasedKrylov::build_subspace_matrix_gpu(
   int num_basis = basis.size();
   
   // Allocate device memory for basis
-  Bitstring128* d_basis;
-  cudaMalloc(&d_basis, num_basis * sizeof(Bitstring128));
-  cudaMemcpy(d_basis, basis.data(), num_basis * sizeof(Bitstring128), 
+  bit_string_128* d_basis;
+  cudaMalloc(&d_basis, num_basis * sizeof(bit_string_128));
+  cudaMemcpy(d_basis, basis.data(), num_basis * sizeof(bit_string_128), 
              cudaMemcpyHostToDevice);
   
   // Convert Hamiltonian to GPU format
-  GpuPauliHamiltonian gpu_ham = convert_to_gpu_hamiltonian();
+  gpu_pauli_hamiltonian gpu_ham = convert_to_gpu_hamiltonian(hamiltonian, num_qubits);
   
   // Estimate maximum NNZ (very conservative: num_basis * num_terms)
   size_t max_nnz = static_cast<size_t>(num_basis) * gpu_ham.num_terms;
@@ -449,7 +215,8 @@ std::size_t SampleBasedKrylov::build_subspace_matrix_gpu(
   return nnz_count;
 }
 
-void SampleBasedKrylov::convert_coo_to_csr(
+// Convert COO format to CSR format
+void convert_coo_to_csr(
     std::size_t num_basis,
     const std::vector<int>& rows,
     const std::vector<int>& cols,
@@ -496,29 +263,8 @@ void SampleBasedKrylov::convert_coo_to_csr(
   }
 }
 
-std::vector<double> SampleBasedKrylov::compute_eigenvalues_gpu(
-    std::size_t num_basis,
-    const std::vector<int>& csr_row_ptr,
-    const std::vector<int>& csr_col_ind,
-    const std::vector<double>& csr_vals,
-    int num_eigenvalues) {
-  
-  // Use dense eigensolver for small problems (< 1000), sparse for larger
-  const std::size_t DENSE_THRESHOLD = 1000;
-  
-  if (num_basis <= DENSE_THRESHOLD) {
-    // Dense eigensolver using cuSOLVER
-    return compute_eigenvalues_dense(num_basis, csr_row_ptr, csr_col_ind, 
-                                      csr_vals, num_eigenvalues);
-  } else {
-    // For larger matrices, we'd use sparse eigensolvers
-    // For MVP, fall back to dense (will be slow for large matrices)
-    return compute_eigenvalues_dense(num_basis, csr_row_ptr, csr_col_ind, 
-                                      csr_vals, num_eigenvalues);
-  }
-}
-
-std::vector<double> SampleBasedKrylov::compute_eigenvalues_dense(
+// Compute eigenvalues using dense cuSOLVER routine
+std::vector<double> compute_eigenvalues_dense(
     std::size_t num_basis,
     const std::vector<int>& csr_row_ptr,
     const std::vector<int>& csr_col_ind,
@@ -654,6 +400,261 @@ std::vector<double> SampleBasedKrylov::compute_eigenvalues_dense(
   
   return eigenvalues;
 #endif
+}
+
+// Compute eigenvalues (wrapper that selects dense or sparse solver)
+std::vector<double> compute_eigenvalues_gpu(
+    std::size_t num_basis,
+    const std::vector<int>& csr_row_ptr,
+    const std::vector<int>& csr_col_ind,
+    const std::vector<double>& csr_vals,
+    int num_eigenvalues) {
+  
+  // Use dense eigensolver for small problems (< 1000), sparse for larger
+  const std::size_t DENSE_THRESHOLD = 1000;
+  
+  if (num_basis <= DENSE_THRESHOLD) {
+    // Dense eigensolver using cuSOLVER
+    return compute_eigenvalues_dense(num_basis, csr_row_ptr, csr_col_ind, 
+                                      csr_vals, num_eigenvalues);
+  } else {
+    // For larger matrices, we'd use sparse eigensolvers
+    // For MVP, fall back to dense (will be slow for large matrices)
+    return compute_eigenvalues_dense(num_basis, csr_row_ptr, csr_col_ind, 
+                                      csr_vals, num_eigenvalues);
+  }
+}
+
+} // anonymous namespace
+
+// Main SKQD function
+skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
+                                heterogeneous_map options) {
+  auto solve_start = std::chrono::high_resolution_clock::now();
+  
+  // Extract configuration from options
+  int krylov_dim = options.get("krylov_dim", 15);
+  double dt = options.get("dt", 0.1);
+  int shots = options.get("shots", 10000);
+  int num_eigenvalues = options.get("num_eigenvalues", 1);
+  int trotter_order = options.get("trotter_order", 1);
+  int max_basis_size = options.get("max_basis_size", 0);
+  int verbose = options.get("verbose", 0);
+  
+  // Validate inputs
+  std::size_t num_qubits = hamiltonian.num_qubits();
+  
+  if (num_qubits == 0) {
+    throw std::runtime_error("[SKQD] Hamiltonian has zero qubits");
+  }
+  
+  if (num_qubits > 128) {
+    throw std::runtime_error("[SKQD] Currently supports up to 128 qubits");
+  }
+  
+  skqd_result result;
+  
+  // Phase 1: Quantum Sampling
+  if (verbose > 0) {
+    std::cout << "[SKQD] Starting quantum sampling phase..." << std::endl;
+    std::cout << "[SKQD] System size: " << num_qubits << " qubits" << std::endl;
+    std::cout << "[SKQD] Krylov dimension: " << krylov_dim << std::endl;
+    std::cout << "[SKQD] Shots per step: " << shots << std::endl;
+  }
+  
+  auto sampling_start = std::chrono::high_resolution_clock::now();
+  
+  // Collect all samples across all time steps
+  std::unordered_set<bit_string_128, bit_string_128_hash> unique_samples_set;
+  
+  // Create initial state |+...+> (equal superposition)
+  auto initial_state_kernel = [num_qubits]() __qpu__ {
+    cudaq::qvector q(num_qubits);
+    // Apply Hadamard to all qubits
+    for (size_t i = 0; i < num_qubits; i++) {
+      h(q[i]);
+    }
+    mz(q);
+  };
+  
+  // Sample at t=0 (initial state)
+  if (verbose > 1) {
+    std::cout << "[SKQD] Sampling at t = 0.0" << std::endl;
+  }
+  
+  auto counts_0 = cudaq::sample(shots, initial_state_kernel);
+  for (auto& [bits, count] : counts_0) {
+    unique_samples_set.insert(string_to_bitstring128(bits));
+  }
+  
+  // Sample at each Krylov time step
+  for (int k = 1; k < krylov_dim; k++) {
+    double t = k * dt;
+    
+    if (verbose > 1) {
+      std::cout << "[SKQD] Sampling at t = " << t << std::endl;
+    }
+    
+    // Apply proper Trotterization for time evolution
+    // exp(-iHt) ≈ ∏ exp(-i c_k P_k t) for each Hamiltonian term c_k P_k
+    auto evolved_kernel = [&hamiltonian, num_qubits, t, trotter_order]() __qpu__ {
+      cudaq::qvector q(num_qubits);
+      
+      // Prepare initial state |+...+> (equal superposition)
+      for (size_t i = 0; i < num_qubits; i++) {
+        h(q[i]);
+      }
+      
+      // Apply Trotterized time evolution
+      if (trotter_order == 1) {
+        // First-order Trotter: exp(-iHt) ≈ ∏_k exp(-i c_k P_k t)
+        for (const auto& term : hamiltonian) {
+          double coeff = term.evaluate_coefficient().real();
+          auto pauli_word = term.get_pauli_word(num_qubits);
+          
+          // Apply exp(-i * coeff * t * P) where P is the Pauli string
+          // exp_pauli applies exp(i * theta * P), so we use theta = -coeff * t
+          exp_pauli(-coeff * t, q, pauli_word.c_str());
+        }
+      } else if (trotter_order == 2) {
+        // Second-order Trotter (Suzuki formula):
+        // exp(-iHt) ≈ ∏_k exp(-i c_k P_k t/2) * ∏_k exp(-i c_k P_k t/2) (reverse)
+        // This is symmetric and has O(t³) error vs O(t²) for first-order
+        
+        // Store terms for reverse iteration
+        std::vector<std::pair<double, std::string>> terms;
+        for (const auto& term : hamiltonian) {
+          double coeff = term.evaluate_coefficient().real();
+          auto pauli_word = term.get_pauli_word(num_qubits);
+          terms.emplace_back(coeff, pauli_word);
+        }
+        
+        // Forward sweep with t/2
+        for (const auto& [coeff, pauli_word] : terms) {
+          exp_pauli(-coeff * t * 0.5, q, pauli_word.c_str());
+        }
+        
+        // Backward sweep with t/2 (reverse order)
+        for (auto it = terms.rbegin(); it != terms.rend(); ++it) {
+          exp_pauli(-it->first * t * 0.5, q, it->second.c_str());
+        }
+      } else {
+        // Fallback to first order for unsupported orders
+        for (const auto& term : hamiltonian) {
+          double coeff = term.evaluate_coefficient().real();
+          auto pauli_word = term.get_pauli_word(num_qubits);
+          exp_pauli(-coeff * t, q, pauli_word.c_str());
+        }
+      }
+      
+      mz(q);
+    };
+    
+    try {
+      auto counts = cudaq::sample(shots, evolved_kernel);
+      
+      // Add unique bitstrings to the set
+      for (auto& [bits, count] : counts) {
+        unique_samples_set.insert(string_to_bitstring128(bits));
+        
+        // Limit basis size if configured
+        if (max_basis_size > 0 && 
+            unique_samples_set.size() >= static_cast<size_t>(max_basis_size)) {
+          break;
+        }
+      }
+    } catch (const std::exception& e) {
+      if (verbose > 0) {
+        std::cerr << "[SKQD] Warning: Error during sampling at t=" << t 
+                  << ": " << e.what() << std::endl;
+      }
+    }
+    
+    if (max_basis_size > 0 && 
+        unique_samples_set.size() >= static_cast<size_t>(max_basis_size)) {
+      if (verbose > 0) {
+        std::cout << "[SKQD] Reached maximum basis size limit" << std::endl;
+      }
+      break;
+    }
+  }
+  
+  // Convert set to sorted vector for binary search
+  std::vector<bit_string_128> basis(unique_samples_set.begin(), unique_samples_set.end());
+  std::sort(basis.begin(), basis.end());
+  
+  auto sampling_end = std::chrono::high_resolution_clock::now();
+  result.sampling_time = std::chrono::duration<double>(sampling_end - sampling_start).count();
+  result.basis_size = basis.size();
+  
+  if (verbose > 0) {
+    std::cout << "[SKQD] Sampling complete. Basis size: " << result.basis_size << std::endl;
+    std::cout << "[SKQD] Sampling time: " << result.sampling_time << " seconds" << std::endl;
+  }
+  
+  if (basis.size() == 0) {
+    throw std::runtime_error("[SKQD] No samples collected");
+  }
+  
+  // Phase 2: Matrix Construction on GPU
+  if (verbose > 0) {
+    std::cout << "[SKQD] Building subspace Hamiltonian matrix..." << std::endl;
+  }
+  
+  auto matrix_start = std::chrono::high_resolution_clock::now();
+  
+  std::vector<int> rows, cols;
+  std::vector<double> vals;
+  
+  result.nnz = build_subspace_matrix_gpu(hamiltonian, num_qubits, basis, rows, cols, vals);
+  
+  auto matrix_end = std::chrono::high_resolution_clock::now();
+  result.matrix_construction_time = std::chrono::duration<double>(matrix_end - matrix_start).count();
+  
+  if (verbose > 0) {
+    std::cout << "[SKQD] Matrix construction complete. NNZ: " << result.nnz << std::endl;
+    std::cout << "[SKQD] Matrix construction time: " << result.matrix_construction_time 
+              << " seconds" << std::endl;
+  }
+  
+  if (result.nnz == 0) {
+    throw std::runtime_error("[SKQD] Matrix has no non-zero elements");
+  }
+  
+  // Phase 3: Convert to CSR format
+  std::vector<int> csr_row_ptr, csr_col_ind;
+  std::vector<double> csr_vals;
+  convert_coo_to_csr(basis.size(), rows, cols, vals, csr_row_ptr, csr_col_ind, csr_vals);
+  
+  // Phase 4: Diagonalization
+  if (verbose > 0) {
+    std::cout << "[SKQD] Computing eigenvalues..." << std::endl;
+  }
+  
+  auto diag_start = std::chrono::high_resolution_clock::now();
+  
+  result.eigenvalues = compute_eigenvalues_gpu(
+      basis.size(), csr_row_ptr, csr_col_ind, csr_vals, num_eigenvalues);
+  
+  auto diag_end = std::chrono::high_resolution_clock::now();
+  result.diagonalization_time = std::chrono::duration<double>(diag_end - diag_start).count();
+  
+  if (result.eigenvalues.size() > 0) {
+    result.ground_state_energy = result.eigenvalues[0];
+  }
+  
+  if (verbose > 0) {
+    std::cout << "[SKQD] Diagonalization complete." << std::endl;
+    std::cout << "[SKQD] Ground state energy: " << result.ground_state_energy << std::endl;
+    std::cout << "[SKQD] Diagonalization time: " << result.diagonalization_time 
+              << " seconds" << std::endl;
+    
+    auto solve_end = std::chrono::high_resolution_clock::now();
+    double total_time = std::chrono::duration<double>(solve_end - solve_start).count();
+    std::cout << "[SKQD] Total time: " << total_time << " seconds" << std::endl;
+  }
+  
+  return result;
 }
 
 } // namespace cudaq::solvers

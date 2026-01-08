@@ -8,8 +8,12 @@
 #pragma once
 
 #include "cudaq/spin_op.h"
+#include "cudaq/platform/quantum_platform.h"
+#include "cuda-qx/core/heterogeneous_map.h"
 #include <vector>
 #include <cstdint>
+
+using namespace cudaqx;
 
 // Define CUDA host/device attributes for cross-platform compatibility
 #ifndef __CUDACC__
@@ -18,32 +22,6 @@
 #endif
 
 namespace cudaq::solvers {
-
-/// @brief Configuration parameters for Sample-based Krylov Quantum Diagonalization
-struct skqd_config {
-  /// @brief Number of Krylov subspace time steps
-  int krylov_dim = 15;
-  
-  /// @brief Time step size for time evolution
-  double dt = 0.1;
-  
-  /// @brief Number of measurement samples per time step
-  int shots = 10000;
-  
-  /// @brief Number of lowest eigenvalues to compute
-  int num_eigenvalues = 1;
-  
-  /// @brief Trotter order for time evolution approximation (1 or 2)
-  /// Order 1: exp(-iHt) ≈ ∏ exp(-i c_k P_k t) - O(t²) error
-  /// Order 2: Symmetric Suzuki formula - O(t³) error, more accurate
-  int trotter_order = 1;
-  
-  /// @brief Maximum dimension of the subspace basis (0 = unlimited)
-  int max_basis_size = 0;
-  
-  /// @brief Verbosity level (0 = quiet, 1 = normal, 2 = debug)
-  int verbose = 0;
-};
 
 /// @brief Result structure for SKQD computation
 struct skqd_result {
@@ -74,29 +52,29 @@ struct skqd_result {
 
 /// @brief 128-bit bitstring representation for quantum states
 /// Supports up to 128 qubits
-struct alignas(16) Bitstring128 {
+struct alignas(16) bit_string_128 {
   uint64_t low;   ///< Lower 64 bits
   uint64_t high;  ///< Upper 64 bits
   
   /// @brief Default constructor
-  __host__ __device__ Bitstring128() : low(0), high(0) {}
+  __host__ __device__ bit_string_128() : low(0), high(0) {}
   
   /// @brief Constructor from two 64-bit integers
-  __host__ __device__ Bitstring128(uint64_t l, uint64_t h) : low(l), high(h) {}
+  __host__ __device__ bit_string_128(uint64_t l, uint64_t h) : low(l), high(h) {}
   
   /// @brief Comparison operator for sorting
-  __host__ __device__ bool operator<(const Bitstring128& other) const {
+  __host__ __device__ bool operator<(const bit_string_128& other) const {
     if (high != other.high) return high < other.high;
     return low < other.low;
   }
   
   /// @brief Equality operator
-  __host__ __device__ bool operator==(const Bitstring128& other) const {
+  __host__ __device__ bool operator==(const bit_string_128& other) const {
     return high == other.high && low == other.low;
   }
   
   /// @brief Inequality operator
-  __host__ __device__ bool operator!=(const Bitstring128& other) const {
+  __host__ __device__ bool operator!=(const bit_string_128& other) const {
     return !(*this == other);
   }
   
@@ -125,7 +103,7 @@ struct alignas(16) Bitstring128 {
 };
 
 /// @brief GPU-friendly representation of a Pauli Hamiltonian
-struct GpuPauliHamiltonian {
+struct gpu_pauli_hamiltonian {
   /// @brief Number of terms in the Hamiltonian
   int num_terms;
   
@@ -146,109 +124,43 @@ struct GpuPauliHamiltonian {
   int* ops_offsets;
 };
 
-/// @brief Sample-based Krylov Quantum Diagonalization solver
+/// @brief Sample-based Krylov Quantum Diagonalization algorithm
 /// 
-/// This class implements a hybrid quantum-classical algorithm for computing
+/// This function implements a hybrid quantum-classical algorithm for computing
 /// ground state energies of large quantum systems (80+ qubits) by combining
 /// quantum subspace sampling with GPU-accelerated classical post-processing.
-class SampleBasedKrylov {
-public:
-  /// @brief Construct a SampleBasedKrylov solver
-  /// @param hamiltonian The Hamiltonian to diagonalize
-  SampleBasedKrylov(const cudaq::spin_op& hamiltonian);
-  
-  /// @brief Destructor
-  ~SampleBasedKrylov();
-  
-  /// @brief Solve for the ground state energy
-  /// @param config Configuration parameters for the algorithm
-  /// @return Result structure containing the ground state energy and additional information
-  skqd_result solve(const skqd_config& config = skqd_config());
-  
-  /// @brief Get multiple eigenvalues
-  /// @param k Number of lowest eigenvalues to return
-  /// @return Vector of eigenvalues
-  std::vector<double> get_eigenvalues(int k);
-  
-  /// @brief Get the last computed result
-  /// @return The result from the most recent solve() call
-  const skqd_result& get_last_result() const { return last_result_; }
-
-private:
-  /// @brief The Hamiltonian to diagonalize
-  cudaq::spin_op hamiltonian_;
-  
-  /// @brief Number of qubits in the system
-  std::size_t num_qubits_;
-  
-  /// @brief Last computed result
-  skqd_result last_result_;
-  
-  /// @brief Build the subspace Hamiltonian matrix on the GPU
-  /// @param basis Unique basis bitstrings
-  /// @param num_basis Size of the basis
-  /// @param rows Output: row indices (COO format)
-  /// @param cols Output: column indices (COO format) 
-  /// @param vals Output: matrix values (COO format)
-  /// @return Number of non-zero elements
-  std::size_t build_subspace_matrix_gpu(
-      const std::vector<Bitstring128>& basis,
-      std::vector<int>& rows,
-      std::vector<int>& cols,
-      std::vector<double>& vals);
-  
-  /// @brief Convert COO format to CSR format
-  /// @param num_basis Size of the basis
-  /// @param rows Row indices (COO format)
-  /// @param cols Column indices (COO format)
-  /// @param vals Matrix values (COO format)
-  /// @param csr_row_ptr Output: CSR row pointers
-  /// @param csr_col_ind Output: CSR column indices
-  /// @param csr_vals Output: CSR values
-  void convert_coo_to_csr(
-      std::size_t num_basis,
-      const std::vector<int>& rows,
-      const std::vector<int>& cols,
-      const std::vector<double>& vals,
-      std::vector<int>& csr_row_ptr,
-      std::vector<int>& csr_col_ind,
-      std::vector<double>& csr_vals);
-  
-  /// @brief Compute eigenvalues using cuSOLVER
-  /// @param num_basis Size of the matrix
-  /// @param csr_row_ptr CSR row pointers
-  /// @param csr_col_ind CSR column indices
-  /// @param csr_vals CSR values
-  /// @param num_eigenvalues Number of eigenvalues to compute
-  /// @return Vector of eigenvalues
-  std::vector<double> compute_eigenvalues_gpu(
-      std::size_t num_basis,
-      const std::vector<int>& csr_row_ptr,
-      const std::vector<int>& csr_col_ind,
-      const std::vector<double>& csr_vals,
-      int num_eigenvalues);
-  
-  /// @brief Compute eigenvalues using dense cuSOLVER routine
-  /// @param num_basis Size of the matrix
-  /// @param csr_row_ptr CSR row pointers
-  /// @param csr_col_ind CSR column indices
-  /// @param csr_vals CSR values
-  /// @param num_eigenvalues Number of eigenvalues to compute
-  /// @return Vector of eigenvalues
-  std::vector<double> compute_eigenvalues_dense(
-      std::size_t num_basis,
-      const std::vector<int>& csr_row_ptr,
-      const std::vector<int>& csr_col_ind,
-      const std::vector<double>& csr_vals,
-      int num_eigenvalues);
-  
-  /// @brief Convert cudaq::spin_op to GpuPauliHamiltonian
-  /// @return GPU-friendly Hamiltonian representation
-  GpuPauliHamiltonian convert_to_gpu_hamiltonian();
-  
-  /// @brief Free GPU memory for Hamiltonian
-  /// @param gpu_ham GPU Hamiltonian to free
-  void free_gpu_hamiltonian(GpuPauliHamiltonian& gpu_ham);
-};
+///
+/// The algorithm generates a Krylov subspace through time evolution, samples
+/// quantum states, and constructs a reduced Hamiltonian matrix in the sampled
+/// subspace for efficient diagonalization on GPU.
+///
+/// @param hamiltonian The Hamiltonian to diagonalize
+/// @param options Configuration options. Supported keys:
+///  - "krylov_dim" (int): Number of Krylov subspace time steps [default: 15]
+///  - "dt" (double): Time step size for time evolution [default: 0.1]
+///  - "shots" (int): Number of measurement samples per time step [default: 10000]
+///  - "num_eigenvalues" (int): Number of lowest eigenvalues to compute [default: 1]
+///  - "trotter_order" (int): Trotter order for time evolution (1 or 2) [default: 1]
+///     Order 1: exp(-iHt) ≈ ∏ exp(-i c_k P_k t) - O(t²) error
+///     Order 2: Symmetric Suzuki formula - O(t³) error, more accurate
+///  - "max_basis_size" (int): Maximum dimension of subspace basis (0 = unlimited) [default: 0]
+///  - "verbose" (int): Verbosity level (0 = quiet, 1 = normal, 2 = debug) [default: 0]
+/// @return Result structure containing ground state energy and additional information
+///
+/// @throws std::runtime_error if Hamiltonian has zero qubits or exceeds 128 qubits
+///
+/// Example:
+/// @code
+///   cudaq::spin_op h = /* construct Hamiltonian */;
+///   heterogeneous_map options;
+///   options.insert("krylov_dim", 20);
+///   options.insert("shots", 5000);
+///   options.insert("trotter_order", 2);
+///   options.insert("verbose", 1);
+///   auto result = sample_based_krylov(h, options);
+///   printf("Ground state energy: %.12f\n", result.ground_state_energy);
+/// @endcode
+skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
+                                heterogeneous_map options = heterogeneous_map());
 
 } // namespace cudaq::solvers

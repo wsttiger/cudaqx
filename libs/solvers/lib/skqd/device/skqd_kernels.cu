@@ -14,9 +14,9 @@
 namespace cudaq::solvers {
 
 // Binary search in sorted basis array
-__device__ int binary_search_bitstring(const Bitstring128* basis, 
+__device__ int binary_search_bitstring(const bit_string_128* basis, 
                                        int num_basis, 
-                                       const Bitstring128& target) {
+                                       const bit_string_128& target) {
   int left = 0;
   int right = num_basis - 1;
   
@@ -38,11 +38,11 @@ __device__ int binary_search_bitstring(const Bitstring128* basis,
 }
 
 // Apply a Pauli operation to a bitstring
-__device__ Bitstring128 apply_pauli_term(const Bitstring128& state,
+__device__ bit_string_128 apply_pauli_term(const bit_string_128& state,
                                          const int* pauli_ops,
                                          int num_ops,
                                          double& phase) {
-  Bitstring128 result = state;
+  bit_string_128 result = state;
   phase = 1.0;
   
   for (int i = 0; i < num_ops; i++) {
@@ -82,9 +82,9 @@ __device__ Bitstring128 apply_pauli_term(const Bitstring128& state,
 
 // Main kernel for constructing the Hamiltonian matrix in the subspace
 __global__ void construct_matrix_kernel(
-    const Bitstring128* basis,
+    const bit_string_128* basis,
     int num_basis,
-    const GpuPauliHamiltonian gpu_ham,
+    const gpu_pauli_hamiltonian gpu_ham,
     int* rows,
     int* cols,
     double* vals,
@@ -93,7 +93,7 @@ __global__ void construct_matrix_kernel(
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (idx >= num_basis) return;
   
-  Bitstring128 my_state = basis[idx];
+  bit_string_128 my_state = basis[idx];
   
   // Iterate over all Hamiltonian terms
   for (int t = 0; t < gpu_ham.num_terms; t++) {
@@ -103,7 +103,7 @@ __global__ void construct_matrix_kernel(
     
     // Apply this Pauli term to get the connected state
     double phase = 1.0;
-    Bitstring128 connected_state = apply_pauli_term(
+    bit_string_128 connected_state = apply_pauli_term(
         my_state, 
         &gpu_ham.flattened_ops[ops_offset], 
         num_ops,
@@ -124,15 +124,15 @@ __global__ void construct_matrix_kernel(
 
 // Kernel for initial count of non-zero elements per row
 __global__ void count_nnz_per_row_kernel(
-    const Bitstring128* basis,
+    const bit_string_128* basis,
     int num_basis,
-    const GpuPauliHamiltonian gpu_ham,
+    const gpu_pauli_hamiltonian gpu_ham,
     int* nnz_per_row) {
   
   int idx = threadIdx.x + blockIdx.x * blockDim.x;
   if (idx >= num_basis) return;
   
-  Bitstring128 my_state = basis[idx];
+  bit_string_128 my_state = basis[idx];
   int count = 0;
   
   // Iterate over all Hamiltonian terms
@@ -141,7 +141,7 @@ __global__ void count_nnz_per_row_kernel(
     int num_ops = gpu_ham.ops_per_term[t];
     
     double phase = 1.0;
-    Bitstring128 connected_state = apply_pauli_term(
+    bit_string_128 connected_state = apply_pauli_term(
         my_state, 
         &gpu_ham.flattened_ops[ops_offset], 
         num_ops,
@@ -160,9 +160,9 @@ __global__ void count_nnz_per_row_kernel(
 extern "C" {
 
 void launch_construct_matrix_kernel(
-    const Bitstring128* d_basis,
+    const bit_string_128* d_basis,
     int num_basis,
-    const GpuPauliHamiltonian& d_gpu_ham,
+    const gpu_pauli_hamiltonian& d_gpu_ham,
     int* d_rows,
     int* d_cols,
     double* d_vals,
@@ -177,9 +177,9 @@ void launch_construct_matrix_kernel(
 }
 
 void launch_count_nnz_per_row_kernel(
-    const Bitstring128* d_basis,
+    const bit_string_128* d_basis,
     int num_basis,
-    const GpuPauliHamiltonian& d_gpu_ham,
+    const gpu_pauli_hamiltonian& d_gpu_ham,
     int* d_nnz_per_row,
     cudaStream_t stream) {
   
