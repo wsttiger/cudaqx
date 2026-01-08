@@ -15,6 +15,7 @@
 
 #include "cudaq/solvers/adapt.h"
 #include "cudaq/solvers/qaoa.h"
+#include "cudaq/solvers/skqd.h"
 #include "cudaq/solvers/stateprep/ceo.h"
 #include "cudaq/solvers/stateprep/uccgsd.h"
 #include "cudaq/solvers/stateprep/upccgsd.h"
@@ -1218,6 +1219,96 @@ Notes:
       },
       "Generate Clique Hamiltonian from a NetworkX graph", py::arg("graph"),
       py::arg("penalty") = 4.0);
+
+  // Bind SKQD configuration structure
+  py::class_<cudaq::solvers::skqd_config>(solvers, "SKQDConfig",
+                                           "Configuration for Sample-based Krylov Quantum Diagonalization")
+      .def(py::init<>())
+      .def_readwrite("krylov_dim", &cudaq::solvers::skqd_config::krylov_dim,
+                     "Number of Krylov subspace time steps (default: 15)")
+      .def_readwrite("dt", &cudaq::solvers::skqd_config::dt,
+                     "Time step size for time evolution (default: 0.1)")
+      .def_readwrite("shots", &cudaq::solvers::skqd_config::shots,
+                     "Number of measurement samples per time step (default: 10000)")
+      .def_readwrite("num_eigenvalues", &cudaq::solvers::skqd_config::num_eigenvalues,
+                     "Number of lowest eigenvalues to compute (default: 1)")
+      .def_readwrite("trotter_order", &cudaq::solvers::skqd_config::trotter_order,
+                     "Trotter order for time evolution: 1 (first-order, O(t²) error) or 2 (symmetric Suzuki, O(t³) error, default: 1)")
+      .def_readwrite("max_basis_size", &cudaq::solvers::skqd_config::max_basis_size,
+                     "Maximum dimension of subspace basis (0 = unlimited, default: 0)")
+      .def_readwrite("verbose", &cudaq::solvers::skqd_config::verbose,
+                     "Verbosity level (0 = quiet, 1 = normal, 2 = debug, default: 0)");
+
+  // Bind SKQD result structure
+  py::class_<cudaq::solvers::skqd_result>(solvers, "SKQDResult",
+                                           "Result from Sample-based Krylov Quantum Diagonalization")
+      .def(py::init<>())
+      .def_readwrite("ground_state_energy", &cudaq::solvers::skqd_result::ground_state_energy,
+                     "Ground state energy (lowest eigenvalue)")
+      .def_readwrite("eigenvalues", &cudaq::solvers::skqd_result::eigenvalues,
+                     "All computed eigenvalues")
+      .def_readwrite("basis_size", &cudaq::solvers::skqd_result::basis_size,
+                     "Size of the constructed subspace basis")
+      .def_readwrite("nnz", &cudaq::solvers::skqd_result::nnz,
+                     "Number of non-zero matrix elements")
+      .def_readwrite("sampling_time", &cudaq::solvers::skqd_result::sampling_time,
+                     "Total sampling time (seconds)")
+      .def_readwrite("matrix_construction_time", &cudaq::solvers::skqd_result::matrix_construction_time,
+                     "Matrix construction time (seconds)")
+      .def_readwrite("diagonalization_time", &cudaq::solvers::skqd_result::diagonalization_time,
+                     "Diagonalization time (seconds)")
+      .def("__float__", [](const cudaq::solvers::skqd_result &r) {
+        return r.ground_state_energy;
+      });
+
+  // Bind SampleBasedKrylov class
+  py::class_<cudaq::solvers::SampleBasedKrylov>(solvers, "SampleBasedKrylov",
+                                                 R"#(
+      Sample-based Krylov Quantum Diagonalization solver.
+      
+      This solver enables simulation of large-scale quantum systems (80+ qubits) by combining
+      quantum subspace sampling with GPU-accelerated classical post-processing.
+      
+      The method generates a Krylov subspace through time evolution, samples quantum states,
+      and constructs a reduced Hamiltonian matrix in the sampled subspace for diagonalization.
+      
+      Example:
+          >>> import cudaq_solvers as solvers
+          >>> hamiltonian = ... # Create your Hamiltonian
+          >>> solver = solvers.SampleBasedKrylov(hamiltonian)
+          >>> config = solvers.SKQDConfig()
+          >>> config.krylov_dim = 20
+          >>> config.shots = 5000
+          >>> config.verbose = 1
+          >>> result = solver.solve(config)
+          >>> print(f"Ground state energy: {result.ground_state_energy}")
+      )#")
+      .def(py::init<const cudaq::spin_op&>(), py::arg("hamiltonian"),
+           "Construct a SampleBasedKrylov solver with the given Hamiltonian")
+      .def("solve", &cudaq::solvers::SampleBasedKrylov::solve,
+           py::arg("config") = cudaq::solvers::skqd_config(),
+           R"#(
+           Solve for the ground state energy.
+           
+           Args:
+               config: Configuration parameters for the algorithm
+               
+           Returns:
+               SKQDResult containing the ground state energy and additional information
+           )#")
+      .def("get_eigenvalues", &cudaq::solvers::SampleBasedKrylov::get_eigenvalues,
+           py::arg("k"),
+           R"#(
+           Get multiple eigenvalues from the last solve.
+           
+           Args:
+               k: Number of lowest eigenvalues to return
+               
+           Returns:
+               List of eigenvalues
+           )#")
+      .def("get_last_result", &cudaq::solvers::SampleBasedKrylov::get_last_result,
+           "Get the result from the most recent solve() call");
 
   std::stringstream ss;
   ss << "CUDA-Q Solvers " << cudaq::solvers::getVersion() << " ("
