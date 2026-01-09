@@ -6,8 +6,8 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "../../../../../../lib/decoders/plugins/trt_decoder/persistent_ai_decoder.h"
-#include "../../../../../../lib/decoders/plugins/trt_decoder/cuda_graph_utils.h"
+#include "cudaq/qec/persistent_ai_decoder.h"
+#include "cudaq/qec/cuda_graph_utils.h"
 #include "trt_test_data.h"
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/trt_decoder_internal.h"
@@ -44,7 +44,7 @@ protected:
 // Test basic initialization
 TEST_F(PersistentDecoderTest, BasicInitialization) {
   // Check if test ONNX model exists
-  std::string onnx_path = "surface_code_decoder.onnx";
+  std::string onnx_path = "../assets/tests/surface_code_decoder.onnx";
   if (!std::filesystem::exists(onnx_path)) {
     GTEST_SKIP() << "ONNX model not found: " << onnx_path;
   }
@@ -56,10 +56,10 @@ TEST_F(PersistentDecoderTest, BasicInitialization) {
 
   try {
     // Build from ONNX
-    nvinfer1::ILogger* logger = new nvinfer1::Logger();
+    cuda_graph_utils::Logger logger;
     cudaqx::heterogeneous_map params;
     params.insert("onnx_load_path", onnx_path);
-    engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, *logger);
+    engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, logger);
     context.reset(engine->createExecutionContext());
   } catch (const std::exception &e) {
     GTEST_SKIP() << "Failed to create TensorRT engine: " << e.what();
@@ -114,16 +114,16 @@ TEST_F(PersistentDecoderTest, BasicInitialization) {
 
 // Test start/stop lifecycle
 TEST_F(PersistentDecoderTest, StartStopLifecycle) {
-  std::string onnx_path = "surface_code_decoder.onnx";
+  std::string onnx_path = "../assets/tests/surface_code_decoder.onnx";
   if (!std::filesystem::exists(onnx_path)) {
     GTEST_SKIP() << "ONNX model not found";
   }
 
   // Setup (similar to above)
-  nvinfer1::ILogger* logger = new nvinfer1::Logger();
+  cuda_graph_utils::Logger logger;
   cudaqx::heterogeneous_map params;
   params.insert("onnx_load_path", onnx_path);
-  auto engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, *logger);
+  auto engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, logger);
   auto context = std::unique_ptr<nvinfer1::IExecutionContext>(engine->createExecutionContext());
 
   int input_index = 0;
@@ -175,16 +175,16 @@ TEST_F(PersistentDecoderTest, StartStopLifecycle) {
 
 // Test enqueue/dequeue operations
 TEST_F(PersistentDecoderTest, EnqueueDequeueOperations) {
-  std::string onnx_path = "surface_code_decoder.onnx";
+  std::string onnx_path = "../assets/tests/surface_code_decoder.onnx";
   if (!std::filesystem::exists(onnx_path)) {
     GTEST_SKIP() << "ONNX model not found";
   }
 
   // Setup
-  nvinfer1::ILogger* logger = new nvinfer1::Logger();
+  cuda_graph_utils::Logger logger;
   cudaqx::heterogeneous_map params;
   params.insert("onnx_load_path", onnx_path);
-  auto engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, *logger);
+  auto engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, logger);
   auto context = std::unique_ptr<nvinfer1::IExecutionContext>(engine->createExecutionContext());
 
   int input_index = 0;
@@ -232,16 +232,16 @@ TEST_F(PersistentDecoderTest, EnqueueDequeueOperations) {
 
 // Test multiple syndromes
 TEST_F(PersistentDecoderTest, MultipleSyndromes) {
-  std::string onnx_path = "surface_code_decoder.onnx";
+  std::string onnx_path = "../assets/tests/surface_code_decoder.onnx";
   if (!std::filesystem::exists(onnx_path)) {
     GTEST_SKIP() << "ONNX model not found";
   }
 
   // Setup
-  nvinfer1::ILogger* logger = new nvinfer1::Logger();
+  cuda_graph_utils::Logger logger;
   cudaqx::heterogeneous_map params;
   params.insert("onnx_load_path", onnx_path);
-  auto engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, *logger);
+  auto engine = trt_decoder_internal::build_engine_from_onnx(onnx_path, params, logger);
   auto context = std::unique_ptr<nvinfer1::IExecutionContext>(engine->createExecutionContext());
 
   int input_index = 0;

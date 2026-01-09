@@ -10,9 +10,18 @@
 
 #include "NvInfer.h"
 #include "cuda_runtime_api.h"
+#include <iostream>
 #include <string>
 
 namespace cudaq::qec::cuda_graph_utils {
+
+/// @brief Simple TensorRT logger
+class Logger : public nvinfer1::ILogger {
+  void log(Severity severity, const char *msg) noexcept override {
+    if (severity <= Severity::kWARNING)
+      std::cout << msg << std::endl;
+  }
+};
 
 /// @brief Result structure for CUDA graph capture attempts
 struct CaptureResult {

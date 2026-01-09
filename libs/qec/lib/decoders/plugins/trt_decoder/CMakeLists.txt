@@ -57,14 +57,9 @@ if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_LIBRARY)
     message(STATUS "TensorRT library: ${TENSORRT_LIBRARY}")
     message(STATUS "TensorRT ONNX parser: ${TENSORRT_ONNX_LIBRARY}")
 
-    # Enable CUDA language for .cu files
-    enable_language(CUDA)
-
     # Specify the source files for the plugin
     set(PLUGIN_SRC
       trt_decoder.cpp
-      cuda_graph_utils.cpp
-      persistent_ai_decoder.cu        # CUDA source for persistent kernel
       # Add additional source files here as needed
     )
 
@@ -72,12 +67,6 @@ if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_LIBRARY)
 
     # Create the shared library
     add_library(${MODULE_NAME} SHARED ${PLUGIN_SRC})
-
-    # Set CUDA architectures (adjust based on your target GPU)
-    set_target_properties(${MODULE_NAME} PROPERTIES
-      CUDA_SEPARABLE_COMPILATION ON
-      CUDA_ARCHITECTURES "70;75;80;86;89;90"  # Volta, Turing, Ampere, Ada, Hopper
-    )
 
     # Set compile definitions
     target_compile_definitions(${MODULE_NAME} PRIVATE TENSORRT_AVAILABLE)
@@ -100,6 +89,7 @@ if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_LIBRARY)
       PRIVATE
         cudaq::cudaq-common
         cudaq-qec
+        cudaq-qec-utils
         ${TENSORRT_LIBRARY}
         ${TENSORRT_ONNX_LIBRARY}
         CUDA::cudart

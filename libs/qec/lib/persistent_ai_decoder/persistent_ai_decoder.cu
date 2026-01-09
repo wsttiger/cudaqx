@@ -6,10 +6,11 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "persistent_ai_decoder.h"
-#include "cuda_graph_utils.h"
+#include "cudaq/qec/persistent_ai_decoder.h"
+#include "cudaq/qec/cuda_graph_utils.h"
 #include "common/Logger.h"
 #include <cooperative_groups.h>
+#include <cuda_device_runtime_api.h>
 #include <cstring>
 
 namespace cg = cooperative_groups;
@@ -96,9 +97,16 @@ __global__ void __launch_bounds__(256, 2)
       }
     }
 
-    // Broadcast the result to all threads in the block
-    work_found = block.shred(work_found, 0);
-    my_slot = block.shred(my_slot, 0);
+    // Broadcast the result to all threads in the block using shared memory
+    __shared__ bool shared_work;
+    __shared__ int shared_slot;
+    if (block.thread_rank() == 0) {
+      shared_work = work_found;
+      shared_slot = my_slot;
+    }
+    block.sync();
+    work_found = shared_work;
+    my_slot = shared_slot;
 
     if (work_found) {
       // All threads in block know we have work to do
@@ -122,10 +130,8 @@ __global__ void __launch_bounds__(256, 2)
           // Error handling - mark as free so it can be retried
           atomicExch(&slot.status, 0);
         } else {
-          // Synchronize the stream to ensure inference is complete
-          cudaStreamSynchronize(slot.stream);
-          
-          // Mark as output_ready
+          // Mark as output_ready (asynchronous)
+          // Host will synchronize the stream before reading results
           atomicExch(&slot.status, 3);
         }
       }
@@ -328,7 +334,12 @@ bool persistent_ai_decoder::start() {
   persistent_decoder_kernel<<<grid, block>>>(
       work_slots_device_, config_.num_work_slots, stop_flag_device_);
 
-  HANDLE_CUDA_ERROR(cudaGetLastError());
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    CUDAQ_WARN("Kernel launch failed: {} ({})", 
+               cudaGetErrorString(launch_err), static_cast<int>(launch_err));
+    return false;
+  }
 
   running_.store(true);
   CUDAQ_INFO("Persistent kernel launched successfully - now running on GPU!");
@@ -437,6 +448,9 @@ bool persistent_ai_decoder::try_dequeue_result(std::vector<float> &result) {
   }
 
   auto &slot = work_slots_host_[slot_idx];
+
+  // Synchronize the stream to ensure inference is complete
+  HANDLE_CUDA_ERROR(cudaStreamSynchronize(slot.stream));
 
   // Copy result from this slot's device buffer
   result.resize(config_.output_size);

@@ -6,7 +6,7 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "cuda_graph_utils.h"
+#include "cudaq/qec/cuda_graph_utils.h"
 #include "common/Logger.h"
 #include <exception>
 #include <vector>
@@ -136,13 +136,16 @@ cudaGraphExec_t capture_graph_with_buffers(nvinfer1::IExecutionContext *context,
                              std::string(cudaGetErrorString(err)));
   }
   
-  // Instantiate the graph
-  err = cudaGraphInstantiate(&graph_exec, graph, 0);
+  // Instantiate the graph for device-side launch
+  // Required flags: DeviceLaunch must be combined with AutoFreeOnLaunch
+  unsigned long long flags = cudaGraphInstantiateFlagDeviceLaunch | 
+                             cudaGraphInstantiateFlagAutoFreeOnLaunch;
+  err = cudaGraphInstantiateWithFlags(&graph_exec, graph, flags);
   if (err != cudaSuccess) {
     if (graph) {
       cudaGraphDestroy(graph);
     }
-    throw std::runtime_error("cudaGraphInstantiate failed: " + 
+    throw std::runtime_error("cudaGraphInstantiateWithFlags failed: " + 
                              std::string(cudaGetErrorString(err)));
   }
   

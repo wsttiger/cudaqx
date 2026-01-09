@@ -9,7 +9,7 @@
 #include "common/Logger.h"
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/trt_decoder_internal.h"
-#include "cuda_graph_utils.h"
+#include "cudaq/qec/cuda_graph_utils.h"
 #include <algorithm>
 #include <cassert>
 #include <fstream>

@@ -9,8 +9,8 @@
 // Example demonstrating the UPDATED persistent_ai_decoder
 // NOTE: This is not compiled by default - it's for reference only
 
-#include "persistent_ai_decoder.h"
-#include "cuda_graph_utils.h"
+#include "cudaq/qec/persistent_ai_decoder.h"
+#include "cudaq/qec/cuda_graph_utils.h"
 #include "cudaq/qec/trt_decoder_internal.h"
 #include <chrono>
 #include <iostream>
