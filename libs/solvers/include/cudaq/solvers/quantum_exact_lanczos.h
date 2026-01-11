@@ -50,14 +50,15 @@ struct qel_result {
   std::size_t num_system;
 };
 
-/// @brief Run the Quantum Exact Lanczos (QEL) algorithm
+/// @brief Run the Quantum Exact Lanczos (QEL) algorithm with Hartree-Fock initial state
 /// @details Uses block encoding and amplitude amplification to compute
 /// the ground state energy of a quantum Hamiltonian. The algorithm builds
 /// a Krylov subspace by collecting moments μₖ = ⟨ψ|Tₖ(H)|ψ⟩ where Tₖ are
 /// Chebyshev polynomials, then solves a generalized eigenvalue problem.
+/// This version uses Hartree-Fock initial state (first n_electrons qubits in |1⟩).
 ///
 /// @param hamiltonian The target Hamiltonian as a spin_op
-/// @param initial_state Quantum kernel to prepare the initial state (e.g., HF state)
+/// @param num_qubits Number of system qubits
 /// @param n_electrons Number of electrons in the system (for HF initialization)
 /// @param options Additional options for the algorithm. Supported Keys:
 ///   - "krylov_dim" (int): Krylov subspace dimension [default: 10]
@@ -68,6 +69,26 @@ qel_result quantum_exact_lanczos(
     const cudaq::spin_op &hamiltonian,
     std::size_t num_qubits,
     std::size_t n_electrons,
+    heterogeneous_map options = heterogeneous_map());
+
+/// @brief Run the Quantum Exact Lanczos (QEL) algorithm with custom initial state
+/// @details Uses block encoding and amplitude amplification to compute
+/// the ground state energy of a quantum Hamiltonian with a user-provided initial state.
+/// The algorithm builds a Krylov subspace by collecting moments μₖ = ⟨ψ|Tₖ(H)|ψ⟩ where 
+/// Tₖ are Chebyshev polynomials, then solves a generalized eigenvalue problem.
+///
+/// @param hamiltonian The target Hamiltonian as a spin_op
+/// @param num_qubits Number of system qubits
+/// @param initial_state Function pointer to prepare the initial state |ψ⟩
+/// @param options Additional options for the algorithm. Supported Keys:
+///   - "krylov_dim" (int): Krylov subspace dimension [default: 10]
+///   - "shots" (int): Number of measurement shots (-1 for exact) [default: -1]
+///   - "verbose" (bool): Enable detailed output logging [default: false]
+/// @return qel_result containing the Krylov matrices and moments for diagonalization
+qel_result quantum_exact_lanczos(
+    const cudaq::spin_op &hamiltonian,
+    std::size_t num_qubits,
+    void (*initial_state)(cudaq::qvector<> &),
     heterogeneous_map options = heterogeneous_map());
 
 } // namespace cudaq::solvers

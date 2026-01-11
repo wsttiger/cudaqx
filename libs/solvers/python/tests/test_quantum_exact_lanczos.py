@@ -859,6 +859,113 @@ def test_quantum_exact_lanczos_benzene_molecule():
     print("\n✅ Benzene QEL test passed!")
 
 
+@pytest.mark.skipif(not HAS_SCIPY, reason="SciPy required for eigenvalue solving")
+def test_quantum_exact_lanczos_custom_initial_state():
+    """Test QEL with a custom initial state kernel."""
+    import cudaq
+    
+    # Simple 2-qubit Hamiltonian
+    h = 0.5 * spin.z(0) + 0.3 * spin.z(1) + 0.2 * spin.x(0) * spin.x(1)
+    
+    # Define a custom initial state (superposition state)
+    @cudaq.kernel
+    def custom_initial_state(qubits: cudaq.qvector):
+        """Create a superposition state: (|00⟩ + |11⟩) / sqrt(2)"""
+        h(qubits[0])
+        x.ctrl(qubits[0], qubits[1])
+    
+    print("\n" + "="*70)
+    print("Testing QEL with custom initial state kernel")
+    print("="*70)
+    
+    # Run QEL with custom initial state
+    result_custom = solvers.quantum_exact_lanczos(
+        h,
+        2,  # num_qubits
+        custom_initial_state,
+        krylov_dim=4,
+        shots=-1,
+        verbose=True
+    )
+    
+    # Also run with Hartree-Fock for comparison
+    print("\n" + "-"*70)
+    print("Running QEL with Hartree-Fock initial state for comparison")
+    print("-"*70)
+    
+    result_hf = solvers.quantum_exact_lanczos(
+        h,
+        2,  # num_qubits
+        1,  # n_electrons
+        krylov_dim=4,
+        shots=-1,
+        verbose=True
+    )
+    
+    # Verify both results have correct structure
+    assert result_custom.krylov_dimension == 4
+    assert result_custom.num_system == 2
+    assert result_hf.krylov_dimension == 4
+    assert result_hf.num_system == 2
+    
+    # Get matrices
+    H_custom = result_custom.get_hamiltonian_matrix()
+    S_custom = result_custom.get_overlap_matrix()
+    H_hf = result_hf.get_hamiltonian_matrix()
+    S_hf = result_hf.get_overlap_matrix()
+    
+    print(f"\nCustom state H matrix:\n{H_custom}")
+    print(f"\nCustom state S matrix:\n{S_custom}")
+    
+    # Solve for custom state
+    threshold = 1e-4
+    evals_S, evecs_S = np.linalg.eigh(S_custom)
+    keep_indices = [i for i, e in enumerate(evals_S) if e > threshold]
+    
+    if len(keep_indices) > 0:
+        S_filtered = np.diag(evals_S[keep_indices])
+        V_filtered = evecs_S[:, keep_indices]
+        H_proj = V_filtered.T @ H_custom @ V_filtered
+        S_inv_sqrt = np.diag(1.0 / np.sqrt(np.diag(S_filtered)))
+        H_final = S_inv_sqrt @ H_proj @ S_inv_sqrt
+        eigenvalues_custom = np.linalg.eigvalsh(H_final)
+    else:
+        eigenvalues_custom = np.linalg.eigvalsh(H_custom)
+    
+    # Solve for HF state
+    evals_S_hf, evecs_S_hf = np.linalg.eigh(S_hf)
+    keep_indices_hf = [i for i, e in enumerate(evals_S_hf) if e > threshold]
+    
+    if len(keep_indices_hf) > 0:
+        S_filtered_hf = np.diag(evals_S_hf[keep_indices_hf])
+        V_filtered_hf = evecs_S_hf[:, keep_indices_hf]
+        H_proj_hf = V_filtered_hf.T @ H_hf @ V_filtered_hf
+        S_inv_sqrt_hf = np.diag(1.0 / np.sqrt(np.diag(S_filtered_hf)))
+        H_final_hf = S_inv_sqrt_hf @ H_proj_hf @ S_inv_sqrt_hf
+        eigenvalues_hf = np.linalg.eigvalsh(H_final_hf)
+    else:
+        eigenvalues_hf = np.linalg.eigvalsh(H_hf)
+    
+    # Convert to physical energies
+    energy_custom = eigenvalues_custom[0] * result_custom.normalization + result_custom.constant_term
+    energy_hf = eigenvalues_hf[0] * result_hf.normalization + result_hf.constant_term
+    
+    print(f"\n{'='*70}")
+    print("Results:")
+    print(f"{'='*70}")
+    print(f"Custom initial state ground energy: {energy_custom:.6f}")
+    print(f"Hartree-Fock initial state ground energy: {energy_hf:.6f}")
+    print(f"Difference: {abs(energy_custom - energy_hf):.6f}")
+    
+    # The energies should be different because we're using different initial states
+    # Both should be valid but may capture different parts of the spectrum
+    # Just verify that both produce reasonable results (finite, not NaN)
+    assert np.isfinite(energy_custom), "Custom state energy should be finite"
+    assert np.isfinite(energy_hf), "HF state energy should be finite"
+    
+    print("\n✅ Custom initial state test passed!")
+
+
 def test_inheritance_hierarchy():
     """Test that PauliLCU properly inherits from BlockEncoding."""
     h = 0.7 * spin.z(0) + 0.3 * spin.x(0)
@@ -895,8 +1002,10 @@ if __name__ == "__main__":
     test_quantum_exact_lanczos_default_parameters()
     if HAS_SCIPY:
         test_quantum_exact_lanczos_h2_molecule()
+        test_quantum_exact_lanczos_custom_initial_state()
     else:
         print("Skipping H2 molecule test (SciPy not available)")
+        print("Skipping custom initial state test (SciPy not available)")
     test_inheritance_hierarchy()
     
     print("\nAll tests passed!")

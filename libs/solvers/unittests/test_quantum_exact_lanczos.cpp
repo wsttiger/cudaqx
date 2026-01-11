@@ -56,7 +56,7 @@ TEST(QuantumExactLanczos, checkSimpleXYZ) {
   options.insert("verbose", false);
 
   // Run QEL
-  auto result = quantum_exact_lanczos(h, 2, 0, options);
+  auto result = quantum_exact_lanczos(h, 2, std::size_t(0), options);
 
   // Check matrices were built
   EXPECT_EQ(result.hamiltonian_matrix.size(), 9); // 3x3
@@ -75,7 +75,7 @@ TEST(QuantumExactLanczos, checkMetadata) {
   heterogeneous_map options;
   options.insert("krylov_dim", 4);
 
-  auto result = quantum_exact_lanczos(h, 1, 0, options);
+  auto result = quantum_exact_lanczos(h, 1, std::size_t(0), options);
 
   // Check metadata
   EXPECT_EQ(result.krylov_dimension, 4);

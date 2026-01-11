@@ -10,6 +10,8 @@
 #include <pybind11/operators.h>
 #include <pybind11/stl.h>
 
+#include "cudaq/python/PythonCppInterop.h"
+
 #include "cudaq/solvers/operators/block_encoding.h"
 #include "cudaq/solvers/quantum_exact_lanczos.h"
 #include "cuda-qx/core/kwargs_utils.h"
@@ -302,18 +304,38 @@ Example:
       "quantum_exact_lanczos",
       [](const cudaq::spin_op &hamiltonian,
          std::size_t num_qubits,
-         std::size_t n_electrons,
+         py::object n_electrons_or_state,
          py::kwargs options) {
         heterogeneous_map opts;
         opts.insert("krylov_dim", getValueOr<int>(options, "krylov_dim", 10));
         opts.insert("shots", getValueOr<int>(options, "shots", -1));
         opts.insert("verbose", getValueOr<bool>(options, "verbose", false));
         
-        return quantum_exact_lanczos(hamiltonian, num_qubits, n_electrons, opts);
+        // Check if third argument is an integer or a kernel
+        // Try to cast to integer first - if that fails, treat as kernel
+        try {
+          std::size_t n_electrons = n_electrons_or_state.cast<std::size_t>();
+          // Successfully cast to integer, use Hartree-Fock initial state
+          return quantum_exact_lanczos(hamiltonian, num_qubits, n_electrons, opts);
+        } catch (const py::cast_error&) {
+          // Not an integer, treat as custom initial state kernel
+          cudaq::python::CppPyKernelDecorator initialStateKernelWrapper(
+              n_electrons_or_state);
+          initialStateKernelWrapper.compile();
+          auto baseName = n_electrons_or_state.attr("name").cast<std::string>();
+          std::string kernelName = "__nvqpp__mlirgen__" + baseName;
+          auto fptr =
+              initialStateKernelWrapper
+                  .extract_c_function_pointer<cudaq::qvector<> &>(kernelName);
+          auto *p = reinterpret_cast<void *>(fptr);
+          cudaq::registry::__cudaq_registerLinkableKernel(p, baseName.c_str(), p);
+          
+          return quantum_exact_lanczos(hamiltonian, num_qubits, fptr, opts);
+        }
       },
       py::arg("hamiltonian"),
       py::arg("num_qubits"),
-      py::arg("n_electrons"),
+      py::arg("n_electrons_or_initial_state"),
       R"(Run Quantum Exact Lanczos algorithm to compute ground state energy.
 
 Uses block encoding and amplitude amplification to build a Krylov subspace
@@ -323,7 +345,9 @@ extraction.
 Args:
     hamiltonian: Target Hamiltonian as SpinOperator
     num_qubits: Number of system qubits
-    n_electrons: Number of electrons (for Hartree-Fock initialization)
+    n_electrons_or_initial_state: Either:
+        - int: Number of electrons (uses Hartree-Fock initial state)
+        - cudaq.Kernel: Custom initial state preparation kernel
 
 Keyword Args:
     krylov_dim (int): Dimension of Krylov subspace (default: 10)
@@ -333,7 +357,7 @@ Keyword Args:
 Returns:
     QELResult: Contains Krylov matrices and metadata
 
-Example (basic usage):
+Example (Hartree-Fock initial state):
     >>> from cudaq import spin
     >>> import cudaq_solvers as solvers
     >>> import numpy as np
@@ -342,7 +366,7 @@ Example (basic usage):
     >>> # H2 Hamiltonian
     >>> h2 = -1.05 + 0.4*spin.z(0) - 0.4*spin.z(1) + 0.18*spin.x(0)*spin.x(1)
     >>> 
-    >>> # Run QEL
+    >>> # Run QEL with Hartree-Fock state
     >>> result = solvers.quantum_exact_lanczos(
     >>>     h2, num_qubits=2, n_electrons=2, krylov_dim=5
     >>> )
@@ -354,6 +378,21 @@ Example (basic usage):
     >>> energies = eigenvalues * result.normalization + result.constant_term
     >>> ground_state = energies.min()
     >>> print(f"Ground state: {ground_state:.6f} Ha")
+
+Example (custom initial state):
+    >>> import cudaq
+    >>> 
+    >>> # Define custom initial state
+    >>> @cudaq.kernel
+    >>> def my_initial_state(qubits: cudaq.qvector):
+    >>>     # Create superposition state
+    >>>     h(qubits[0])
+    >>>     x<cudaq.ctrl>(qubits[0], qubits[1])
+    >>> 
+    >>> # Run QEL with custom state
+    >>> result = solvers.quantum_exact_lanczos(
+    >>>     h2, num_qubits=2, my_initial_state, krylov_dim=5
+    >>> )
 
 Example (with filtering):
     >>> result = solvers.quantum_exact_lanczos(h2, 2, 2, krylov_dim=8)
@@ -372,7 +411,8 @@ Notes:
     - Requires ⌈log₂(# terms)⌉ ancilla qubits
     - Supports Hamiltonians with up to 1024 terms (10 ancilla)
     - Returns matrices for user to diagonalize with preferred library
-    - Initial state is Hartree-Fock (first n_electrons qubits in |1⟩))");
+    - Default initial state is Hartree-Fock (first n_electrons qubits in |1⟩)
+    - Custom initial state kernel must have signature: void(cudaq::qvector&))");
 }
 
 } // namespace cudaq::solvers

@@ -219,7 +219,123 @@ std::pair<std::vector<double>, std::vector<double>> build_krylov_matrices(
 }
 
 // ============================================================================
-// MAIN QEL ALGORITHM
+// MAIN QEL ALGORITHM - WITH CUSTOM INITIAL STATE
+// ============================================================================
+
+qel_result quantum_exact_lanczos(
+    const cudaq::spin_op &hamiltonian,
+    std::size_t num_qubits,
+    void (*initial_state)(cudaq::qvector<> &),
+    heterogeneous_map options) {
+  
+  // Extract options
+  int krylov_dim = options.get("krylov_dim", 10);
+  int shots = options.get("shots", -1);
+  bool verbose = options.get("verbose", false);
+  
+  // Create block encoding
+  pauli_lcu encoding(hamiltonian, num_qubits);
+  
+  std::size_t n_anc = encoding.num_ancilla();
+  std::size_t n_sys = encoding.num_system();
+  double one_norm = encoding.normalization();
+  
+  // Extract constant term from Hamiltonian
+  double constant_term = 0.0;
+  for (const auto &term : hamiltonian) {
+    auto word = term.get_pauli_word(num_qubits);
+    // Check if this is an identity term (all characters are 'I')
+    bool is_identity = (word.find_first_not_of('I') == std::string::npos);
+    if (is_identity) {
+      constant_term = term.evaluate_coefficient().real();
+      break;
+    }
+  }
+  
+  if (verbose) {
+    std::cout << "\n=== Quantum Exact Lanczos ===" << std::endl;
+    std::cout << "System qubits: " << n_sys << std::endl;
+    std::cout << "Ancilla qubits: " << n_anc << std::endl;
+    std::cout << "Using custom initial state" << std::endl;
+    std::cout << "1-Norm (α): " << one_norm << std::endl;
+    std::cout << "Constant term: " << constant_term << " Ha" << std::endl;
+    std::cout << "Krylov dimension: " << krylov_dim << std::endl;
+  }
+  
+  // Build observables
+  auto R_op = build_R_observable(n_anc);
+  auto U_op = build_U_observable(encoding);
+  
+  // Collect moments
+  std::vector<double> moments;
+  moments.reserve(2 * krylov_dim);
+  
+  if (verbose) {
+    std::cout << "\nCollecting moments..." << std::endl;
+  }
+  
+  for (int k = 0; k < 2 * krylov_dim; ++k) {
+    int m = k / 2;
+    
+    // Create quantum kernel for this moment with custom initial state
+    auto measure_kernel = [&, m, n_anc, n_sys]() __qpu__ {
+      cudaq::qvector<> anc(n_anc);
+      cudaq::qvector<> sys(n_sys);
+      
+      // Apply custom initial state preparation
+      initial_state(sys);
+      
+      if (k % 2 == 0) {
+        // Even moment
+        qel_measure_even_kernel{}(anc, sys, encoding, m);
+      } else {
+        // Odd moment
+        qel_state_prep_kernel{}(anc, sys, encoding, m);
+      }
+    };
+    
+    // Measure
+    cudaq::spin_op obs = (k % 2 == 0) ? R_op : U_op;
+    auto result = cudaq::observe(shots, measure_kernel, obs);
+    double moment = result.expectation();
+    moments.push_back(moment);
+    
+    if (verbose) {
+      std::cout << "  k=" << k << ": " << moment << std::endl;
+    }
+  }
+  
+  // Build Krylov matrices
+  if (verbose) {
+    std::cout << "\nBuilding Krylov matrices..." << std::endl;
+  }
+  
+  auto [H_mat, S_mat] = build_krylov_matrices(moments, krylov_dim);
+  
+  if (verbose) {
+    std::cout << "\n=== Results ===" << std::endl;
+    std::cout << "Hamiltonian matrix: " << krylov_dim << "×" << krylov_dim << std::endl;
+    std::cout << "Overlap matrix: " << krylov_dim << "×" << krylov_dim << std::endl;
+    std::cout << "Total moments collected: " << moments.size() << std::endl;
+    std::cout << "\nTo extract eigenvalues, solve: H|v⟩ = E·S|v⟩" << std::endl;
+    std::cout << "Then convert: E_physical = E_scaled * α + constant" << std::endl;
+  }
+  
+  // Return result
+  return qel_result{
+    H_mat,
+    S_mat,
+    moments,
+    krylov_dim,
+    constant_term,
+    one_norm,
+    n_anc,
+    n_sys
+  };
+}
+
+// ============================================================================
+// MAIN QEL ALGORITHM - WITH HARTREE-FOCK INITIAL STATE (DEFAULT)
 // ============================================================================
 
 qel_result quantum_exact_lanczos(
