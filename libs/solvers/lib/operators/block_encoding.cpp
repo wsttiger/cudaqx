@@ -8,9 +8,9 @@
 
 #include "cudaq/solvers/operators/block_encoding.h"
 #include <cmath>
-#include <stdexcept>
-#include <numeric>
 #include <iostream>
+#include <numeric>
+#include <stdexcept>
 
 namespace cudaq::solvers {
 
@@ -20,8 +20,8 @@ namespace cudaq::solvers {
 
 /// @brief Kernel for PREPARE operation - state preparation tree
 struct pauli_prepare_kernel {
-  void operator()(cudaq::qview<> anc, const std::vector<double> &angles) const
-      __qpu__ {
+  void operator()(cudaq::qview<> anc,
+                  const std::vector<double> &angles) const __qpu__ {
     if (anc.size() == 0)
       return;
 
@@ -43,8 +43,8 @@ struct pauli_prepare_kernel {
         }
 
         // Controlled rotation - explicitly handle cases up to 20 ancilla
-        // This covers large molecular Hamiltonians (up to 2^20 = 1,048,576 terms)
-        // NOTE: Cannot use qview with ry<cudaq::ctrl> unlike Pauli gates
+        // This covers large molecular Hamiltonians (up to 2^20 = 1,048,576
+        // terms) NOTE: Cannot use qview with ry<cudaq::ctrl> unlike Pauli gates
         if (layer == 1) {
           ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1]);
         } else if (layer == 2) {
@@ -52,42 +52,73 @@ struct pauli_prepare_kernel {
         } else if (layer == 3) {
           ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3]);
         } else if (layer == 4) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4]);
         } else if (layer == 5) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5]);
         } else if (layer == 6) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6]);
         } else if (layer == 7) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7]);
         } else if (layer == 8) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8]);
         } else if (layer == 9) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9]);
         } else if (layer == 10) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10]);
         } else if (layer == 11) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11]);
         } else if (layer == 12) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12]);
         } else if (layer == 13) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13]);
         } else if (layer == 14) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13], anc[14]);
         } else if (layer == 15) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15]);
         } else if (layer == 16) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
+                          anc[16]);
         } else if (layer == 17) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16], anc[17]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
+                          anc[16], anc[17]);
         } else if (layer == 18) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16], anc[17], anc[18]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
+                          anc[16], anc[17], anc[18]);
         } else if (layer == 19) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9], anc[10], anc[11], anc[12], anc[13], anc[14], anc[15], anc[16], anc[17], anc[18], anc[19]);
+          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
+                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
+                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
+                          anc[16], anc[17], anc[18], anc[19]);
         } else {
           // Hamiltonian with > 2^20 terms - extremely rare
           // This would require > 20 ancilla qubits
           // Users should consider Hamiltonian truncation for such large systems
-          throw std::runtime_error("Block encoding requires > 20 ancilla qubits. Consider Hamiltonian truncation.");
+          throw std::runtime_error("Block encoding requires > 20 ancilla "
+                                   "qubits. Consider Hamiltonian truncation.");
         }
         angle_idx++;
 
@@ -155,13 +186,17 @@ struct pauli_select_kernel {
         } else if (n_anc == 6) {
           z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5]);
         } else if (n_anc == 7) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6]);
+          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                         anc[6]);
         } else if (n_anc == 8) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7]);
+          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
+                         anc[7]);
         } else if (n_anc == 9) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8]);
+          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
+                         anc[7], anc[8]);
         } else if (n_anc == 10) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6], anc[7], anc[8], anc[9]);
+          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
+                         anc[7], anc[8], anc[9]);
         }
         // Note: Hamiltonians with > 1024 terms are very rare in practice
       }
@@ -294,7 +329,7 @@ pauli_lcu::pauli_lcu(const cudaq::spin_op &hamiltonian,
     // Each character position corresponds to a qubit
     for (std::size_t q_idx = 0; q_idx < word_str.size(); ++q_idx) {
       char pauli_char = word_str[q_idx];
-      
+
       if (pauli_char == 'I') {
         // Identity - skip
         continue;
@@ -346,4 +381,3 @@ void pauli_lcu::select(cudaq::qview<> ancilla, cudaq::qview<> system) const {
 }
 
 } // namespace cudaq::solvers
-

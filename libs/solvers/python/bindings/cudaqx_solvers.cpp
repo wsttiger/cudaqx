@@ -6,9 +6,9 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
+#include "solvers/py_block_encoding.h"
 #include "solvers/py_optim.h"
 #include "solvers/py_solvers.h"
-#include "solvers/py_block_encoding.h"
 
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>

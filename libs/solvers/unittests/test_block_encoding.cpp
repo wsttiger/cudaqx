@@ -45,7 +45,8 @@ TEST(BlockEncodingTester, checkPauliLCU_H2) {
   // Check term data structures have correct sizes
   EXPECT_GT(encoding.get_term_controls().size(), 0);
   EXPECT_GT(encoding.get_term_lengths().size(), 0);
-  EXPECT_EQ(encoding.get_term_signs().size(), encoding.get_term_lengths().size());
+  EXPECT_EQ(encoding.get_term_signs().size(),
+            encoding.get_term_lengths().size());
 }
 
 TEST(BlockEncodingTester, checkPauliLCU_SimpleXYZ) {
@@ -154,5 +155,3 @@ TEST(BlockEncodingTester, checkLargeHamiltonian) {
   // 7 * 0.1 + 8 * 0.05 = 0.7 + 0.4 = 1.1
   EXPECT_NEAR(encoding.normalization(), 1.1, 1e-10);
 }
-
-

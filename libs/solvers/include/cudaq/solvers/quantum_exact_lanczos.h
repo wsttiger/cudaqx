@@ -8,10 +8,10 @@
 
 #pragma once
 
-#include "cudaq/solvers/operators/block_encoding.h"
 #include "cuda-qx/core/heterogeneous_map.h"
-#include <vector>
+#include "cudaq/solvers/operators/block_encoding.h"
 #include <utility>
+#include <vector>
 
 using namespace cudaqx;
 
@@ -26,26 +26,26 @@ struct qel_result {
   /// Krylov Hamiltonian matrix (flattened, row-major order)
   /// Dimension: krylov_dimension × krylov_dimension
   std::vector<double> hamiltonian_matrix;
-  
+
   /// Krylov overlap matrix (flattened, row-major order)
   /// Dimension: krylov_dimension × krylov_dimension
   std::vector<double> overlap_matrix;
-  
+
   /// Collected moments: μₖ = ⟨ψ|Tₖ(H)|ψ⟩
   std::vector<double> moments;
-  
+
   /// Dimension of the Krylov subspace used
   int krylov_dimension;
-  
+
   /// Constant term from the Hamiltonian (to be added to eigenvalues)
   double constant_term;
-  
+
   /// Normalization constant (1-norm of Hamiltonian coefficients)
   double normalization;
-  
+
   /// Number of ancilla qubits used
   std::size_t num_ancilla;
-  
+
   /// Number of system qubits
   std::size_t num_system;
 };
@@ -57,18 +57,18 @@ struct qel_result {
 /// Chebyshev polynomials, then solves a generalized eigenvalue problem.
 ///
 /// @param hamiltonian The target Hamiltonian as a spin_op
-/// @param initial_state Quantum kernel to prepare the initial state (e.g., HF state)
+/// @param initial_state Quantum kernel to prepare the initial state (e.g., HF
+/// state)
 /// @param n_electrons Number of electrons in the system (for HF initialization)
 /// @param options Additional options for the algorithm. Supported Keys:
 ///   - "krylov_dim" (int): Krylov subspace dimension [default: 10]
 ///   - "shots" (int): Number of measurement shots (-1 for exact) [default: -1]
 ///   - "verbose" (bool): Enable detailed output logging [default: false]
-/// @return qel_result containing the Krylov matrices and moments for diagonalization
-qel_result quantum_exact_lanczos(
-    const cudaq::spin_op &hamiltonian,
-    std::size_t num_qubits,
-    std::size_t n_electrons,
-    heterogeneous_map options = heterogeneous_map());
+/// @return qel_result containing the Krylov matrices and moments for
+/// diagonalization
+qel_result
+quantum_exact_lanczos(const cudaq::spin_op &hamiltonian, std::size_t num_qubits,
+                      std::size_t n_electrons,
+                      heterogeneous_map options = heterogeneous_map());
 
 } // namespace cudaq::solvers
-

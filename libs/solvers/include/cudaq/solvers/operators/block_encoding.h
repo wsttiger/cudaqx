@@ -8,8 +8,8 @@
 #pragma once
 
 #include "cudaq.h"
-#include <vector>
 #include <cstddef>
+#include <vector>
 
 namespace cudaq::solvers {
 
@@ -68,7 +68,8 @@ public:
   }
 };
 
-/// @brief Block encoding implementation using Pauli LCU (Linear Combination of Unitaries)
+/// @brief Block encoding implementation using Pauli LCU (Linear Combination of
+/// Unitaries)
 ///
 /// This implementation is optimized for Hamiltonians expressed as sums of Pauli
 /// strings (e.g., molecular Hamiltonians from quantum chemistry). It uses:
@@ -81,14 +82,14 @@ private:
   // Flattened data for GPU kernels
   std::vector<double> state_prep_angles; // Rotation angles for PREPARE tree
   std::vector<int> term_controls;        // Binary control values per term
-  std::vector<int> term_ops;             // Flattened [code, qubit, code, qubit, ...]
-  std::vector<int> term_lengths;         // Number of Pauli ops per term
-  std::vector<int> term_signs;           // Sign (+1 or -1) per term
+  std::vector<int> term_ops;     // Flattened [code, qubit, code, qubit, ...]
+  std::vector<int> term_lengths; // Number of Pauli ops per term
+  std::vector<int> term_signs;   // Sign (+1 or -1) per term
 
   // Metadata
-  std::size_t n_anc;  // Number of ancilla qubits
-  std::size_t n_sys;  // Number of system qubits
-  double alpha;       // Normalization (1-norm)
+  std::size_t n_anc; // Number of ancilla qubits
+  std::size_t n_sys; // Number of system qubits
+  double alpha;      // Normalization (1-norm)
 
   /// @brief Compute rotation angles for state preparation tree
   /// @param probs Probability distribution (must be power of 2 length)
@@ -136,6 +137,3 @@ public:
 };
 
 } // namespace cudaq::solvers
-
-
-

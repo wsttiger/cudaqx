@@ -16,4 +16,3 @@ namespace cudaq::solvers {
 void bindBlockEncoding(pybind11::module &mod);
 
 } // namespace cudaq::solvers
-
