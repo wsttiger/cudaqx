@@ -86,7 +86,7 @@ test_examples() {
         if [ "$(uname -m)" == "x86_64" ]; then
           pip install "tensorrt-cu${cuda_major}==10.13.*" "cuda_toolkit[cudart]==${cuda_major}.${cuda_minor}.*"
         fi
-        pip install cudaq-qec[tensor_network_decoder] --find-links /root/wheels
+        pip install cudaq-qec[tensor_network_decoder,trt_decoder] --find-links /root/wheels
         pip install cudaq-solvers[gqe] --find-links /root/wheels
         source $CONDA_PREFIX/lib/python${python_version}/site-packages/distributed_interfaces/activate_custom_mpi.sh
         export OMPI_MCA_opal_cuda_support=true OMPI_MCA_btl='^openib'
