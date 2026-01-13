@@ -85,6 +85,7 @@ test_examples() {
         pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu${cuda_no_dot}
         if [ "$(uname -m)" == "x86_64" ]; then
           pip install "tensorrt-cu${cuda_major}==10.13.*" "cuda_toolkit[cudart]==${cuda_major}.${cuda_minor}.*"
+          pip install onnxscript
         fi
         pip install cudaq-qec[tensor_network_decoder,trt_decoder] --find-links /root/wheels
         pip install cudaq-solvers[gqe] --find-links /root/wheels

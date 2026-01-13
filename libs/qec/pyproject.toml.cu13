@@ -61,8 +61,7 @@ tensor_network_decoder = [
   "cuquantum-python-cu13==25.09.1"
 ]
 trt_decoder = [
-  "tensorrt-cu13",
-  "onnxscript"
+  "tensorrt-cu13"
 ]
 all = [
   "quimb",
