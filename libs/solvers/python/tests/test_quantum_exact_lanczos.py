@@ -19,6 +19,7 @@ if 'cudaq_solvers' not in sys.modules:
 
 import pytest
 import numpy as np
+import subprocess
 from cudaq import spin
 import cudaq_solvers as solvers
 try:
@@ -26,6 +27,21 @@ try:
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
+
+
+def is_nvidia_gpu_available():
+    """Check if NVIDIA GPU is available using nvidia-smi command."""
+    try:
+        result = subprocess.run(["nvidia-smi"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True)
+        if result.returncode == 0 and "GPU" in result.stdout:
+            return True
+    except FileNotFoundError:
+        # The nvidia-smi command is not found, indicating no NVIDIA GPU drivers
+        return False
+    return False
 
 
 def test_pauli_lcu_simple():
@@ -318,6 +334,8 @@ def test_quantum_exact_lanczos_h2_molecule():
 
 @pytest.mark.skipif(not HAS_SCIPY,
                     reason="SciPy required for eigenvalue solving")
+@pytest.mark.skipif(not is_nvidia_gpu_available(),
+                    reason="NVIDIA GPU not found")
 def test_quantum_exact_lanczos_lih_molecule():
     """Test QEL with LiH Hamiltonian from saved data file."""
     # Import LiH Hamiltonian data (no PySCF/OpenFermion required)
