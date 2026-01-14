@@ -55,7 +55,6 @@ def test_pauli_lcu_simple():
     assert encoding.num_ancilla == 1, "Expected 1 ancilla for 2 terms"
     assert encoding.num_system == 1, "Expected 1 system qubit"
     assert abs(encoding.normalization - 0.8) < 1e-10, "Expected norm of 0.8"
-    assert isinstance(encoding, solvers.BlockEncoding)
     assert isinstance(encoding, solvers.PauliLCU)
 
     # Check debug methods return numpy arrays
@@ -882,16 +881,15 @@ def test_quantum_exact_lanczos_benzene_molecule():
     print("\n✅ Benzene QEL test passed!")
 
 
-def test_inheritance_hierarchy():
-    """Test that PauliLCU properly inherits from BlockEncoding."""
+def test_pauli_lcu_interface():
+    """Test that PauliLCU has all expected methods."""
     h = 0.7 * spin.z(0) + 0.3 * spin.x(0)
     encoding = solvers.PauliLCU(h, num_qubits=1)
 
-    # Check inheritance
-    assert isinstance(encoding, solvers.BlockEncoding)
+    # Check type
     assert isinstance(encoding, solvers.PauliLCU)
 
-    # Check all BlockEncoding methods exist
+    # Check all block encoding methods exist
     assert hasattr(encoding, 'prepare')
     assert hasattr(encoding, 'unprepare')
     assert hasattr(encoding, 'select')
@@ -920,6 +918,6 @@ if __name__ == "__main__":
         test_quantum_exact_lanczos_h2_molecule()
     else:
         print("Skipping H2 molecule test (SciPy not available)")
-    test_inheritance_hierarchy()
+    test_pauli_lcu_interface()
 
     print("\nAll tests passed!")

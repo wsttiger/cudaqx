@@ -13,63 +13,17 @@
 
 namespace cudaq::solvers {
 
-/// @brief Abstract base class for block encoding implementations
+/// @brief Block encoding implementation using Pauli LCU (Linear Combination of
+/// Unitaries)
 ///
 /// A block encoding represents a quantum subroutine that encodes a target
 /// operator (typically a Hamiltonian) into a unitary operator acting on
-/// an extended Hilbert space with ancilla qubits. This is the fundamental
+/// an extended Hilbert space with ancilla qubits. This is a fundamental
 /// building block for algorithms like Quantum Eigenvalue Learning (QEL),
 /// Quantum Singular Value Transformation (QSVT), and Hamiltonian simulation.
 ///
 /// The block encoding U satisfies: (⟨0|_anc ⊗ I_sys) U (|0⟩_anc ⊗ I_sys) = H/α
 /// where α is the normalization constant and H is the target operator.
-class block_encoding {
-public:
-  virtual ~block_encoding() = default;
-
-  /// @brief Get the number of ancilla qubits required
-  /// @return Number of ancilla qubits
-  virtual std::size_t num_ancilla() const = 0;
-
-  /// @brief Get the number of system qubits
-  /// @return Number of system qubits
-  virtual std::size_t num_system() const = 0;
-
-  /// @brief Get the normalization constant (alpha)
-  /// @details The block encoding satisfies ||H|| ≤ α, where α is typically
-  /// the 1-norm or 2-norm of the Hamiltonian
-  /// @return Normalization constant
-  virtual double normalization() const = 0;
-
-  /// @brief Apply the PREPARE operation
-  /// @details Prepares a superposition state on the ancilla qubits that
-  /// encodes the coefficients of the Hamiltonian terms
-  /// @param ancilla View of ancilla qubits
-  virtual void prepare(cudaq::qview<> ancilla) const = 0;
-
-  /// @brief Apply the PREPARE† (adjoint/uncomputation) operation
-  /// @param ancilla View of ancilla qubits
-  virtual void unprepare(cudaq::qview<> ancilla) const = 0;
-
-  /// @brief Apply the SELECT operation
-  /// @details Applies the appropriate Hamiltonian term conditioned on the
-  /// ancilla register state
-  /// @param ancilla View of ancilla qubits (control register)
-  /// @param system View of system qubits (target register)
-  virtual void select(cudaq::qview<> ancilla, cudaq::qview<> system) const = 0;
-
-  /// @brief Apply the full block encoding: PREPARE → SELECT → PREPARE†
-  /// @param ancilla View of ancilla qubits
-  /// @param system View of system qubits
-  virtual void apply(cudaq::qview<> ancilla, cudaq::qview<> system) const {
-    prepare(ancilla);
-    select(ancilla, system);
-    unprepare(ancilla);
-  }
-};
-
-/// @brief Block encoding implementation using Pauli LCU (Linear Combination of
-/// Unitaries)
 ///
 /// This implementation is optimized for Hamiltonians expressed as sums of Pauli
 /// strings (e.g., molecular Hamiltonians from quantum chemistry). It uses:
@@ -77,7 +31,7 @@ public:
 /// - SELECT: Controlled Pauli operations indexed by ancilla state
 ///
 /// The encoding uses log₂(# terms) ancilla qubits and achieves α = ||H||₁.
-class pauli_lcu : public block_encoding {
+class pauli_lcu {
 private:
   // Flattened data for GPU kernels
   std::vector<double> state_prep_angles; // Rotation angles for PREPARE tree
@@ -103,22 +57,45 @@ public:
   explicit pauli_lcu(const cudaq::spin_op &hamiltonian, std::size_t num_qubits);
 
   /// @brief Get the number of ancilla qubits
-  std::size_t num_ancilla() const override { return n_anc; }
+  /// @return Number of ancilla qubits
+  std::size_t num_ancilla() const { return n_anc; }
 
   /// @brief Get the number of system qubits
-  std::size_t num_system() const override { return n_sys; }
+  /// @return Number of system qubits
+  std::size_t num_system() const { return n_sys; }
 
   /// @brief Get the normalization constant (1-norm of coefficients)
-  double normalization() const override { return alpha; }
+  /// @details The block encoding satisfies ||H|| ≤ α = ||H||₁
+  /// @return Normalization constant (1-norm)
+  double normalization() const { return alpha; }
 
   /// @brief Apply PREPARE: encode coefficients into ancilla superposition
-  void prepare(cudaq::qview<> ancilla) const override;
+  /// @details Prepares a superposition state on the ancilla qubits that
+  /// encodes the coefficients of the Hamiltonian terms
+  /// @param ancilla View of ancilla qubits
+  void prepare(cudaq::qview<> ancilla) const;
 
   /// @brief Apply PREPARE†: uncompute the ancilla superposition
-  void unprepare(cudaq::qview<> ancilla) const override;
+  /// @details Adjoint of the PREPARE operation
+  /// @param ancilla View of ancilla qubits
+  void unprepare(cudaq::qview<> ancilla) const;
 
   /// @brief Apply SELECT: controlled Pauli operations
-  void select(cudaq::qview<> ancilla, cudaq::qview<> system) const override;
+  /// @details Applies the appropriate Hamiltonian term conditioned on the
+  /// ancilla register state
+  /// @param ancilla View of ancilla qubits (control register)
+  /// @param system View of system qubits (target register)
+  void select(cudaq::qview<> ancilla, cudaq::qview<> system) const;
+
+  /// @brief Apply the full block encoding: PREPARE → SELECT → PREPARE†
+  /// @details Applies the complete block encoding unitary operation
+  /// @param ancilla View of ancilla qubits
+  /// @param system View of system qubits
+  void apply(cudaq::qview<> ancilla, cudaq::qview<> system) const {
+    prepare(ancilla);
+    select(ancilla, system);
+    unprepare(ancilla);
+  }
 
   /// @brief Get the state preparation angles (for debugging/testing)
   const std::vector<double> &get_angles() const { return state_prep_angles; }

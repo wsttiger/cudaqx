@@ -23,63 +23,10 @@ namespace cudaq::solvers {
 void bindBlockEncoding(py::module &mod) {
 
   // ============================================================================
-  // BLOCK ENCODING BASE CLASS
+  // PAULI LCU BLOCK ENCODING
   // ============================================================================
 
-  py::class_<block_encoding>(
-      mod, "BlockEncoding",
-      R"(Abstract base class for block encoding implementations.
-      
-A block encoding represents a quantum subroutine that encodes a target
-operator (typically a Hamiltonian) into a unitary operator acting on
-an extended Hilbert space with ancilla qubits.
-
-The block encoding U satisfies:
-  (⟨0|_anc ⊗ I_sys) U (|0⟩_anc ⊗ I_sys) = H/α
-
-where α is the normalization constant and H is the target operator.)")
-      .def_property_readonly("num_ancilla", &block_encoding::num_ancilla,
-                             "Number of ancilla qubits required")
-      .def_property_readonly("num_system", &block_encoding::num_system,
-                             "Number of system qubits")
-      .def_property_readonly("normalization", &block_encoding::normalization,
-                             "Normalization constant (α)")
-      .def("prepare", &block_encoding::prepare, py::arg("ancilla"),
-           R"(Apply the PREPARE operation to ancilla qubits.
-          
-Prepares a superposition state on the ancilla qubits that
-encodes the coefficients of the Hamiltonian terms.
-
-Args:
-    ancilla: View of ancilla qubits)")
-      .def("unprepare", &block_encoding::unprepare, py::arg("ancilla"),
-           R"(Apply the PREPARE† (adjoint/uncomputation) operation.
-
-Args:
-    ancilla: View of ancilla qubits)")
-      .def("select", &block_encoding::select, py::arg("ancilla"),
-           py::arg("system"),
-           R"(Apply the SELECT operation.
-          
-Applies the appropriate Hamiltonian term conditioned on the
-ancilla register state.
-
-Args:
-    ancilla: View of ancilla qubits (control register)
-    system: View of system qubits (target register))")
-      .def("apply", &block_encoding::apply, py::arg("ancilla"),
-           py::arg("system"),
-           R"(Apply the full block encoding: PREPARE → SELECT → PREPARE†.
-
-Args:
-    ancilla: View of ancilla qubits
-    system: View of system qubits)");
-
-  // ============================================================================
-  // PAULI LCU IMPLEMENTATION
-  // ============================================================================
-
-  py::class_<pauli_lcu, block_encoding>(
+  py::class_<pauli_lcu>(
       mod, "PauliLCU",
       R"(Block encoding using Pauli Linear Combination of Unitaries.
 
@@ -126,6 +73,36 @@ Raises:
                              "Number of system qubits")
       .def_property_readonly("normalization", &pauli_lcu::normalization,
                              "Normalization constant: α = ||H||₁ (1-norm)")
+      .def("prepare", &pauli_lcu::prepare, py::arg("ancilla"),
+           R"(Apply the PREPARE operation to ancilla qubits.
+          
+Prepares a superposition state on the ancilla qubits that
+encodes the coefficients of the Hamiltonian terms.
+
+Args:
+    ancilla: View of ancilla qubits)")
+      .def("unprepare", &pauli_lcu::unprepare, py::arg("ancilla"),
+           R"(Apply the PREPARE† (adjoint/uncomputation) operation.
+
+Args:
+    ancilla: View of ancilla qubits)")
+      .def("select", &pauli_lcu::select, py::arg("ancilla"),
+           py::arg("system"),
+           R"(Apply the SELECT operation.
+          
+Applies the appropriate Hamiltonian term conditioned on the
+ancilla register state.
+
+Args:
+    ancilla: View of ancilla qubits (control register)
+    system: View of system qubits (target register))")
+      .def("apply", &pauli_lcu::apply, py::arg("ancilla"),
+           py::arg("system"),
+           R"(Apply the full block encoding: PREPARE → SELECT → PREPARE†.
+
+Args:
+    ancilla: View of ancilla qubits
+    system: View of system qubits)")
       .def(
           "get_angles",
           [](const pauli_lcu &self) {
