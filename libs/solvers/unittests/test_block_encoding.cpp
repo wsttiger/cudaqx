@@ -10,7 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "cudaq.h"
-#include "cudaq/solvers/operators.h"
+#include "cudaq/solvers/operators/block_encoding.h"
 
 TEST(BlockEncodingTester, checkPauliLCU_H2) {
   using namespace cudaq::spin;
