@@ -8,9 +8,9 @@
 
 #pragma once
 
+#include "cuda-qx/core/heterogeneous_map.h"
 #include "cudaq.h"
 #include "cudaq/solvers/operators/block_encoding.h"
-#include "cuda-qx/core/heterogeneous_map.h"
 #include <utility>
 #include <vector>
 

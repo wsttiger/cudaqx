@@ -86,8 +86,7 @@ Args:
 
 Args:
     ancilla: View of ancilla qubits)")
-      .def("select", &pauli_lcu::select, py::arg("ancilla"),
-           py::arg("system"),
+      .def("select", &pauli_lcu::select, py::arg("ancilla"), py::arg("system"),
            R"(Apply the SELECT operation.
           
 Applies the appropriate Hamiltonian term conditioned on the
@@ -96,8 +95,7 @@ ancilla register state.
 Args:
     ancilla: View of ancilla qubits (control register)
     system: View of system qubits (target register))")
-      .def("apply", &pauli_lcu::apply, py::arg("ancilla"),
-           py::arg("system"),
+      .def("apply", &pauli_lcu::apply, py::arg("ancilla"), py::arg("system"),
            R"(Apply the full block encoding: PREPARE → SELECT → PREPARE†.
 
 Args:
