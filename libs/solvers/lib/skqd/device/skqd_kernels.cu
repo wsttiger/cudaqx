@@ -44,6 +44,7 @@ __device__ bit_string_128 apply_pauli_term(const bit_string_128& state,
                                          double& phase) {
   bit_string_128 result = state;
   phase = 1.0;
+  int y_count = 0;
   
   for (int i = 0; i < num_ops; i++) {
     int pauli_code = pauli_ops[2*i];      // 0=I, 1=X, 2=Y, 3=Z
@@ -61,9 +62,11 @@ __device__ bit_string_128 apply_pauli_term(const bit_string_128& state,
         {
           bool bit_val = result.get_bit(qubit_idx);
           result.flip_bit(qubit_idx);
-          // Y = iXZ, so phase depends on initial bit value
-          // Y|0> = i|1>, Y|1> = -i|0>
-          phase *= bit_val ? -1.0 : 1.0;  // Simplified: track only real part
+          // Y = iXZ. Y|0> = i|1>, Y|1> = -i|0>
+          // We handle the 'i' factor separately via y_count
+          // We handle the '-' sign for |1> here
+          if (bit_val) phase *= -1.0;
+          y_count++;
         }
         break;
         
@@ -75,6 +78,16 @@ __device__ bit_string_128 apply_pauli_term(const bit_string_128& state,
         }
         break;
     }
+  }
+  
+  // Handle the imaginary units from Y operators
+  // Each Y contributes a factor of 'i'
+  // 2 Ys -> i*i = -1
+  // 4 Ys -> i^4 = 1
+  // We assume the Hamiltonian is real, so y_count should be even
+  // If y_count is 2, 6, 10... we need to multiply by -1
+  if ((y_count / 2) % 2 != 0) {
+    phase *= -1.0;
   }
   
   return result;

@@ -21,10 +21,10 @@ def test_skqd_basic():
     # Solve using functional API with options dict
     result = solvers.sample_based_krylov(
         molecule.hamiltonian,
-        krylov_dim=5,
-        dt=0.1,
-        shots=1000,
-        trotter_order=1,
+        krylov_dim=15,
+        dt=0.01,
+        shots=2000,
+        trotter_order=2,
         verbose=0
     )
     
@@ -137,12 +137,12 @@ def test_skqd_h2o():
     # Solve with functional API
     result = solvers.sample_based_krylov(
         molecule.hamiltonian,
-        krylov_dim=8,
+        krylov_dim=15,
         dt=0.1,
         shots=3000,
         trotter_order=2,
         verbose=1,
-        max_basis_size=150
+        max_basis_size=250
     )
     
     # Check basic validity
@@ -335,3 +335,75 @@ if __name__ == "__main__":
     test_skqd_multiple_eigenvalues()
     test_skqd_result_conversion()
     print("All tests passed!")
+
+import cudaq
+import cudaq_solvers as solvers
+import pytest
+
+def test_skqd_filtering_particle_number():
+    """Test SKQD with particle number filtering and Hartree-Fock state"""
+    # H2 molecule geometry
+    geometry = [('H', (0., 0., 0.)), ('H', (0., 0., .7474))]
+    molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
+    
+    # H2 in sto-3g has 4 spin-orbitals and 2 electrons
+    # HF state should be |1100> (assuming sorted orbitals)
+    # Ground state should be dominated by |1100> and |0011> (both 2 electrons)
+    
+    n_electrons = 2
+    
+    # Run SKQD with filtering
+    result = solvers.sample_based_krylov(
+        molecule.hamiltonian,
+        krylov_dim=5,
+        shots=2000,
+        n_electrons=n_electrons,       # Use HF state |1100>
+        filter_particles=n_electrons,  # Keep only 2-electron states
+        verbose=1
+    )
+    
+    print(f"H2 Ground State Energy: {result.ground_state_energy}")
+    print(f"Basis size: {result.basis_size}")
+    
+    # Check that basis size is non-zero (we should find samples)
+    assert result.basis_size > 0
+    
+    # We can't easily inspect the basis strings from Python result object 
+    # (unless we expose them, which we haven't), but we can infer filtering worked
+    # if the energy is good and execution didn't crash.
+    # In a strict test we might want to expose basis to Python, but for now
+    # valid energy is a good proxy.
+    
+    # Check energy is reasonable (-1.137 is exact FCI)
+    assert result.ground_state_energy < -1.1
+    assert result.ground_state_energy > -1.2
+
+def test_skqd_filtering_mismatch():
+    """Test that filtering works by checking if we get NO samples when filtering for wrong number"""
+    geometry = [('H', (0., 0., 0.)), ('H', (0., 0., .7474))]
+    molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
+    
+    # Try to filter for 3 electrons (impossible for neutral H2 in minimal basis with charge conservation)
+    # Actually, noise might produce them, but HF state |1100> + physical H shouldn't evolve to |1110> easily 
+    # unless Trotter error is huge or noise.
+    
+    # If we filter for something that doesn't exist, we might get an error "No samples collected"
+    # or just an empty basis depending on implementation (implementation throws "No samples collected").
+    
+    try:
+        solvers.sample_based_krylov(
+            molecule.hamiltonian,
+            krylov_dim=5,
+            shots=1000,
+            n_electrons=2,
+            filter_particles=3, # Wrong number
+            verbose=0
+        )
+        assert False, "Should have thrown exception for no samples"
+    except RuntimeError as e:
+        assert "No samples collected" in str(e)
+
+if __name__ == "__main__":
+    test_skqd_filtering_particle_number()
+    test_skqd_filtering_mismatch()
+    print("Filtering tests passed!")

@@ -441,6 +441,10 @@ skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
   int max_basis_size = options.get("max_basis_size", 0);
   int verbose = options.get("verbose", 0);
   
+  // New options for state preparation and filtering
+  int n_electrons = options.get("n_electrons", 0); // 0 means use equal superposition
+  int filter_particles = options.get("filter_particles", -1); // -1 means no filtering
+  
   // Validate inputs
   std::size_t num_qubits = hamiltonian.num_qubits();
   
@@ -467,23 +471,46 @@ skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
   // Collect all samples across all time steps
   std::unordered_set<bit_string_128, bit_string_128_hash> unique_samples_set;
   
-  // Create initial state |+...+> (equal superposition)
-  auto initial_state_kernel = [num_qubits]() __qpu__ {
+  // Create initial state
+  auto initial_state_kernel = [num_qubits, n_electrons]() __qpu__ {
     cudaq::qvector q(num_qubits);
-    // Apply Hadamard to all qubits
-    for (size_t i = 0; i < num_qubits; i++) {
-      h(q[i]);
+    
+    if (n_electrons > 0) {
+      // Prepare Hartree-Fock state: |1...10...0>
+      // First n_electrons qubits are set to |1>
+      for (size_t i = 0; i < n_electrons; i++) {
+        x(q[i]);
+      }
+    } else {
+      // Prepare equal superposition: |+...+>
+      // Apply Hadamard to all qubits
+      for (size_t i = 0; i < num_qubits; i++) {
+        h(q[i]);
+      }
     }
     mz(q);
   };
   
   // Sample at t=0 (initial state)
   if (verbose > 1) {
-    std::cout << "[SKQD] Sampling at t = 0.0" << std::endl;
+    if (n_electrons > 0) {
+      std::cout << "[SKQD] Sampling at t = 0.0 (Hartree-Fock state)" << std::endl;
+    } else {
+      std::cout << "[SKQD] Sampling at t = 0.0 (Equal superposition)" << std::endl;
+    }
   }
   
   auto counts_0 = cudaq::sample(shots, initial_state_kernel);
   for (auto& [bits, count] : counts_0) {
+    // Filter by particle number if requested
+    if (filter_particles >= 0) {
+      int popcount = 0;
+      for (char c : bits) {
+        if (c == '1') popcount++;
+      }
+      if (popcount != filter_particles) continue;
+    }
+    
     unique_samples_set.insert(string_to_bitstring128(bits));
   }
   
@@ -497,12 +524,19 @@ skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
     
     // Apply proper Trotterization for time evolution
     // exp(-iHt) ≈ ∏ exp(-i c_k P_k t) for each Hamiltonian term c_k P_k
-    auto evolved_kernel = [&hamiltonian, num_qubits, t, trotter_order]() __qpu__ {
+    auto evolved_kernel = [&hamiltonian, num_qubits, t, trotter_order, n_electrons]() __qpu__ {
       cudaq::qvector q(num_qubits);
       
-      // Prepare initial state |+...+> (equal superposition)
-      for (size_t i = 0; i < num_qubits; i++) {
-        h(q[i]);
+      if (n_electrons > 0) {
+        // Prepare Hartree-Fock state: |1...10...0>
+        for (size_t i = 0; i < n_electrons; i++) {
+          x(q[i]);
+        }
+      } else {
+        // Prepare initial state |+...+> (equal superposition)
+        for (size_t i = 0; i < num_qubits; i++) {
+          h(q[i]);
+        }
       }
       
       // Apply Trotterized time evolution
@@ -555,6 +589,15 @@ skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
       
       // Add unique bitstrings to the set
       for (auto& [bits, count] : counts) {
+        // Filter by particle number if requested
+        if (filter_particles >= 0) {
+          int popcount = 0;
+          for (char c : bits) {
+            if (c == '1') popcount++;
+          }
+          if (popcount != filter_particles) continue;
+        }
+
         unique_samples_set.insert(string_to_bitstring128(bits));
         
         // Limit basis size if configured

@@ -1254,6 +1254,8 @@ Notes:
         optOptions.insert("trotter_order", getValueOr<int>(options, "trotter_order", 1));
         optOptions.insert("max_basis_size", getValueOr<int>(options, "max_basis_size", 0));
         optOptions.insert("verbose", getValueOr<int>(options, "verbose", 0));
+        optOptions.insert("n_electrons", getValueOr<int>(options, "n_electrons", 0));
+        optOptions.insert("filter_particles", getValueOr<int>(options, "filter_particles", -1));
         
         return cudaq::solvers::sample_based_krylov(hamiltonian, optOptions);
       },
@@ -1293,6 +1295,12 @@ hamiltonian : cudaq.SpinOperator
         Maximum dimension of subspace basis (0 = unlimited). Default is 0.
     - verbose : int, optional
         Verbosity level (0 = quiet, 1 = normal, 2 = debug). Default is 0.
+    - n_electrons : int, optional
+        Number of electrons for Hartree-Fock state initialization |1...10...0>. 
+        If 0, uses equal superposition |+...+>. Default is 0.
+    - filter_particles : int, optional
+        Filter sampled bitstrings to keep only those with this total particle number.
+        -1 means no filtering. Default is -1.
 
 Returns:
 --------
