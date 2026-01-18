@@ -377,30 +377,10 @@ std::vector<double> compute_eigenvalues_dense(
   return eigenvalues;
   
 #else
-  // Fallback: Simple diagonal extraction when cuSOLVER is not available
-  // This is a placeholder that gives rough estimates
-  std::vector<double> eigenvalues(num_eigenvalues, 0.0);
-  
-  if (num_basis > 0 && csr_vals.size() > 0) {
-    // Extract diagonal elements as rough eigenvalue estimates
-    double min_diag = 0.0;
-    for (size_t i = 0; i < num_basis; i++) {
-      int row_start = csr_row_ptr[i];
-      int row_end = csr_row_ptr[i + 1];
-      
-      for (int j = row_start; j < row_end; j++) {
-        int col = csr_col_ind[j];
-        if (col == static_cast<int>(i)) {
-          if (i == 0 || csr_vals[j] < min_diag) {
-            min_diag = csr_vals[j];
-          }
-        }
-      }
-    }
-    eigenvalues[0] = min_diag;
-  }
-  
-  return eigenvalues;
+  throw std::runtime_error(
+      "[SKQD] cuSOLVER is not available. "
+      "Eigenvalue computation requires cuSOLVER or use the "
+      "sample_based_krylov_matrix() API and diagonalize in Python.");
 #endif
 }
 
