@@ -13,19 +13,9 @@
 #include <unordered_set>
 #include <iostream>
 #include <map>
+#include <string>
+#include <utility>
 #include <cuda_runtime.h>
-
-// Try to include cuSOLVER if available
-#ifdef __has_include
-#  if __has_include(<cusolverDn.h>)
-#    include <cusolverDn.h>
-#    define HAVE_CUSOLVER 1
-#  endif
-#  if __has_include(<cusparse.h>)
-#    include <cusparse.h>
-#    define HAVE_CUSPARSE 1
-#  endif
-#endif
 
 // Forward declarations for CUDA kernel launchers
 extern "C" {
@@ -69,6 +59,16 @@ struct bit_string_128_hash {
   }
 };
 
+std::string bitstring_from_bit_string_128(const bit_string_128& bs,
+                                          std::size_t num_qubits) {
+  std::string out;
+  out.reserve(num_qubits);
+  for (int k = static_cast<int>(num_qubits) - 1; k >= 0; k--) {
+    out.push_back(bs.get_bit(k) ? '1' : '0');
+  }
+  return out;
+}
+
 // Convert cudaq::spin_op to gpu_pauli_hamiltonian
 gpu_pauli_hamiltonian convert_to_gpu_hamiltonian(const cudaq::spin_op& hamiltonian, 
                                                   std::size_t num_qubits) {
@@ -106,7 +106,9 @@ gpu_pauli_hamiltonian convert_to_gpu_hamiltonian(const cudaq::spin_op& hamiltoni
       
       if (pauli_code != 0) {  // Skip identity
         flattened_ops.push_back(pauli_code);
-        flattened_ops.push_back(static_cast<int>(qubit_idx));
+        // Map logical qubit index (leftmost in string) to bit index in bit_string_128
+        // which stores the rightmost bit as index 0.
+        flattened_ops.push_back(static_cast<int>(num_qubits - 1 - qubit_idx));
         num_ops++;
       }
     }
@@ -698,6 +700,171 @@ skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
   }
   
   return result;
+}
+
+std::pair<std::vector<double>, std::vector<std::string>>
+sample_based_krylov_matrix(const cudaq::spin_op& hamiltonian,
+                           heterogeneous_map options) {
+  // Extract configuration from options
+  int krylov_dim = options.get("krylov_dim", 15);
+  double dt = options.get("dt", 0.1);
+  int shots = options.get("shots", 10000);
+  int trotter_order = options.get("trotter_order", 1);
+  int max_basis_size = options.get("max_basis_size", 0);
+  int verbose = options.get("verbose", 0);
+  int n_electrons = options.get("n_electrons", 0);
+  int filter_particles = options.get("filter_particles", -1);
+
+  // Validate inputs
+  std::size_t num_qubits = hamiltonian.num_qubits();
+
+  if (num_qubits == 0) {
+    throw std::runtime_error("[SKQD] Hamiltonian has zero qubits");
+  }
+
+  if (num_qubits > 128) {
+    throw std::runtime_error("[SKQD] Currently supports up to 128 qubits");
+  }
+
+  // Phase 1: Quantum Sampling (same as sample_based_krylov)
+  if (verbose > 0) {
+    std::cout << "[SKQD] Starting quantum sampling phase..." << std::endl;
+    std::cout << "[SKQD] System size: " << num_qubits << " qubits" << std::endl;
+    std::cout << "[SKQD] Krylov dimension: " << krylov_dim << std::endl;
+    std::cout << "[SKQD] Shots per step: " << shots << std::endl;
+  }
+
+  std::unordered_set<bit_string_128, bit_string_128_hash> unique_samples_set;
+
+  auto initial_state_kernel = [num_qubits, n_electrons]() __qpu__ {
+    cudaq::qvector q(num_qubits);
+
+    if (n_electrons > 0) {
+      // Prepare Hartree-Fock state: |1...10...0>
+      for (size_t i = 0; i < n_electrons; i++) {
+        x(q[i]);
+      }
+    } else {
+      // Prepare equal superposition: |+...+>
+      for (size_t i = 0; i < num_qubits; i++) {
+        h(q[i]);
+      }
+    }
+    mz(q);
+  };
+
+  auto counts_0 = cudaq::sample(shots, initial_state_kernel);
+  for (auto& [bits, count] : counts_0) {
+    if (filter_particles >= 0) {
+      int popcount = 0;
+      for (char c : bits) {
+        if (c == '1') popcount++;
+      }
+      if (popcount != filter_particles) continue;
+    }
+    unique_samples_set.insert(string_to_bitstring128(bits));
+  }
+
+  for (int k = 1; k < krylov_dim; k++) {
+    double t = k * dt;
+
+    auto evolved_kernel = [&hamiltonian, num_qubits, t, trotter_order, n_electrons]() __qpu__ {
+      cudaq::qvector q(num_qubits);
+
+      if (n_electrons > 0) {
+        for (size_t i = 0; i < n_electrons; i++) {
+          x(q[i]);
+        }
+      } else {
+        for (size_t i = 0; i < num_qubits; i++) {
+          h(q[i]);
+        }
+      }
+
+      if (trotter_order == 1) {
+        for (const auto& term : hamiltonian) {
+          double coeff = term.evaluate_coefficient().real();
+          auto pauli_word = term.get_pauli_word(num_qubits);
+          exp_pauli(-coeff * t, q, pauli_word.c_str());
+        }
+      } else if (trotter_order == 2) {
+        std::vector<std::pair<double, std::string>> terms;
+        for (const auto& term : hamiltonian) {
+          double coeff = term.evaluate_coefficient().real();
+          auto pauli_word = term.get_pauli_word(num_qubits);
+          terms.emplace_back(coeff, pauli_word);
+        }
+
+        for (const auto& [coeff, pauli_word] : terms) {
+          exp_pauli(-coeff * t * 0.5, q, pauli_word.c_str());
+        }
+
+        for (auto it = terms.rbegin(); it != terms.rend(); ++it) {
+          exp_pauli(-it->first * t * 0.5, q, it->second.c_str());
+        }
+      } else {
+        for (const auto& term : hamiltonian) {
+          double coeff = term.evaluate_coefficient().real();
+          auto pauli_word = term.get_pauli_word(num_qubits);
+          exp_pauli(-coeff * t, q, pauli_word.c_str());
+        }
+      }
+
+      mz(q);
+    };
+
+    auto counts = cudaq::sample(shots, evolved_kernel);
+    for (auto& [bits, count] : counts) {
+      if (filter_particles >= 0) {
+        int popcount = 0;
+        for (char c : bits) {
+          if (c == '1') popcount++;
+        }
+        if (popcount != filter_particles) continue;
+      }
+
+      unique_samples_set.insert(string_to_bitstring128(bits));
+
+      if (max_basis_size > 0 &&
+          unique_samples_set.size() >= static_cast<size_t>(max_basis_size)) {
+        break;
+      }
+    }
+
+    if (max_basis_size > 0 &&
+        unique_samples_set.size() >= static_cast<size_t>(max_basis_size)) {
+      break;
+    }
+  }
+
+  std::vector<bit_string_128> basis(unique_samples_set.begin(),
+                                    unique_samples_set.end());
+  std::sort(basis.begin(), basis.end());
+
+  if (basis.empty()) {
+    throw std::runtime_error("[SKQD] No samples collected");
+  }
+
+  // Phase 2: Matrix Construction
+  std::vector<int> rows, cols;
+  std::vector<double> vals;
+  build_subspace_matrix_gpu(hamiltonian, num_qubits, basis, rows, cols, vals);
+
+  // Convert COO -> dense
+  const std::size_t dim = basis.size();
+  std::vector<double> dense(dim * dim, 0.0);
+  for (std::size_t i = 0; i < rows.size(); i++) {
+    dense[rows[i] * dim + cols[i]] += vals[i];
+  }
+
+  // Build basis strings (same ordering as basis vector)
+  std::vector<std::string> basis_strings;
+  basis_strings.reserve(basis.size());
+  for (const auto& bs : basis) {
+    basis_strings.push_back(bitstring_from_bit_string_128(bs, num_qubits));
+  }
+
+  return {dense, basis_strings};
 }
 
 } // namespace cudaq::solvers

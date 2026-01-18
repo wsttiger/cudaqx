@@ -12,6 +12,8 @@
 #include "cuda-qx/core/heterogeneous_map.h"
 #include <vector>
 #include <cstdint>
+#include <string>
+#include <utility>
 
 using namespace cudaqx;
 
@@ -162,5 +164,26 @@ struct gpu_pauli_hamiltonian {
 /// @endcode
 skqd_result sample_based_krylov(const cudaq::spin_op& hamiltonian,
                                 heterogeneous_map options = heterogeneous_map());
+
+/// @brief Build the SKQD subspace Hamiltonian matrix and return it to the caller
+///
+/// This function runs the SKQD sampling phase and constructs the projected
+/// Hamiltonian matrix in the sampled subspace. The matrix is returned in dense
+/// row-major format along with the basis ordering used for rows/columns.
+///
+/// @param hamiltonian The Hamiltonian to project
+/// @param options Configuration options. Supported keys:
+///  - "krylov_dim" (int): Number of Krylov subspace time steps [default: 15]
+///  - "dt" (double): Time step size for time evolution [default: 0.1]
+///  - "shots" (int): Number of measurement samples per time step [default: 10000]
+///  - "trotter_order" (int): Trotter order for time evolution (1 or 2) [default: 1]
+///  - "max_basis_size" (int): Maximum dimension of subspace basis (0 = unlimited) [default: 0]
+///  - "verbose" (int): Verbosity level (0 = quiet, 1 = normal, 2 = debug) [default: 0]
+///  - "n_electrons" (int): Number of electrons for Hartree-Fock initialization [default: 0]
+///  - "filter_particles" (int): Keep only bitstrings with this particle count [-1 = off]
+/// @return Pair of (dense matrix in row-major, basis strings)
+std::pair<std::vector<double>, std::vector<std::string>>
+sample_based_krylov_matrix(const cudaq::spin_op& hamiltonian,
+                           heterogeneous_map options = heterogeneous_map());
 
 } // namespace cudaq::solvers

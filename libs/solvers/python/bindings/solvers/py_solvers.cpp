@@ -1358,6 +1358,59 @@ Notes:
 
 )#");
 
+  // Bind sample_based_krylov_matrix function
+  solvers.def(
+      "sample_based_krylov_matrix",
+      [](cudaq::spin_op hamiltonian, py::kwargs options) {
+        heterogeneous_map optOptions;
+        optOptions.insert("krylov_dim", getValueOr<int>(options, "krylov_dim", 15));
+        optOptions.insert("dt", getValueOr<double>(options, "dt", 0.1));
+        optOptions.insert("shots", getValueOr<int>(options, "shots", 10000));
+        optOptions.insert("trotter_order", getValueOr<int>(options, "trotter_order", 1));
+        optOptions.insert("max_basis_size", getValueOr<int>(options, "max_basis_size", 0));
+        optOptions.insert("verbose", getValueOr<int>(options, "verbose", 0));
+        optOptions.insert("n_electrons", getValueOr<int>(options, "n_electrons", 0));
+        optOptions.insert("filter_particles", getValueOr<int>(options, "filter_particles", -1));
+
+        auto result = cudaq::solvers::sample_based_krylov_matrix(hamiltonian, optOptions);
+        const auto &matrix = result.first;
+        const auto &basis = result.second;
+
+        const std::size_t dim = basis.size();
+        py::array_t<double> numpy_matrix({dim, dim});
+        auto buf = numpy_matrix.request();
+        double *ptr = static_cast<double *>(buf.ptr);
+        std::copy(matrix.begin(), matrix.end(), ptr);
+
+        return py::make_tuple(numpy_matrix, basis);
+      },
+      py::arg("hamiltonian"),
+      R"#(
+Build the SKQD subspace Hamiltonian matrix and return it with its basis ordering.
+
+Parameters:
+-----------
+hamiltonian : cudaq.SpinOperator
+    The Hamiltonian operator to project.
+
+**options : keyword arguments
+    Supported options:
+    - krylov_dim : int, optional
+    - dt : float, optional
+    - shots : int, optional
+    - trotter_order : int, optional
+    - max_basis_size : int, optional
+    - verbose : int, optional
+    - n_electrons : int, optional
+    - filter_particles : int, optional
+
+Returns:
+--------
+Tuple[np.ndarray, List[str]]
+    - Dense matrix in row-major order.
+    - Basis strings (same ordering as rows/columns).
+)#");
+
   std::stringstream ss;
   ss << "CUDA-Q Solvers " << cudaq::solvers::getVersion() << " ("
      << cudaq::solvers::getFullRepositoryVersion() << ")";

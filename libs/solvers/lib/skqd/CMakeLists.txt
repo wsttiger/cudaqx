@@ -61,9 +61,13 @@ if(CMAKE_CUDA_COMPILER)
     PATHS ${CUDAToolkit_LIBRARY_DIR}
     NO_DEFAULT_PATH
   )
+  include(CheckIncludeFile)
+  set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
+  check_include_file(cusolverDn.h HAVE_CUSOLVER_HEADER)
   
-  if(CUSOLVER_LIB)
+  if(CUSOLVER_LIB AND HAVE_CUSOLVER_HEADER)
     target_link_libraries(cudaq-solvers PUBLIC ${CUSOLVER_LIB})
+    target_compile_definitions(cudaq-solvers PRIVATE HAVE_CUSOLVER)
     message(STATUS "SKQD: cuSOLVER found at ${CUSOLVER_LIB}")
   else()
     message(WARNING "SKQD: cuSOLVER not found. Eigenvalue computation will be limited.")

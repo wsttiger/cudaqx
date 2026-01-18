@@ -18,27 +18,29 @@ def test_skqd_basic():
     geometry = [('H', (0., 0., 0.)), ('H', (0., 0., .7474))]
     molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
     
-    # Solve using functional API with options dict
-    result = solvers.sample_based_krylov(
+    # Build subspace Hamiltonian matrix and diagonalize with NumPy
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=15,
-        dt=0.01,
-        shots=2000,
+        dt=0.1,
+        shots=5000,
         trotter_order=2,
         verbose=0
     )
     
+    # Diagonalize matrix
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
+    
     # Check result structure
-    assert result.basis_size > 0
-    assert result.nnz > 0
-    assert result.ground_state_energy < 0
+    assert len(basis) > 0
+    assert ground_state < 0
     
-    # Should be reasonably close to true ground state
     # H2 ground state is approximately -1.137 Hartree
-    assert result.ground_state_energy < -0.5  # At least qualitatively correct
+    assert np.isclose(ground_state, -1.137, atol=5e-3)
     
-    print(f"H2 ground state energy (SKQD): {result.ground_state_energy:.6f}")
-    print(f"Basis size: {result.basis_size}")
+    print(f"H2 ground state energy (SKQD matrix): {ground_state:.6f}")
+    print(f"Basis size: {len(basis)}")
 
 
 def test_skqd_lih():
@@ -52,8 +54,8 @@ def test_skqd_lih():
                                        norb_cas=4,
                                        casci=True)
     
-    # Solve with functional API
-    result = solvers.sample_based_krylov(
+    # Build matrix and diagonalize
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=8,
         dt=0.1,
@@ -62,23 +64,21 @@ def test_skqd_lih():
         verbose=1,
         max_basis_size=100  # Limit for test speed
     )
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
     
     # Check basic validity
-    assert result.basis_size > 0
-    assert result.nnz > 0
-    assert result.ground_state_energy < 0
+    assert len(basis) > 0
+    assert ground_state < 0
     
     # LiH CASCI(4,4) ground state is approximately -7.8638 Hartree
     # SKQD should get within reasonable range
-    print(f"LiH ground state energy (SKQD): {result.ground_state_energy:.4f}")
+    print(f"LiH ground state energy (SKQD): {ground_state:.4f}")
     print(f"Expected (VQE reference): -7.8638")
-    print(f"Basis size: {result.basis_size}")
-    print(f"Sampling time: {result.sampling_time:.3f}s")
-    print(f"Matrix construction time: {result.matrix_construction_time:.3f}s")
+    print(f"Basis size: {len(basis)}")
     
-    # Loose tolerance for MVP - should be in the right ballpark
-    assert result.ground_state_energy < -6.0  # Should be strongly bound
-    assert result.ground_state_energy > -10.0  # Should be realistic
+    # Tighter tolerance for LiH
+    assert np.isclose(ground_state, -7.8638, atol=5e-3)
 
 
 def test_skqd_n2():
@@ -92,8 +92,8 @@ def test_skqd_n2():
                                        norb_cas=4,
                                        casci=True)
     
-    # Solve with functional API
-    result = solvers.sample_based_krylov(
+    # Build matrix and diagonalize
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=8,
         dt=0.1,
@@ -102,23 +102,21 @@ def test_skqd_n2():
         verbose=1,
         max_basis_size=100
     )
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
     
     # Check basic validity
-    assert result.basis_size > 0
-    assert result.nnz > 0
-    assert result.ground_state_energy < 0
+    assert len(basis) > 0
+    assert ground_state < 0
     
     # N2 CASCI(4,4) ground state is approximately -107.56 Hartree
     # SKQD should get within reasonable range
-    print(f"N2 ground state energy (SKQD): {result.ground_state_energy:.4f}")
-    print(f"Expected (VQE reference): -107.56")
-    print(f"Basis size: {result.basis_size}")
-    print(f"Sampling time: {result.sampling_time:.3f}s")
-    print(f"Matrix construction time: {result.matrix_construction_time:.3f}s")
+    print(f"N2 ground state energy (SKQD): {ground_state:.4f}")
+    print(f"Expected (CASCI(4,4)reference): -1.0754219837264435e+02")
+    print(f"Basis size: {len(basis)}")
     
-    # Loose tolerance for MVP
-    assert result.ground_state_energy < -100.0
-    assert result.ground_state_energy > -115.0
+    # Tighter tolerance for N2
+    assert np.isclose(ground_state, -1.0754219837264435e+02, atol=3e-2)
 
 
 def test_skqd_h2o():
@@ -134,8 +132,8 @@ def test_skqd_h2o():
                                        norb_cas=4,
                                        casci=True)
     
-    # Solve with functional API
-    result = solvers.sample_based_krylov(
+    # Build matrix and diagonalize
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=15,
         dt=0.1,
@@ -144,22 +142,20 @@ def test_skqd_h2o():
         verbose=1,
         max_basis_size=250
     )
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
     
     # Check basic validity
-    assert result.basis_size > 0
-    assert result.nnz > 0
-    assert result.ground_state_energy < 0
+    assert len(basis) > 0
+    assert ground_state < 0
     
     # H2O CASCI(4,4) ground state is approximately -75.01 Hartree
-    print(f"H2O ground state energy (SKQD): {result.ground_state_energy:.4f}")
-    print(f"Expected (VQE reference): -75.01")
-    print(f"Basis size: {result.basis_size}")
-    print(f"Sampling time: {result.sampling_time:.3f}s")
-    print(f"Matrix construction time: {result.matrix_construction_time:.3f}s")
+    print(f"H2O ground state energy (SKQD): {ground_state:.4f}")
+    print(f"Expected (CASCI(4,4)reference): -7.4970454377757974e+01")
+    print(f"Basis size: {len(basis)}")
     
-    # Loose tolerance for MVP
-    assert result.ground_state_energy < -70.0
-    assert result.ground_state_energy > -80.0
+    # Tighter tolerance for H2O
+    assert np.isclose(ground_state, -7.4970454377757974e+01, atol=5e-2)
 
 
 def test_skqd_benzene():
@@ -196,8 +192,8 @@ def test_skqd_benzene():
                                        norb_cas=6,
                                        casci=True)
     
-    # Solve with functional API
-    result = solvers.sample_based_krylov(
+    # Build matrix and diagonalize
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=10,
         dt=0.1,
@@ -206,24 +202,21 @@ def test_skqd_benzene():
         verbose=1,
         max_basis_size=200
     )
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
     
     # Check basic validity
-    assert result.basis_size > 0
-    assert result.nnz > 0
-    assert result.ground_state_energy < 0
+    assert len(basis) > 0
+    assert ground_state < 0
     
     # Benzene CASCI(6,6) ground state is approximately -227.6 to -228.0 Hartree
-    print(f"Benzene ground state energy (SKQD): {result.ground_state_energy:.4f}")
+    print(f"Benzene ground state energy (SKQD): {ground_state:.4f}")
     print(f"Expected range: -228.0 to -227.6")
-    print(f"Basis size: {result.basis_size}")
-    print(f"NNZ: {result.nnz}")
-    print(f"Sampling time: {result.sampling_time:.3f}s")
-    print(f"Matrix construction time: {result.matrix_construction_time:.3f}s")
-    print(f"Diagonalization time: {result.diagonalization_time:.3f}s")
+    print(f"Basis size: {len(basis)}")
     
-    # Loose tolerance for MVP - benzene is a larger system
-    assert result.ground_state_energy < -220.0
-    assert result.ground_state_energy > -235.0
+    # Tighter tolerance for benzene
+    assert ground_state < -227.6
+    assert ground_state > -228.05
 
 
 def test_skqd_trotter_comparison():
@@ -232,7 +225,7 @@ def test_skqd_trotter_comparison():
     molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
     
     # First-order Trotter
-    result1 = solvers.sample_based_krylov(
+    matrix1, basis1 = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=8,
         dt=0.1,
@@ -240,9 +233,11 @@ def test_skqd_trotter_comparison():
         trotter_order=1,
         verbose=0
     )
+    eigvals1 = np.linalg.eigvalsh(matrix1)
+    ground_state1 = eigvals1[0]
     
     # Second-order Trotter
-    result2 = solvers.sample_based_krylov(
+    matrix2, basis2 = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=8,
         dt=0.1,
@@ -250,18 +245,20 @@ def test_skqd_trotter_comparison():
         trotter_order=2,
         verbose=0
     )
+    eigvals2 = np.linalg.eigvalsh(matrix2)
+    ground_state2 = eigvals2[0]
     
-    print(f"First-order Trotter:  {result1.ground_state_energy:.6f}")
-    print(f"Second-order Trotter: {result2.ground_state_energy:.6f}")
+    print(f"First-order Trotter:  {ground_state1:.6f}")
+    print(f"Second-order Trotter: {ground_state2:.6f}")
     print(f"Expected: ~-1.137 Hartree")
     
     # Both should give reasonable results
-    assert result1.ground_state_energy < 0
-    assert result2.ground_state_energy < 0
+    assert ground_state1 < 0
+    assert ground_state2 < 0
     
     # Both methods should produce valid basis sizes
-    assert result1.basis_size > 0
-    assert result2.basis_size > 0
+    assert len(basis1) > 0
+    assert len(basis2) > 0
 
 
 def test_skqd_default_options():
@@ -270,13 +267,15 @@ def test_skqd_default_options():
     molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
     
     # Use default options (empty kwargs)
-    result = solvers.sample_based_krylov(molecule.hamiltonian)
+    matrix, basis = solvers.sample_based_krylov_matrix(molecule.hamiltonian)
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
     
     # Check it runs and produces reasonable output
-    assert result.basis_size > 0
-    assert result.ground_state_energy < 0
+    assert len(basis) > 0
+    assert ground_state < 0
     
-    print(f"H2 (default options): {result.ground_state_energy:.6f}")
+    print(f"H2 (default options): {ground_state:.6f}")
 
 
 def test_skqd_multiple_eigenvalues():
@@ -284,25 +283,25 @@ def test_skqd_multiple_eigenvalues():
     geometry = [('H', (0., 0., 0.)), ('H', (0., 0., .7474))]
     molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
     
-    # Request 3 eigenvalues
-    result = solvers.sample_based_krylov(
+    # Build matrix and take multiple eigenvalues
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=8,
         shots=2000,
-        num_eigenvalues=3,
         verbose=0
     )
+    eigvals = np.linalg.eigvalsh(matrix)
     
     # Check that we got multiple eigenvalues
-    assert len(result.eigenvalues) >= 1
-    if result.basis_size >= 3:
-        assert len(result.eigenvalues) <= 3
+    assert len(eigvals) >= 1
+    if len(basis) >= 3:
+        assert len(eigvals[:3]) == 3
     
     # Eigenvalues should be sorted (lowest first)
-    for i in range(len(result.eigenvalues) - 1):
-        assert result.eigenvalues[i] <= result.eigenvalues[i+1]
+    for i in range(len(eigvals) - 1):
+        assert eigvals[i] <= eigvals[i+1]
     
-    print(f"Eigenvalues: {result.eigenvalues}")
+    print(f"Eigenvalues: {eigvals[:3]}")
 
 
 def test_skqd_result_conversion():
@@ -310,17 +309,15 @@ def test_skqd_result_conversion():
     geometry = [('H', (0., 0., 0.)), ('H', (0., 0., .7474))]
     molecule = solvers.create_molecule(geometry, 'sto-3g', 0, 0, casci=True)
     
-    result = solvers.sample_based_krylov(
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=5,
         shots=1000,
         verbose=0
     )
-    
-    # Test float conversion
-    energy = float(result)
-    assert energy == result.ground_state_energy
-    assert energy < 0
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
+    assert ground_state < 0
 
 
 if __name__ == "__main__":
@@ -352,8 +349,8 @@ def test_skqd_filtering_particle_number():
     
     n_electrons = 2
     
-    # Run SKQD with filtering
-    result = solvers.sample_based_krylov(
+    # Build matrix with filtering
+    matrix, basis = solvers.sample_based_krylov_matrix(
         molecule.hamiltonian,
         krylov_dim=5,
         shots=2000,
@@ -361,12 +358,14 @@ def test_skqd_filtering_particle_number():
         filter_particles=n_electrons,  # Keep only 2-electron states
         verbose=1
     )
+    eigvals = np.linalg.eigvalsh(matrix)
+    ground_state = eigvals[0]
     
-    print(f"H2 Ground State Energy: {result.ground_state_energy}")
-    print(f"Basis size: {result.basis_size}")
+    print(f"H2 Ground State Energy: {ground_state}")
+    print(f"Basis size: {len(basis)}")
     
     # Check that basis size is non-zero (we should find samples)
-    assert result.basis_size > 0
+    assert len(basis) > 0
     
     # We can't easily inspect the basis strings from Python result object 
     # (unless we expose them, which we haven't), but we can infer filtering worked
@@ -375,8 +374,8 @@ def test_skqd_filtering_particle_number():
     # valid energy is a good proxy.
     
     # Check energy is reasonable (-1.137 is exact FCI)
-    assert result.ground_state_energy < -1.1
-    assert result.ground_state_energy > -1.2
+    assert ground_state < -1.1
+    assert ground_state > -1.2
 
 def test_skqd_filtering_mismatch():
     """Test that filtering works by checking if we get NO samples when filtering for wrong number"""
@@ -391,7 +390,7 @@ def test_skqd_filtering_mismatch():
     # or just an empty basis depending on implementation (implementation throws "No samples collected").
     
     try:
-        solvers.sample_based_krylov(
+        solvers.sample_based_krylov_matrix(
             molecule.hamiltonian,
             krylov_dim=5,
             shots=1000,
