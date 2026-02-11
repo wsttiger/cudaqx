@@ -29,6 +29,7 @@ add_subdirectory(decoders/plugins/pymatching)
 
 if(CUDAQ_QEC_BUILD_TRT_DECODER)
   add_subdirectory(decoders/plugins/trt_decoder)
+  add_subdirectory(decoders/plugins/composite_decoder)
 endif()
 
 add_subdirectory(codes)

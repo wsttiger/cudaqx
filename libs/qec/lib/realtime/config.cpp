@@ -213,6 +213,40 @@ trt_decoder_config trt_decoder_config::from_heterogeneous_map(
   return config;
 }
 
+// ------ composite_decoder_config ------
+cudaqx::heterogeneous_map
+composite_decoder_config::to_heterogeneous_map() const {
+  cudaqx::heterogeneous_map config_map;
+
+  INSERT_ARG_PLAIN(global_decoder);
+  INSERT_ARG(onnx_load_path);
+  INSERT_ARG(engine_load_path);
+  INSERT_ARG(engine_save_path);
+  INSERT_ARG(precision);
+  INSERT_ARG(memory_workspace);
+  INSERT_ARG(use_cuda_graph);
+  INSERT_ARG(error_rate_vec);
+  INSERT_ARG(merge_strategy);
+
+  return config_map;
+}
+
+composite_decoder_config composite_decoder_config::from_heterogeneous_map(
+    const cudaqx::heterogeneous_map &map) {
+  composite_decoder_config config;
+  GET_ARG_PLAIN(global_decoder);
+  GET_ARG(onnx_load_path);
+  GET_ARG(engine_load_path);
+  GET_ARG(engine_save_path);
+  GET_ARG(precision);
+  GET_ARG(memory_workspace);
+  GET_ARG(use_cuda_graph);
+  GET_ARG(error_rate_vec);
+  GET_ARG(merge_strategy);
+
+  return config;
+}
+
 // ------ sliding_window_config ------
 cudaqx::heterogeneous_map sliding_window_config::to_heterogeneous_map() const {
   cudaqx::heterogeneous_map config_map;
@@ -355,6 +389,23 @@ struct MappingTraits<cudaq::qec::decoding::config::trt_decoder_config> {
 };
 
 template <>
+struct MappingTraits<cudaq::qec::decoding::config::composite_decoder_config> {
+  static void mapping(
+      IO &io,
+      cudaq::qec::decoding::config::composite_decoder_config &config) {
+    io.mapRequired("global_decoder", config.global_decoder);
+    io.mapOptional("onnx_load_path", config.onnx_load_path);
+    io.mapOptional("engine_load_path", config.engine_load_path);
+    io.mapOptional("engine_save_path", config.engine_save_path);
+    io.mapOptional("precision", config.precision);
+    io.mapOptional("memory_workspace", config.memory_workspace);
+    io.mapOptional("use_cuda_graph", config.use_cuda_graph);
+    io.mapOptional("error_rate_vec", config.error_rate_vec);
+    io.mapOptional("merge_strategy", config.merge_strategy);
+  }
+};
+
+template <>
 struct MappingTraits<cudaq::qec::decoding::config::sliding_window_config> {
   static void
   mapping(IO &io, cudaq::qec::decoding::config::sliding_window_config &config) {
@@ -458,6 +509,9 @@ struct MappingTraits<cudaq::qec::decoding::config::decoder_config> {
     } else if (config.type == "trt_decoder") {
       INIT_AND_MAP_DECODER_CUSTOM_ARGS(
           cudaq::qec::decoding::config::trt_decoder_config);
+    } else if (config.type == "composite_decoder") {
+      INIT_AND_MAP_DECODER_CUSTOM_ARGS(
+          cudaq::qec::decoding::config::composite_decoder_config);
     } else if (config.type == "sliding_window") {
       INIT_AND_MAP_DECODER_CUSTOM_ARGS(
           cudaq::qec::decoding::config::sliding_window_config);

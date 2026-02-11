@@ -49,6 +49,7 @@ decoder_config = qecrt.config.decoder_config
 nv_qldpc_decoder_config = qecrt.config.nv_qldpc_decoder_config
 multi_error_lut_config = qecrt.config.multi_error_lut_config
 trt_decoder_config = qecrt.config.trt_decoder_config
+composite_decoder_config = qecrt.config.composite_decoder_config
 configure_decoders_from_file = qecrt.config.configure_decoders_from_file
 configure_decoders_from_str = qecrt.config.configure_decoders_from_str
 finalize_decoders = qecrt.config.finalize_decoders

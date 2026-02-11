@@ -116,6 +116,39 @@ void bindDecodingConfig(py::module &mod) {
       .def_static("from_heterogeneous_map",
                   &trt_decoder_config::from_heterogeneous_map, py::arg("map"));
 
+  // composite_decoder_config
+  py::class_<config::composite_decoder_config>(
+      mod_cfg, "composite_decoder_config",
+      "Composite decoder (TRT pre-decoder + global decoder) configuration.")
+      .def(py::init<>())
+      .def(py::init([](const cudaqx::heterogeneous_map &map) {
+             return composite_decoder_config::from_heterogeneous_map(map);
+           }),
+           py::arg("map"))
+      .def_readwrite("global_decoder",
+                     &composite_decoder_config::global_decoder)
+      .def_readwrite("onnx_load_path",
+                     &composite_decoder_config::onnx_load_path)
+      .def_readwrite("engine_load_path",
+                     &composite_decoder_config::engine_load_path)
+      .def_readwrite("engine_save_path",
+                     &composite_decoder_config::engine_save_path)
+      .def_readwrite("precision", &composite_decoder_config::precision)
+      .def_readwrite("memory_workspace",
+                     &composite_decoder_config::memory_workspace)
+      .def_readwrite("use_cuda_graph",
+                     &composite_decoder_config::use_cuda_graph)
+      .def_readwrite("error_rate_vec",
+                     &composite_decoder_config::error_rate_vec)
+      .def_readwrite("merge_strategy",
+                     &composite_decoder_config::merge_strategy)
+      .def("to_heterogeneous_map",
+           &composite_decoder_config::to_heterogeneous_map,
+           py::return_value_policy::move)
+      .def_static("from_heterogeneous_map",
+                  &composite_decoder_config::from_heterogeneous_map,
+                  py::arg("map"));
+
   // single_error_lut_config
   py::class_<config::single_error_lut_config>(
       mod_cfg, "single_error_lut_config",

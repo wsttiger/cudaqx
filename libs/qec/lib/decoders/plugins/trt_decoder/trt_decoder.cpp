@@ -359,7 +359,7 @@ struct trt_decoder::Impl {
   int input_size = 0;
   int output_size = 0;
   void *buffers[2] = {nullptr, nullptr};
-  cudaStream_t stream;
+  cudaStream_t stream = nullptr;
 
   // Executor (chosen once at construction, never changes)
   std::variant<TraditionalExecutor, CudaGraphExecutor> executor;
@@ -382,7 +382,9 @@ struct trt_decoder::Impl {
     if (buffers[output_index]) {
       HANDLE_CUDA_ERROR_NO_THROW(cudaFree(buffers[output_index]));
     }
-    HANDLE_CUDA_ERROR_NO_THROW(cudaStreamDestroy(stream));
+    if (stream != nullptr) {
+      HANDLE_CUDA_ERROR_NO_THROW(cudaStreamDestroy(stream));
+    }
   }
 };
 
