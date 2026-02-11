@@ -142,76 +142,8 @@ class TestCompositeDecoderParameterValidation:
             assert "global_decoder" not in str(e) or "required" not in str(e).lower()
 
 
-# -----------------------------------------------------------------------------
-# composite_decoder_config (realtime config)
-# -----------------------------------------------------------------------------
-
-FIELDS_COMPOSITE_DECODER = {
-    "global_decoder": (str, "pymatching", "pymatching"),
-    "onnx_load_path": (str, "/path/to/model.onnx", "/other/model.onnx"),
-    "engine_load_path": (str, "/path/to/engine.trt", "/other/engine.trt"),
-    "engine_save_path": (str, "/path/to/save.trt", "/other/save.trt"),
-    "precision": (str, "fp16", "fp32"),
-    "memory_workspace": (int, 1073741824, 2147483648),
-    "use_cuda_graph": (bool, True, False),
-    "error_rate_vec": (list, [0.01, 0.02, 0.03], [0.1, 0.1, 0.1]),
-    "merge_strategy": (str, "disallow", "independent"),
-}
-
-
-def test_composite_decoder_config_required_global_decoder():
-    cfg = qec.composite_decoder_config()
-    assert hasattr(cfg, "global_decoder")
-    cfg.global_decoder = "pymatching"
-    assert cfg.global_decoder == "pymatching"
-
-
-@pytest.mark.parametrize(
-    "name,meta",
-    [(k, v) for k, v in FIELDS_COMPOSITE_DECODER.items() if k != "global_decoder"],
-)
-def test_composite_decoder_config_optional_fields(name, meta):
-    cfg = qec.composite_decoder_config()
-    py_type, sample_val, alt_val = meta
-    setattr(cfg, name, sample_val)
-    assert getattr(cfg, name) == sample_val
-    setattr(cfg, name, alt_val)
-    assert getattr(cfg, name) == alt_val
-
-
-def test_composite_decoder_config_yaml_roundtrip():
-    cfg = qec.composite_decoder_config()
-    cfg.global_decoder = "pymatching"
-    cfg.engine_load_path = "/path/to/engine.trt"
-    cfg.precision = "fp16"
-
-    dc = qec.decoder_config()
-    dc.id = 0
-    dc.type = "composite_decoder"
-    dc.block_size = 5
-    dc.syndrome_size = 3
-    dc.H_sparse = [0, 1, 2, -1, 1, 2, 3, -1, 2, 3, 4, -1]
-    dc.O_sparse = [-1]
-    dc.D_sparse = qec.generate_timelike_sparse_detector_matrix(
-        dc.syndrome_size, 2, include_first_round=False
-    )
-    dc.set_decoder_custom_args(cfg)
-
-    yaml_text = dc.to_yaml_str()
-    assert isinstance(yaml_text, str) and len(yaml_text) > 0
-
-    dc2 = qec.decoder_config.from_yaml_str(yaml_text)
-    assert dc2.id == 0
-    assert dc2.type == "composite_decoder"
-    assert dc2.block_size == 5
-    assert dc2.syndrome_size == 3
-
-    cfg2 = dc2.decoder_custom_args
-    assert cfg2 is not None
-    assert cfg2.global_decoder == "pymatching"
-    assert cfg2.engine_load_path == "/path/to/engine.trt"
-    assert cfg2.precision == "fp16"
-
+# Realtime config (composite_decoder_config) is tested in test_decoding_config.py
+# with the other decoder config types (trt_decoder_config, nv_qldpc, etc.).
 
 # -----------------------------------------------------------------------------
 # Integration: decode with a real TRT engine (identity residual) + pymatching
