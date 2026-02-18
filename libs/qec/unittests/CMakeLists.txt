@@ -185,6 +185,65 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
     gtest_discover_tests(test_realtime_decoding
       TEST_PREFIX "test_realtime_decoding."
     )
+    # Hybrid AI predecoder + PyMatching pipeline test
+    # Requires TensorRT for the AI inference engine
+    find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+      PATHS
+        ${TENSORRT_ROOT}/include
+        /usr/include/x86_64-linux-gnu
+        /usr/local/cuda/include
+        /usr/local/tensorrt/include
+        /opt/tensorrt/include
+      NO_DEFAULT_PATH
+    )
+    find_library(TENSORRT_LIBRARY nvinfer
+      PATHS
+        ${TENSORRT_ROOT}/lib
+        /usr/lib/x86_64-linux-gnu
+        /usr/local/cuda/lib64
+        /usr/local/tensorrt/lib
+        /opt/tensorrt/lib
+    )
+
+    if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY)
+      add_executable(test_realtime_predecoder_w_pymatching
+        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/test_realtime_predecoder_w_pymatching.cpp
+        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
+        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_predecoder_service.cu
+      )
+
+      set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+        CUDA_STANDARD 17
+        LINKER_LANGUAGE CUDA
+      )
+
+      target_include_directories(test_realtime_predecoder_w_pymatching PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${TENSORRT_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${CMAKE_SOURCE_DIR}/libs/core/include
+        ${CUDAQ_REALTIME_INCLUDE_DIR}
+      )
+
+      target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
+        CUDA::cudart
+        ${TENSORRT_LIBRARY}
+        ${CUDAQ_REALTIME_LIBRARY}
+        ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+      )
+
+      set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
+        BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR}"
+        INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR}"
+      )
+
+      add_dependencies(CUDAQXQECUnitTests test_realtime_predecoder_w_pymatching)
+    else()
+      message(WARNING "TensorRT not found. Skipping test_realtime_predecoder_w_pymatching.")
+    endif()
+
   else()
     message(WARNING "cuda-quantum realtime dependency not found. "
                     "Set CUDAQ_REALTIME_ROOT or CUDAQ_INSTALL_PREFIX to enable "
