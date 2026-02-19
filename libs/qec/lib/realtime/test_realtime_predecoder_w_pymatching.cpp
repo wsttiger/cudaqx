@@ -51,6 +51,7 @@
 #include <random>
 #include <mutex>
 #include <string>
+#include <iomanip>
 
 #include <cuda_runtime.h>
 
@@ -175,6 +176,11 @@ struct DecoderContext {
     std::mutex decode_mtx;
     int z_stabilizers = 0;
     int spatial_slices = 0;
+
+    // Per-worker timing accumulators (protected by decode_mtx)
+    std::atomic<int64_t> total_decode_us{0};
+    std::atomic<int64_t> total_worker_us{0};
+    std::atomic<int> decode_count{0};
 };
 
 constexpr std::uint32_t fnv1a_hash(std::string_view str) {
@@ -201,11 +207,15 @@ struct __attribute__((packed)) DecodeResponse {
 
 void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
                             DecoderContext* ctx) {
+    using hrclock = std::chrono::high_resolution_clock;
+    auto worker_start = hrclock::now();
+
     const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
 
     int total_corrections = 0;
     bool all_converged = true;
 
+    auto decode_start = hrclock::now();
     for (int s = 0; s < ctx->spatial_slices; ++s) {
         const int32_t* slice = residual + s * ctx->z_stabilizers;
         std::vector<double> syndrome(ctx->z_stabilizers);
@@ -222,6 +232,7 @@ void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
         for (auto v : result.result)
             if (v > 0.5) total_corrections++;
     }
+    auto decode_end = hrclock::now();
 
     DecodeResponse resp_data{total_corrections, all_converged ? 1 : 0};
 
@@ -234,6 +245,15 @@ void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
     header->result_len = sizeof(resp_data);
 
     std::atomic_thread_fence(std::memory_order_release);
+
+    auto worker_end = hrclock::now();
+    auto decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        decode_end - decode_start).count();
+    auto worker_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        worker_end - worker_start).count();
+    ctx->total_decode_us.fetch_add(decode_us, std::memory_order_relaxed);
+    ctx->total_worker_us.fetch_add(worker_us, std::memory_order_relaxed);
+    ctx->decode_count.fetch_add(1, std::memory_order_relaxed);
 
     size_t slot_idx = ((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size;
     predecoder->release_job(job.slot_idx);
@@ -532,6 +552,28 @@ int main(int argc, char* argv[]) {
               << " requests successfully.\n";
 
     bench.report();
+
+    // Worker timing breakdown
+    int n_decoded = decoder_ctx.decode_count.load();
+    if (n_decoded > 0) {
+        double avg_decode = (double)decoder_ctx.total_decode_us.load() / n_decoded;
+        double avg_worker = (double)decoder_ctx.total_worker_us.load() / n_decoded;
+        double avg_overhead = avg_worker - avg_decode;
+        auto stats = bench.compute_stats();
+        double avg_pipeline_overhead = stats.mean_us - avg_worker;
+
+        std::cout << std::fixed << std::setprecision(1);
+        std::cout << "\n  Worker Timing Breakdown (avg over " << n_decoded << " requests):\n";
+        std::cout << "    PyMatching decode:   " << std::setw(8) << avg_decode
+                  << " us  (" << std::setw(4) << (100.0 * avg_decode / stats.mean_us) << "%)\n";
+        std::cout << "    Worker overhead:      " << std::setw(8) << avg_overhead
+                  << " us  (" << std::setw(4) << (100.0 * avg_overhead / stats.mean_us) << "%)\n";
+        std::cout << "    GPU+dispatch+poll:    " << std::setw(8) << avg_pipeline_overhead
+                  << " us  (" << std::setw(4) << (100.0 * avg_pipeline_overhead / stats.mean_us) << "%)\n";
+        std::cout << "    Total end-to-end:     " << std::setw(8) << stats.mean_us << " us\n";
+        std::cout << "    Per-round (/" << config.num_rounds << "):     "
+                  << std::setw(8) << (stats.mean_us / config.num_rounds) << " us/round\n";
+    }
 
     // Teardown
     std::cout << "[Teardown] Shutting down...\n";
