@@ -38,7 +38,7 @@
  * 4. Dedicated Polling Thread -> Worker PyMatching Thread Pool
  * 5. CPU Workers closing the transaction (Setting TX flags)
  *
- * Usage: test_realtime_predecoder_w_pymatching [d7|d13|d21|d31]
+ * Usage: test_realtime_predecoder_w_pymatching [d7|d13|d21|d31] [stream [rate_us] [duration_s]]
  ******************************************************************************/
 
 #include <iostream>
@@ -312,13 +312,323 @@ void fill_measurement_payload(int32_t* payload, int input_elements,
 }
 
 // =============================================================================
+// Streaming Test Mode (simulates FPGA continuous syndrome arrival)
+// =============================================================================
+
+struct StreamingConfig {
+    int rate_us = 0;       // inter-arrival time in us (0 = open-loop)
+    int duration_s = 5;    // how long to run
+    int warmup_count = 20; // discard first N from latency stats
+};
+
+void run_streaming_test(
+    const PipelineConfig& config,
+    const StreamingConfig& scfg,
+    volatile uint64_t* rx_flags_host,
+    volatile uint64_t* tx_flags_host,
+    uint8_t* rx_data_host,
+    DecoderContext& decoder_ctx,
+    std::vector<std::unique_ptr<AIPreDecoderService>>& predecoders,
+    cudaq::qec::utils::ThreadPool& pymatching_pool,
+    std::atomic<bool>& system_stop)
+{
+    using hrclock = std::chrono::high_resolution_clock;
+
+    const int max_requests = 500000;
+    const size_t payload_bytes = config.input_bytes();
+
+    std::vector<hrclock::time_point> submit_ts(max_requests);
+    std::vector<hrclock::time_point> complete_ts(max_requests);
+    std::vector<bool> completed(max_requests, false);
+
+    // slot -> request_id mapping so consumer can correlate completions
+    std::vector<int> slot_request(NUM_SLOTS, -1);
+
+    std::atomic<int> total_submitted{0};
+    std::atomic<int> total_completed{0};
+    std::atomic<int> in_flight{0};
+    std::atomic<int64_t> backpressure_stalls{0};
+    std::atomic<bool> producer_done{false};
+
+    // Cap in-flight to num_predecoders. The dispatcher scans slots
+    // sequentially and only advances on non-empty slots. With the inflight
+    // flag limiting one graph launch per predecoder, only num_predecoders
+    // slots can be consumed per scan. Any excess slots get backpressured,
+    // then the dispatcher parks on an empty slot and never revisits them.
+    const int max_in_flight = config.num_predecoders;
+
+    auto run_deadline = std::chrono::steady_clock::now()
+                      + std::chrono::seconds(scfg.duration_s);
+
+    std::string rate_label = (scfg.rate_us > 0)
+        ? std::to_string(scfg.rate_us) + " us"
+        : "open-loop";
+
+    std::cout << "\n[Stream] Starting streaming test (" << config.label << ")\n"
+              << "  Rate:       " << rate_label << "\n"
+              << "  Duration:   " << scfg.duration_s << " s\n"
+              << "  Warmup:     " << scfg.warmup_count << " requests\n"
+              << "  Max flight: " << max_in_flight << "\n"
+              << "  Max reqs:   " << max_requests << "\n\n";
+
+    // --- Producer thread (simulates FPGA) ---
+    std::thread producer([&]() {
+        std::mt19937 rng(42);
+        int next_slot = 0;
+        int req_id = 0;
+
+        while (std::chrono::steady_clock::now() < run_deadline
+               && req_id < max_requests) {
+
+            // Throttle: don't exceed max_in_flight to prevent ring buffer flooding
+            while (in_flight.load(std::memory_order_acquire) >= max_in_flight) {
+                QEC_CPU_RELAX();
+                if (std::chrono::steady_clock::now() >= run_deadline) return;
+            }
+
+            int slot = next_slot % (int)NUM_SLOTS;
+
+            // Wait for slot to be fully free (dispatcher consumed + response harvested)
+            while (rx_flags_host[slot] != 0 || tx_flags_host[slot] != 0) {
+                backpressure_stalls.fetch_add(1, std::memory_order_relaxed);
+                QEC_CPU_RELAX();
+                if (std::chrono::steady_clock::now() >= run_deadline) return;
+            }
+
+            int target = req_id % config.num_predecoders;
+            std::string func = "predecode_target_" + std::to_string(target);
+
+            uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
+            auto* hdr = reinterpret_cast<cudaq::nvqlink::RPCHeader*>(slot_data);
+            hdr->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
+            hdr->function_id = fnv1a_hash(func);
+            hdr->arg_len = static_cast<uint32_t>(payload_bytes);
+
+            int32_t* payload = reinterpret_cast<int32_t*>(
+                slot_data + sizeof(cudaq::nvqlink::RPCHeader));
+            fill_measurement_payload(payload, config.input_elements(), rng, 0.01);
+
+            slot_request[slot] = req_id;
+
+            __sync_synchronize();
+            submit_ts[req_id] = hrclock::now();
+            rx_flags_host[slot] = reinterpret_cast<uint64_t>(slot_data);
+            in_flight.fetch_add(1, std::memory_order_release);
+            total_submitted.fetch_add(1, std::memory_order_release);
+
+            next_slot++;
+            req_id++;
+
+            // Rate limiting (busy-wait for precision)
+            if (scfg.rate_us > 0) {
+                auto target_time = submit_ts[req_id - 1]
+                                 + std::chrono::microseconds(scfg.rate_us);
+                while (hrclock::now() < target_time)
+                    QEC_CPU_RELAX();
+            }
+        }
+
+        producer_done.store(true, std::memory_order_release);
+    });
+
+    // --- Consumer thread (harvests completions sequentially) ---
+    std::thread consumer([&]() {
+        int next_harvest = 0;
+
+        while (true) {
+            bool pdone = producer_done.load(std::memory_order_acquire);
+            int nsub = total_submitted.load(std::memory_order_acquire);
+            int ncomp = total_completed.load(std::memory_order_relaxed);
+
+            if (pdone && ncomp >= nsub)
+                break;
+
+            // Nothing to harvest yet
+            if (next_harvest >= nsub) {
+                QEC_CPU_RELAX();
+                continue;
+            }
+
+            int slot = next_harvest % (int)NUM_SLOTS;
+            uint64_t tv = tx_flags_host[slot];
+
+            if (tv != 0) {
+                int rid = slot_request[slot];
+                if (rid >= 0 && (tv >> 48) != 0xDEAD) {
+                    complete_ts[rid] = hrclock::now();
+                    completed[rid] = true;
+                    total_completed.fetch_add(1, std::memory_order_relaxed);
+                } else if ((tv >> 48) == 0xDEAD) {
+                    int cuda_err = (int)(tv & 0xFFFF);
+                    std::cerr << "  [FAIL] Slot " << slot
+                              << " cudaGraphLaunch error " << cuda_err
+                              << " (" << cudaGetErrorString((cudaError_t)cuda_err)
+                              << ")\n";
+                    total_completed.fetch_add(1, std::memory_order_relaxed);
+                }
+
+                tx_flags_host[slot] = 0;
+                slot_request[slot] = -1;
+                in_flight.fetch_sub(1, std::memory_order_release);
+                next_harvest++;
+            } else {
+                QEC_CPU_RELAX();
+            }
+        }
+    });
+
+    producer.join();
+
+    // Grace period for in-flight requests
+    auto grace_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (total_completed.load() < total_submitted.load()
+           && std::chrono::steady_clock::now() < grace_deadline) {
+        usleep(1000);
+    }
+
+    consumer.join();
+
+    // ===== Report =====
+    auto run_end = std::chrono::steady_clock::now();
+    int nsub = total_submitted.load();
+    int ncomp = total_completed.load();
+
+    // Build PipelineBenchmark from timestamps (skip warmup)
+    int warmup = std::min(scfg.warmup_count, nsub);
+    int bench_count = nsub - warmup;
+
+    cudaq::qec::utils::PipelineBenchmark bench(
+        config.label + " (stream)", bench_count);
+    bench.start();
+
+    for (int i = warmup; i < nsub; ++i) {
+        int bench_id = i - warmup;
+        bench.mark_submit(bench_id);
+        // Override the internal submit timestamp with the real one
+    }
+
+    // We can't override PipelineBenchmark's internal timestamps, so compute
+    // stats manually for the steady-state window.
+    std::vector<double> latencies;
+    latencies.reserve(bench_count);
+    for (int i = warmup; i < nsub; ++i) {
+        if (!completed[i]) continue;
+        auto dt = std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(
+            complete_ts[i] - submit_ts[i]);
+        latencies.push_back(dt.count());
+    }
+
+    bench.stop();
+
+    std::sort(latencies.begin(), latencies.end());
+
+    auto pct = [&](double p) -> double {
+        if (latencies.empty()) return 0;
+        double idx = (p / 100.0) * (latencies.size() - 1);
+        size_t lo = (size_t)idx;
+        size_t hi = std::min(lo + 1, latencies.size() - 1);
+        double frac = idx - lo;
+        return latencies[lo] * (1.0 - frac) + latencies[hi] * frac;
+    };
+
+    double mean = 0;
+    for (auto v : latencies) mean += v;
+    mean = latencies.empty() ? 0 : mean / latencies.size();
+
+    double stddev = 0;
+    for (auto v : latencies) stddev += (v - mean) * (v - mean);
+    stddev = latencies.empty() ? 0 : std::sqrt(stddev / latencies.size());
+
+    auto wall_us = std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(
+        run_end - (run_deadline - std::chrono::seconds(scfg.duration_s))).count();
+    double throughput = (wall_us > 0) ? (ncomp * 1e6 / wall_us) : 0;
+
+    double actual_rate = (nsub > 1)
+        ? std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(
+              submit_ts[nsub - 1] - submit_ts[0]).count() / (nsub - 1)
+        : 0;
+
+    std::cout << std::fixed;
+    std::cout << "\n================================================================\n";
+    std::cout << "  Streaming Benchmark: " << config.label << "\n";
+    std::cout << "================================================================\n";
+    std::cout << "  Submitted:          " << nsub << "\n";
+    std::cout << "  Completed:          " << ncomp << "\n";
+    if (nsub > ncomp)
+        std::cout << "  Dropped/timeout:    " << (nsub - ncomp) << "\n";
+    std::cout << std::setprecision(1);
+    std::cout << "  Wall time:          " << wall_us / 1000.0 << " ms\n";
+    std::cout << "  Throughput:         " << throughput << " req/s\n";
+    std::cout << "  Actual arrival rate:" << std::setw(8) << actual_rate << " us/req\n";
+    std::cout << "  Backpressure stalls:" << std::setw(8)
+              << backpressure_stalls.load() << "\n";
+    std::cout << "  ---------------------------------------------------------------\n";
+    std::cout << "  Latency (us)  [steady-state, " << latencies.size()
+              << " requests after " << warmup << " warmup]\n";
+    std::cout << std::setprecision(1);
+    if (!latencies.empty()) {
+        std::cout << "    min    = " << std::setw(10) << latencies.front() << "\n";
+        std::cout << "    p50    = " << std::setw(10) << pct(50) << "\n";
+        std::cout << "    mean   = " << std::setw(10) << mean << "\n";
+        std::cout << "    p90    = " << std::setw(10) << pct(90) << "\n";
+        std::cout << "    p95    = " << std::setw(10) << pct(95) << "\n";
+        std::cout << "    p99    = " << std::setw(10) << pct(99) << "\n";
+        std::cout << "    max    = " << std::setw(10) << latencies.back() << "\n";
+        std::cout << "    stddev = " << std::setw(10) << stddev << "\n";
+    }
+    std::cout << "  ---------------------------------------------------------------\n";
+
+    // Worker timing breakdown
+    int n_decoded = decoder_ctx.decode_count.load();
+    if (n_decoded > 0) {
+        double avg_decode = (double)decoder_ctx.total_decode_us.load() / n_decoded;
+        double avg_worker = (double)decoder_ctx.total_worker_us.load() / n_decoded;
+        double avg_overhead = avg_worker - avg_decode;
+        double avg_pipeline = mean - avg_worker;
+
+        std::cout << std::setprecision(1);
+        std::cout << "  Worker Timing Breakdown (avg over " << n_decoded << " requests):\n";
+        std::cout << "    PyMatching decode:" << std::setw(10) << avg_decode
+                  << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_decode / mean : 0)
+                  << "%)\n";
+        std::cout << "    Worker overhead:  " << std::setw(10) << avg_overhead
+                  << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_overhead / mean : 0)
+                  << "%)\n";
+        std::cout << "    GPU+dispatch+poll:" << std::setw(10) << avg_pipeline
+                  << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_pipeline / mean : 0)
+                  << "%)\n";
+        std::cout << "    Total end-to-end: " << std::setw(10) << mean << " us\n";
+        std::cout << "    Per-round (/" << config.num_rounds << "): "
+                  << std::setw(10) << (mean / config.num_rounds) << " us/round\n";
+    }
+    std::cout << "================================================================\n";
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 int main(int argc, char* argv[]) {
-    // Select configuration
+    // Parse arguments: <config> [stream [rate_us] [duration_s]]
     std::string config_name = "d7";
+    bool streaming_mode = false;
+    StreamingConfig stream_cfg;
+
     if (argc > 1)
         config_name = argv[1];
+
+    int stream_positional = 0; // tracks positional args after "stream"
+    for (int a = 2; a < argc; ++a) {
+        std::string arg = argv[a];
+        if (arg == "stream") {
+            streaming_mode = true;
+        } else if (streaming_mode && stream_positional == 0 && std::isdigit(arg[0])) {
+            stream_cfg.rate_us = std::stoi(arg);
+            stream_positional++;
+        } else if (streaming_mode && stream_positional == 1 && std::isdigit(arg[0])) {
+            stream_cfg.duration_s = std::stoi(arg);
+            stream_positional++;
+        }
+    }
 
     PipelineConfig config;
     if (config_name == "d7") {
@@ -330,11 +640,21 @@ int main(int argc, char* argv[]) {
     } else if (config_name == "d31") {
         config = PipelineConfig::d31_r31();
     } else {
-        std::cerr << "Usage: " << argv[0] << " [d7|d13|d21|d31]\n"
-                  << "  d7  - distance 7, 7 rounds (default)\n"
-                  << "  d13 - distance 13, 13 rounds\n"
-                  << "  d21 - distance 21, 21 rounds\n"
-                  << "  d31 - distance 31, 31 rounds\n";
+        std::cerr << "Usage: " << argv[0] << " [d7|d13|d21|d31] [stream [rate_us] [duration_s]]\n"
+                  << "  d7     - distance 7, 7 rounds (default)\n"
+                  << "  d13    - distance 13, 13 rounds\n"
+                  << "  d21    - distance 21, 21 rounds\n"
+                  << "  d31    - distance 31, 31 rounds\n"
+                  << "\n"
+                  << "  stream - continuous FPGA-like submission (default: batch mode)\n"
+                  << "  rate_us  - inter-arrival time in us (0 = open-loop, default)\n"
+                  << "  duration_s - test duration in seconds (default: 5)\n"
+                  << "\n"
+                  << "Examples:\n"
+                  << "  " << argv[0] << " d13              # batch mode\n"
+                  << "  " << argv[0] << " d13 stream       # streaming, open-loop\n"
+                  << "  " << argv[0] << " d13 stream 50    # streaming, 50 us between requests\n"
+                  << "  " << argv[0] << " d13 stream 50 10 # streaming, 50 us rate, 10s duration\n";
         return 1;
     }
 
@@ -493,117 +813,130 @@ int main(int argc, char* argv[]) {
     });
 
     // =========================================================================
-    // Test Stimulus: Fire requests in batches of num_predecoders.
-    // The dispatcher advances its slot pointer linearly and only retries
-    // while rx_value != 0, so we must wait for each batch to complete
-    // before firing the next to avoid stranding un-dispatched slots.
+    // Test Stimulus
     // =========================================================================
-    const int batch_size = config.num_predecoders;
-    std::cout << "\n[Test] Firing " << config.total_requests
-              << " syndromes in batches of " << batch_size
-              << " (" << config.label << ", error_rate=0.01)...\n";
+    if (streaming_mode) {
+        run_streaming_test(config, stream_cfg, rx_flags_host, tx_flags_host,
+                           rx_data_host, decoder_ctx, predecoders,
+                           pymatching_pool, system_stop);
+    } else {
+        // Batch mode: fire requests in batches of num_predecoders, wait for
+        // each batch to complete before firing the next.
+        const int batch_size = config.num_predecoders;
+        std::cout << "\n[Batch] Firing " << config.total_requests
+                  << " syndromes in batches of " << batch_size
+                  << " (" << config.label << ", error_rate=0.01)...\n";
 
-    cudaq::qec::utils::PipelineBenchmark bench(config.label,
-                                                config.total_requests);
+        cudaq::qec::utils::PipelineBenchmark bench(config.label,
+                                                    config.total_requests);
+        std::mt19937 rng(42);
+        const size_t payload_bytes = config.input_bytes();
+        int requests_sent = 0;
+        int responses_received = 0;
 
-    std::mt19937 rng(42);
-    const size_t payload_bytes = config.input_bytes();
-    int requests_sent = 0;
-    int responses_received = 0;
+        bench.start();
 
-    bench.start();
+        for (int batch_start = 0; batch_start < config.total_requests;
+             batch_start += batch_size) {
+            int batch_end = std::min(batch_start + batch_size, config.total_requests);
 
-    for (int batch_start = 0; batch_start < config.total_requests;
-         batch_start += batch_size) {
-        int batch_end = std::min(batch_start + batch_size, config.total_requests);
+            for (int i = batch_start; i < batch_end; ++i) {
+                int target_decoder = i % config.num_predecoders;
+                std::string target_func = "predecode_target_"
+                                        + std::to_string(target_decoder);
 
-        // Fire one batch
-        for (int i = batch_start; i < batch_end; ++i) {
-            int target_decoder = i % config.num_predecoders;
-            std::string target_func = "predecode_target_" + std::to_string(target_decoder);
+                int slot = i % (int)NUM_SLOTS;
+                while (rx_flags_host[slot] != 0) usleep(10);
 
-            int slot = i % (int)NUM_SLOTS;
-            while (rx_flags_host[slot] != 0) usleep(10);
-
-            uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
-            auto* header = reinterpret_cast<cudaq::nvqlink::RPCHeader*>(slot_data);
-            header->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
-            header->function_id = fnv1a_hash(target_func);
-            header->arg_len = static_cast<uint32_t>(payload_bytes);
-
-            int32_t* payload = reinterpret_cast<int32_t*>(
-                slot_data + sizeof(cudaq::nvqlink::RPCHeader));
-            fill_measurement_payload(payload, config.input_elements(), rng, 0.01);
-
-            __sync_synchronize();
-            bench.mark_submit(i);
-            rx_flags_host[slot] = reinterpret_cast<uint64_t>(slot_data);
-            requests_sent++;
-        }
-
-        // Wait for this batch to complete (spin-wait for accurate latency)
-        for (int i = batch_start; i < batch_end; ++i) {
-            int slot = i % (int)NUM_SLOTS;
-
-            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-            while (tx_flags_host[slot] == 0) {
-                if (std::chrono::steady_clock::now() > deadline) break;
-                QEC_CPU_RELAX();
-            }
-
-            uint64_t tv = tx_flags_host[slot];
-            if (tv != 0 && (tv >> 48) == 0xDEAD) {
-                int cuda_err = (int)(tv & 0xFFFF);
-                std::cerr << "  [FAIL] Slot " << slot << " cudaGraphLaunch error "
-                          << cuda_err << " (" << cudaGetErrorString((cudaError_t)cuda_err) << ")\n";
-            } else if (tv != 0) {
-                bench.mark_complete(i);
-                responses_received++;
                 uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
-                int32_t corrections = 0, converged = 0;
-                std::memcpy(&corrections,
-                            slot_data + sizeof(cudaq::nvqlink::RPCResponse),
-                            sizeof(int32_t));
-                std::memcpy(&converged,
-                            slot_data + sizeof(cudaq::nvqlink::RPCResponse) + sizeof(int32_t),
-                            sizeof(int32_t));
-                std::cout << "  -> Slot " << slot << ": OK, corrections=" << corrections
-                          << " converged=" << (converged ? "yes" : "no") << "\n";
-            } else {
-                std::cerr << "  [FAIL] Timeout waiting for slot " << slot << "\n";
+                auto* header = reinterpret_cast<cudaq::nvqlink::RPCHeader*>(slot_data);
+                header->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
+                header->function_id = fnv1a_hash(target_func);
+                header->arg_len = static_cast<uint32_t>(payload_bytes);
+
+                int32_t* payload = reinterpret_cast<int32_t*>(
+                    slot_data + sizeof(cudaq::nvqlink::RPCHeader));
+                fill_measurement_payload(payload, config.input_elements(), rng, 0.01);
+
+                __sync_synchronize();
+                bench.mark_submit(i);
+                rx_flags_host[slot] = reinterpret_cast<uint64_t>(slot_data);
+                requests_sent++;
             }
 
-            tx_flags_host[slot] = 0;
+            for (int i = batch_start; i < batch_end; ++i) {
+                int slot = i % (int)NUM_SLOTS;
+
+                auto deadline = std::chrono::steady_clock::now()
+                              + std::chrono::seconds(10);
+                while (tx_flags_host[slot] == 0) {
+                    if (std::chrono::steady_clock::now() > deadline) break;
+                    QEC_CPU_RELAX();
+                }
+
+                uint64_t tv = tx_flags_host[slot];
+                if (tv != 0 && (tv >> 48) == 0xDEAD) {
+                    int cuda_err = (int)(tv & 0xFFFF);
+                    std::cerr << "  [FAIL] Slot " << slot
+                              << " cudaGraphLaunch error " << cuda_err
+                              << " (" << cudaGetErrorString((cudaError_t)cuda_err)
+                              << ")\n";
+                } else if (tv != 0) {
+                    bench.mark_complete(i);
+                    responses_received++;
+                    uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
+                    int32_t corrections = 0, converged = 0;
+                    std::memcpy(&corrections,
+                                slot_data + sizeof(cudaq::nvqlink::RPCResponse),
+                                sizeof(int32_t));
+                    std::memcpy(&converged,
+                                slot_data + sizeof(cudaq::nvqlink::RPCResponse)
+                                    + sizeof(int32_t),
+                                sizeof(int32_t));
+                    std::cout << "  -> Slot " << slot
+                              << ": OK, corrections=" << corrections
+                              << " converged=" << (converged ? "yes" : "no") << "\n";
+                } else {
+                    std::cerr << "  [FAIL] Timeout waiting for slot " << slot << "\n";
+                }
+
+                tx_flags_host[slot] = 0;
+            }
         }
-    }
 
-    bench.stop();
+        bench.stop();
 
-    std::cout << "\n[Result] Processed " << responses_received << "/" << requests_sent
-              << " requests successfully.\n";
+        std::cout << "\n[Result] Processed " << responses_received << "/"
+                  << requests_sent << " requests successfully.\n";
 
-    bench.report();
+        bench.report();
 
-    // Worker timing breakdown
-    int n_decoded = decoder_ctx.decode_count.load();
-    if (n_decoded > 0) {
-        double avg_decode = (double)decoder_ctx.total_decode_us.load() / n_decoded;
-        double avg_worker = (double)decoder_ctx.total_worker_us.load() / n_decoded;
-        double avg_overhead = avg_worker - avg_decode;
-        auto stats = bench.compute_stats();
-        double avg_pipeline_overhead = stats.mean_us - avg_worker;
+        int n_decoded = decoder_ctx.decode_count.load();
+        if (n_decoded > 0) {
+            double avg_decode = (double)decoder_ctx.total_decode_us.load() / n_decoded;
+            double avg_worker = (double)decoder_ctx.total_worker_us.load() / n_decoded;
+            double avg_overhead = avg_worker - avg_decode;
+            auto stats = bench.compute_stats();
+            double avg_pipeline_overhead = stats.mean_us - avg_worker;
 
-        std::cout << std::fixed << std::setprecision(1);
-        std::cout << "\n  Worker Timing Breakdown (avg over " << n_decoded << " requests):\n";
-        std::cout << "    PyMatching decode:   " << std::setw(8) << avg_decode
-                  << " us  (" << std::setw(4) << (100.0 * avg_decode / stats.mean_us) << "%)\n";
-        std::cout << "    Worker overhead:      " << std::setw(8) << avg_overhead
-                  << " us  (" << std::setw(4) << (100.0 * avg_overhead / stats.mean_us) << "%)\n";
-        std::cout << "    GPU+dispatch+poll:    " << std::setw(8) << avg_pipeline_overhead
-                  << " us  (" << std::setw(4) << (100.0 * avg_pipeline_overhead / stats.mean_us) << "%)\n";
-        std::cout << "    Total end-to-end:     " << std::setw(8) << stats.mean_us << " us\n";
-        std::cout << "    Per-round (/" << config.num_rounds << "):     "
-                  << std::setw(8) << (stats.mean_us / config.num_rounds) << " us/round\n";
+            std::cout << std::fixed << std::setprecision(1);
+            std::cout << "\n  Worker Timing Breakdown (avg over "
+                      << n_decoded << " requests):\n";
+            std::cout << "    PyMatching decode:   " << std::setw(8) << avg_decode
+                      << " us  (" << std::setw(4)
+                      << (100.0 * avg_decode / stats.mean_us) << "%)\n";
+            std::cout << "    Worker overhead:      " << std::setw(8) << avg_overhead
+                      << " us  (" << std::setw(4)
+                      << (100.0 * avg_overhead / stats.mean_us) << "%)\n";
+            std::cout << "    GPU+dispatch+poll:    " << std::setw(8)
+                      << avg_pipeline_overhead << " us  (" << std::setw(4)
+                      << (100.0 * avg_pipeline_overhead / stats.mean_us) << "%)\n";
+            std::cout << "    Total end-to-end:     " << std::setw(8)
+                      << stats.mean_us << " us\n";
+            std::cout << "    Per-round (/" << config.num_rounds << "):     "
+                      << std::setw(8) << (stats.mean_us / config.num_rounds)
+                      << " us/round\n";
+        }
     }
 
     // Teardown
