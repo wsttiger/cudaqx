@@ -30,6 +30,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <random>
+#include <mutex>
 
 #include <cuda_runtime.h>
 
@@ -42,6 +43,8 @@
 #include "cudaq/qec/realtime/ai_decoder_service.h"
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
 #include "cudaq/qec/utils/thread_pool.h"
+#include "cudaq/qec/code.h"
+#include "cudaq/qec/decoder.h"
 
 #define CUDA_CHECK(call) \
     do { \
@@ -82,27 +85,54 @@ struct SystemContext {
 SystemContext g_sys_ctx;
 
 // =============================================================================
-// Thread Pool Worker (PyMatching Simulation)
+// Thread Pool Worker (Real PyMatching MWPM Decoder)
 // =============================================================================
-void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder) {
+
+// d=7 surface code: 24 Z stabilizers per spatial slice
+constexpr int Z_STABILIZERS = 24;
+constexpr int NUM_SPATIAL_SLICES = RESIDUAL_DETECTORS / Z_STABILIZERS; // 336/24 = 14
+
+void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
+                            cudaq::qec::decoder* pm_decoder, std::mutex* decode_mtx) {
     size_t num_detectors = predecoder->get_output_size() / sizeof(int32_t);
     const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
 
-    // Simulate PyMatching: count non-zero detectors and produce corrections
-    int nonzero = 0;
-    for (size_t i = 0; i < num_detectors; ++i) {
-        if (residual[i] != 0) nonzero++;
+    // Decode each spatial slice of Z-stabilizer detectors independently
+    // using code-capacity PyMatching (H_z is [24 x 49])
+    int total_corrections = 0;
+    bool all_converged = true;
+
+    for (int s = 0; s < NUM_SPATIAL_SLICES; ++s) {
+        const int32_t* slice = residual + s * Z_STABILIZERS;
+        std::vector<double> syndrome(Z_STABILIZERS);
+        for (int i = 0; i < Z_STABILIZERS; ++i)
+            syndrome[i] = static_cast<double>(slice[i]);
+
+        cudaq::qec::decoder_result result;
+        {
+            std::lock_guard<std::mutex> lock(*decode_mtx);
+            result = pm_decoder->decode(syndrome);
+        }
+
+        all_converged &= result.converged;
+        for (auto v : result.result)
+            if (v > 0.5f) total_corrections++;
     }
 
-    // Write RPC Response with a simple summary (correction count)
+    // Write RPC Response
+    struct __attribute__((packed)) DecodeResponse {
+        int32_t total_corrections;
+        int32_t converged;
+    };
+    DecodeResponse resp_data{total_corrections, all_converged ? 1 : 0};
+
     char* response_payload = (char*)job.ring_buffer_ptr + sizeof(cudaq::nvqlink::RPCResponse);
-    int32_t correction_count = nonzero;
-    std::memcpy(response_payload, &correction_count, sizeof(int32_t));
+    std::memcpy(response_payload, &resp_data, sizeof(resp_data));
 
     auto* header = static_cast<cudaq::nvqlink::RPCResponse*>(job.ring_buffer_ptr);
     header->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
     header->status = 0;
-    header->result_len = sizeof(int32_t);
+    header->result_len = sizeof(resp_data);
 
     std::atomic_thread_fence(std::memory_order_release);
 
@@ -119,6 +149,8 @@ void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder) 
 void incoming_polling_loop(
     std::vector<std::unique_ptr<AIPreDecoderService>>& predecoders,
     cudaq::qec::utils::ThreadPool& thread_pool,
+    cudaq::qec::decoder* pm_decoder,
+    std::mutex& decode_mtx,
     std::atomic<bool>& stop_signal)
 {
     PreDecoderJob job;
@@ -127,8 +159,8 @@ void incoming_polling_loop(
         for (auto& predecoder : predecoders) {
             if (predecoder->poll_next_job(job)) {
                 AIPreDecoderService* pd_ptr = predecoder.get();
-                thread_pool.enqueue([job, pd_ptr]() {
-                    pymatching_worker_task(job, pd_ptr);
+                thread_pool.enqueue([job, pd_ptr, pm_decoder, &decode_mtx]() {
+                    pymatching_worker_task(job, pd_ptr, pm_decoder, &decode_mtx);
                 });
                 found_work = true;
             }
@@ -159,6 +191,18 @@ int main() {
 
     std::string onnx_path = ONNX_MODEL_PATH;
     std::cout << "[Setup] Building TRT engines from: " << onnx_path << "\n";
+
+    // Create PyMatching decoder from d=7 surface code Z parity check matrix
+    std::cout << "[Setup] Creating PyMatching decoder (d=7 surface code, Z stabilizers)...\n";
+    auto surface_code = cudaq::qec::get_code("surface_code", {{"distance", 7}});
+    auto H_z = surface_code->get_parity_z();
+    std::cout << "[Setup] H_z shape: [" << H_z.shape()[0] << " x " << H_z.shape()[1] << "]\n";
+
+    cudaqx::heterogeneous_map pm_params;
+    pm_params.insert("merge_strategy", std::string("smallest_weight"));
+    auto pm_decoder = cudaq::qec::decoder::get("pymatching", H_z, pm_params);
+    std::mutex decode_mtx;
+    std::cout << "[Setup] PyMatching decoder ready.\n";
 
     // Allocate Ring Buffers
     void* tmp = nullptr;
@@ -249,8 +293,9 @@ int main() {
     cudaq::qec::utils::ThreadPool pymatching_pool(4);
     std::atomic<bool> system_stop{false};
 
+    cudaq::qec::decoder* pm_raw = pm_decoder.get();
     std::thread incoming_thread([&]() {
-        incoming_polling_loop(predecoders, pymatching_pool, system_stop);
+        incoming_polling_loop(predecoders, pymatching_pool, pm_raw, decode_mtx, system_stop);
     });
 
     // =========================================================================
@@ -259,7 +304,7 @@ int main() {
     // while rx_value != 0, so we must wait for each batch to complete
     // before firing the next to avoid stranding un-dispatched slots.
     // =========================================================================
-    constexpr int TOTAL_REQUESTS = 8;
+    constexpr int TOTAL_REQUESTS = 20;
     constexpr int BATCH_SIZE = NUM_PREDECODERS;
     std::cout << "\n[Test] Firing " << TOTAL_REQUESTS
               << " syndromes in batches of " << BATCH_SIZE
@@ -311,12 +356,15 @@ int main() {
             } else if (tv != 0) {
                 responses_received++;
                 uint8_t* slot_data = rx_data_host + (slot * SLOT_SIZE);
-                int32_t correction_count = 0;
-                std::memcpy(&correction_count,
+                int32_t corrections = 0, converged = 0;
+                std::memcpy(&corrections,
                             slot_data + sizeof(cudaq::nvqlink::RPCResponse),
                             sizeof(int32_t));
-                std::cout << "  -> Slot " << slot << ": OK, residual non-zero detectors = "
-                          << correction_count << "\n";
+                std::memcpy(&converged,
+                            slot_data + sizeof(cudaq::nvqlink::RPCResponse) + sizeof(int32_t),
+                            sizeof(int32_t));
+                std::cout << "  -> Slot " << slot << ": OK, corrections=" << corrections
+                          << " converged=" << (converged ? "yes" : "no") << "\n";
             } else {
                 std::cerr << "  [FAIL] Timeout waiting for slot " << slot << "\n";
             }
