@@ -228,7 +228,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       )
 
       target_compile_definitions(test_realtime_predecoder_w_pymatching PRIVATE
-        ONNX_MODEL_PATH="${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/model1_d7_r7_unified_Z_batch1.onnx"
+        ONNX_MODEL_DIR="${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime"
       )
 
       target_include_directories(test_realtime_predecoder_w_pymatching PRIVATE

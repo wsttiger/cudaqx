@@ -7,19 +7,38 @@
  ******************************************************************************/
 
 /*******************************************************************************
- * Hybrid Realtime Pipeline Test with Real ONNX Pre-Decoder
+ * Hybrid Realtime Pipeline Test with Real ONNX Pre-Decoder + PyMatching
  *
- * Uses model1_d7_r7_unified_Z_batch1.onnx:
- *   Input:  all_measurements  [1, 72, 7]  INT32  (2016 bytes)
- *   Output: residual_detectors [1, 336]   INT32  (1344 bytes)
- *   Output: logical_frame      [1]        INT32  (4 bytes)
+ * Supports multiple surface code configurations:
+ *
+ *   d=7  r=7  (model1_d7_r7_unified_Z_batch1.onnx)
+ *     Input:  all_measurements  [1, 72, 7]   INT32  (2016 bytes)
+ *     Output: residual_detectors [1, 336]    INT32  (1344 bytes)
+ *     Output: logical_frame      [1]         INT32  (4 bytes)
+ *
+ *   d=13 r=13 (model1_d13_r13_unified_Z_batch1.onnx)
+ *     Input:  all_measurements  [1, 252, 13]  INT32  (13104 bytes)
+ *     Output: residual_detectors [1, 2184]   INT32  (8736 bytes)
+ *     Output: logical_frame      [1]         INT32  (4 bytes)
+ *
+ *   d=21 r=21 (model1_d21_r21_unified_Z_batch1.onnx)
+ *     Input:  all_measurements  [1, 660, 21]  INT32  (55440 bytes)
+ *     Output: residual_detectors [1, 9240]   INT32  (36960 bytes)
+ *     Output: logical_frame      [1]         INT32  (4 bytes)
+ *
+ *   d=31 r=31 (model1_d31_r31_unified_Z_batch1.onnx)
+ *     Input:  all_measurements  [1, 1440, 31] INT32  (178560 bytes)
+ *     Output: residual_detectors [1, 29760]  INT32  (119040 bytes)
+ *     Output: logical_frame      [1]         INT32  (4 bytes)
  *
  * Pipeline:
  * 1. Ring Buffer setup
- * 2. Dispatcher Kernel -> 4x AIPreDecoderService instances (GPU, TRT from ONNX)
+ * 2. Dispatcher Kernel -> Nx AIPreDecoderService instances (GPU, TRT from ONNX)
  * 3. GPU -> CPU N-Deep Pinned Memory Queue handoff
- * 4. Dedicated Polling Thread -> 4-Worker PyMatching Thread Pool
+ * 4. Dedicated Polling Thread -> Worker PyMatching Thread Pool
  * 5. CPU Workers closing the transaction (Setting TX flags)
+ *
+ * Usage: test_realtime_predecoder_w_pymatching [d7|d13|d21|d31]
  ******************************************************************************/
 
 #include <iostream>
@@ -31,6 +50,7 @@
 #include <unistd.h>
 #include <random>
 #include <mutex>
+#include <string>
 
 #include <cuda_runtime.h>
 
@@ -58,18 +78,103 @@
 using namespace cudaq::qec;
 
 // =============================================================================
-// Configuration
+// Pipeline Configuration
 // =============================================================================
-constexpr size_t NUM_SLOTS = 64;
-constexpr size_t SLOT_SIZE = 4096;          // Enough for RPC header + 2016-byte payload + response
-constexpr int NUM_PREDECODERS = 4;
-constexpr int QUEUE_DEPTH = 16;
 
-// d=7, r=7 surface code Z-type model dimensions
-constexpr int MEAS_QUBITS = 72;
-constexpr int NUM_ROUNDS = 7;
-constexpr int INPUT_ELEMENTS = MEAS_QUBITS * NUM_ROUNDS;   // 504 int32s = 2016 bytes
-constexpr int RESIDUAL_DETECTORS = 336;                     // 336 int32s = 1344 bytes
+constexpr size_t NUM_SLOTS = 64;
+
+struct PipelineConfig {
+    std::string label;
+    int distance;
+    int num_rounds;
+    int meas_qubits;          // ONNX input shape[1]
+    int residual_detectors;   // ONNX output dim
+    std::string onnx_filename;
+    size_t slot_size;         // must fit RPCHeader + input payload
+    int total_requests;
+    int num_predecoders;
+    int queue_depth;
+    int num_workers;
+
+    int input_elements() const { return meas_qubits * num_rounds; }
+    size_t input_bytes() const { return input_elements() * sizeof(int32_t); }
+
+    std::string onnx_path() const {
+        return std::string(ONNX_MODEL_DIR) + "/" + onnx_filename;
+    }
+
+    static PipelineConfig d7_r7() {
+        return {
+            "d7_r7_Z",
+            /*distance=*/7,
+            /*num_rounds=*/7,
+            /*meas_qubits=*/72,
+            /*residual_detectors=*/336,
+            "model1_d7_r7_unified_Z_batch1.onnx",
+            /*slot_size=*/4096,
+            /*total_requests=*/20,
+            /*num_predecoders=*/4,
+            /*queue_depth=*/16,
+            /*num_workers=*/4
+        };
+    }
+
+    static PipelineConfig d13_r13() {
+        return {
+            "d13_r13_Z",
+            /*distance=*/13,
+            /*num_rounds=*/13,
+            /*meas_qubits=*/252,
+            /*residual_detectors=*/2184,
+            "model1_d13_r13_unified_Z_batch1.onnx",
+            /*slot_size=*/16384,
+            /*total_requests=*/20,
+            /*num_predecoders=*/4,
+            /*queue_depth=*/16,
+            /*num_workers=*/4
+        };
+    }
+
+    static PipelineConfig d21_r21() {
+        return {
+            "d21_r21_Z",
+            /*distance=*/21,
+            /*num_rounds=*/21,
+            /*meas_qubits=*/660,
+            /*residual_detectors=*/9240,
+            "model1_d21_r21_unified_X_batch1.onnx",
+            /*slot_size=*/65536,
+            /*total_requests=*/20,
+            /*num_predecoders=*/4,
+            /*queue_depth=*/16,
+            /*num_workers=*/4
+        };
+    }
+
+    static PipelineConfig d31_r31() {
+        return {
+            "d31_r31_Z",
+            /*distance=*/31,
+            /*num_rounds=*/31,
+            /*meas_qubits=*/1440,
+            /*residual_detectors=*/29760,
+            "model1_d31_r31_unified_Z_batch1.onnx",
+            /*slot_size=*/262144,
+            /*total_requests=*/20,
+            /*num_predecoders=*/4,
+            /*queue_depth=*/16,
+            /*num_workers=*/4
+        };
+    }
+};
+
+// Runtime decoder state populated during setup
+struct DecoderContext {
+    std::unique_ptr<cudaq::qec::decoder> pm_decoder;
+    std::mutex decode_mtx;
+    int z_stabilizers = 0;
+    int spatial_slices = 0;
+};
 
 constexpr std::uint32_t fnv1a_hash(std::string_view str) {
     std::uint32_t hash = 0x811c9dc5;
@@ -80,7 +185,7 @@ constexpr std::uint32_t fnv1a_hash(std::string_view str) {
 struct SystemContext {
     volatile uint64_t* tx_flags_host = nullptr;
     uint8_t* rx_data_host = nullptr;
-    size_t slot_size = SLOT_SIZE;
+    size_t slot_size = 0;
 };
 SystemContext g_sys_ctx;
 
@@ -88,42 +193,35 @@ SystemContext g_sys_ctx;
 // Thread Pool Worker (Real PyMatching MWPM Decoder)
 // =============================================================================
 
-// d=7 surface code: 24 Z stabilizers per spatial slice
-constexpr int Z_STABILIZERS = 24;
-constexpr int NUM_SPATIAL_SLICES = RESIDUAL_DETECTORS / Z_STABILIZERS; // 336/24 = 14
+struct __attribute__((packed)) DecodeResponse {
+    int32_t total_corrections;
+    int32_t converged;
+};
 
 void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
-                            cudaq::qec::decoder* pm_decoder, std::mutex* decode_mtx) {
-    size_t num_detectors = predecoder->get_output_size() / sizeof(int32_t);
+                            DecoderContext* ctx) {
     const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
 
-    // Decode each spatial slice of Z-stabilizer detectors independently
-    // using code-capacity PyMatching (H_z is [24 x 49])
     int total_corrections = 0;
     bool all_converged = true;
 
-    for (int s = 0; s < NUM_SPATIAL_SLICES; ++s) {
-        const int32_t* slice = residual + s * Z_STABILIZERS;
-        std::vector<double> syndrome(Z_STABILIZERS);
-        for (int i = 0; i < Z_STABILIZERS; ++i)
+    for (int s = 0; s < ctx->spatial_slices; ++s) {
+        const int32_t* slice = residual + s * ctx->z_stabilizers;
+        std::vector<double> syndrome(ctx->z_stabilizers);
+        for (int i = 0; i < ctx->z_stabilizers; ++i)
             syndrome[i] = static_cast<double>(slice[i]);
 
         cudaq::qec::decoder_result result;
         {
-            std::lock_guard<std::mutex> lock(*decode_mtx);
-            result = pm_decoder->decode(syndrome);
+            std::lock_guard<std::mutex> lock(ctx->decode_mtx);
+            result = ctx->pm_decoder->decode(syndrome);
         }
 
         all_converged &= result.converged;
         for (auto v : result.result)
-            if (v > 0.5f) total_corrections++;
+            if (v > 0.5) total_corrections++;
     }
 
-    // Write RPC Response
-    struct __attribute__((packed)) DecodeResponse {
-        int32_t total_corrections;
-        int32_t converged;
-    };
     DecodeResponse resp_data{total_corrections, all_converged ? 1 : 0};
 
     char* response_payload = (char*)job.ring_buffer_ptr + sizeof(cudaq::nvqlink::RPCResponse);
@@ -149,8 +247,7 @@ void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
 void incoming_polling_loop(
     std::vector<std::unique_ptr<AIPreDecoderService>>& predecoders,
     cudaq::qec::utils::ThreadPool& thread_pool,
-    cudaq::qec::decoder* pm_decoder,
-    std::mutex& decode_mtx,
+    DecoderContext* ctx,
     std::atomic<bool>& stop_signal)
 {
     PreDecoderJob job;
@@ -159,8 +256,8 @@ void incoming_polling_loop(
         for (auto& predecoder : predecoders) {
             if (predecoder->poll_next_job(job)) {
                 AIPreDecoderService* pd_ptr = predecoder.get();
-                thread_pool.enqueue([job, pd_ptr, pm_decoder, &decode_mtx]() {
-                    pymatching_worker_task(job, pd_ptr, pm_decoder, &decode_mtx);
+                thread_pool.enqueue([job, pd_ptr, ctx]() {
+                    pymatching_worker_task(job, pd_ptr, ctx);
                 });
                 found_work = true;
             }
@@ -174,10 +271,10 @@ void incoming_polling_loop(
 // =============================================================================
 // Generate Realistic Syndrome Data
 // =============================================================================
-void fill_measurement_payload(int32_t* payload, std::mt19937& rng,
-                              double error_rate = 0.01) {
+void fill_measurement_payload(int32_t* payload, int input_elements,
+                              std::mt19937& rng, double error_rate = 0.01) {
     std::bernoulli_distribution err_dist(error_rate);
-    for (int i = 0; i < INPUT_ELEMENTS; ++i) {
+    for (int i = 0; i < input_elements; ++i) {
         payload[i] = err_dist(rng) ? 1 : 0;
     }
 }
@@ -185,23 +282,62 @@ void fill_measurement_payload(int32_t* payload, std::mt19937& rng,
 // =============================================================================
 // Main
 // =============================================================================
-int main() {
-    std::cout << "--- Initializing Hybrid AI Realtime Pipeline (d=7 r=7 Z) ---\n";
+int main(int argc, char* argv[]) {
+    // Select configuration
+    std::string config_name = "d7";
+    if (argc > 1)
+        config_name = argv[1];
+
+    PipelineConfig config;
+    if (config_name == "d7") {
+        config = PipelineConfig::d7_r7();
+    } else if (config_name == "d13") {
+        config = PipelineConfig::d13_r13();
+    } else if (config_name == "d21") {
+        config = PipelineConfig::d21_r21();
+    } else if (config_name == "d31") {
+        config = PipelineConfig::d31_r31();
+    } else {
+        std::cerr << "Usage: " << argv[0] << " [d7|d13|d21|d31]\n"
+                  << "  d7  - distance 7, 7 rounds (default)\n"
+                  << "  d13 - distance 13, 13 rounds\n"
+                  << "  d21 - distance 21, 21 rounds\n"
+                  << "  d31 - distance 31, 31 rounds\n";
+        return 1;
+    }
+
+    std::cout << "--- Initializing Hybrid AI Realtime Pipeline ("
+              << config.label << ") ---\n";
+    std::cout << "[Config] distance=" << config.distance
+              << " rounds=" << config.num_rounds
+              << " meas_qubits=" << config.meas_qubits
+              << " residual_detectors=" << config.residual_detectors
+              << " input_bytes=" << config.input_bytes()
+              << " slot_size=" << config.slot_size << "\n";
+
     CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceMapHost));
 
-    std::string onnx_path = ONNX_MODEL_PATH;
+    std::string onnx_path = config.onnx_path();
     std::cout << "[Setup] Building TRT engines from: " << onnx_path << "\n";
 
-    // Create PyMatching decoder from d=7 surface code Z parity check matrix
-    std::cout << "[Setup] Creating PyMatching decoder (d=7 surface code, Z stabilizers)...\n";
-    auto surface_code = cudaq::qec::get_code("surface_code", {{"distance", 7}});
+    // Create PyMatching decoder from surface code Z parity check matrix
+    std::cout << "[Setup] Creating PyMatching decoder (d=" << config.distance
+              << " surface code, Z stabilizers)...\n";
+    auto surface_code = cudaq::qec::get_code("surface_code",
+                                              {{"distance", config.distance}});
     auto H_z = surface_code->get_parity_z();
-    std::cout << "[Setup] H_z shape: [" << H_z.shape()[0] << " x " << H_z.shape()[1] << "]\n";
+
+    DecoderContext decoder_ctx;
+    decoder_ctx.z_stabilizers = static_cast<int>(H_z.shape()[0]);
+    decoder_ctx.spatial_slices = config.residual_detectors / decoder_ctx.z_stabilizers;
+    std::cout << "[Setup] H_z shape: [" << H_z.shape()[0] << " x "
+              << H_z.shape()[1] << "]"
+              << "  z_stabilizers=" << decoder_ctx.z_stabilizers
+              << "  spatial_slices=" << decoder_ctx.spatial_slices << "\n";
 
     cudaqx::heterogeneous_map pm_params;
     pm_params.insert("merge_strategy", std::string("smallest_weight"));
-    auto pm_decoder = cudaq::qec::decoder::get("pymatching", H_z, pm_params);
-    std::mutex decode_mtx;
+    decoder_ctx.pm_decoder = cudaq::qec::decoder::get("pymatching", H_z, pm_params);
     std::cout << "[Setup] PyMatching decoder ready.\n";
 
     // Allocate Ring Buffers
@@ -218,7 +354,7 @@ int main() {
     tx_flags_host = static_cast<volatile uint64_t*>(tmp);
     CUDA_CHECK(cudaHostGetDevicePointer((void**)&tx_flags_dev, tmp, 0));
 
-    CUDA_CHECK(cudaHostAlloc(&rx_data_host, NUM_SLOTS * SLOT_SIZE, cudaHostAllocMapped));
+    CUDA_CHECK(cudaHostAlloc(&rx_data_host, NUM_SLOTS * config.slot_size, cudaHostAllocMapped));
     CUDA_CHECK(cudaHostGetDevicePointer((void**)&rx_data_dev, rx_data_host, 0));
 
     std::memset((void*)rx_flags_host, 0, NUM_SLOTS * sizeof(uint64_t));
@@ -226,11 +362,12 @@ int main() {
 
     g_sys_ctx.tx_flags_host = tx_flags_host;
     g_sys_ctx.rx_data_host = rx_data_host;
+    g_sys_ctx.slot_size = config.slot_size;
 
     // Allocate Global Mailbox Bank & Control signals
     void** d_global_mailbox_bank;
-    CUDA_CHECK(cudaMalloc(&d_global_mailbox_bank, NUM_PREDECODERS * sizeof(void*)));
-    CUDA_CHECK(cudaMemset(d_global_mailbox_bank, 0, NUM_PREDECODERS * sizeof(void*)));
+    CUDA_CHECK(cudaMalloc(&d_global_mailbox_bank, config.num_predecoders * sizeof(void*)));
+    CUDA_CHECK(cudaMemset(d_global_mailbox_bank, 0, config.num_predecoders * sizeof(void*)));
 
     int* shutdown_flag_host;
     CUDA_CHECK(cudaHostAlloc(&shutdown_flag_host, sizeof(int), cudaHostAllocMapped));
@@ -242,17 +379,19 @@ int main() {
     CUDA_CHECK(cudaMalloc(&d_stats, sizeof(uint64_t)));
     CUDA_CHECK(cudaMemset(d_stats, 0, sizeof(uint64_t)));
 
-    // Initialize 4 AIPreDecoder Instances from ONNX
-    std::cout << "[Setup] Capturing 4x AIPreDecoder Graphs (ONNX -> TRT)...\n";
+    // Initialize AIPreDecoder Instances from ONNX
+    std::cout << "[Setup] Capturing " << config.num_predecoders
+              << "x AIPreDecoder Graphs (ONNX -> TRT)...\n";
     cudaStream_t capture_stream;
     CUDA_CHECK(cudaStreamCreate(&capture_stream));
 
     std::vector<std::unique_ptr<AIPreDecoderService>> predecoders;
-    std::vector<cudaq_function_entry_t> function_entries(NUM_PREDECODERS);
+    std::vector<cudaq_function_entry_t> function_entries(config.num_predecoders);
 
-    for (int i = 0; i < NUM_PREDECODERS; ++i) {
+    for (int i = 0; i < config.num_predecoders; ++i) {
         void** my_mailbox = d_global_mailbox_bank + i;
-        auto pd = std::make_unique<AIPreDecoderService>(onnx_path, my_mailbox, QUEUE_DEPTH);
+        auto pd = std::make_unique<AIPreDecoderService>(onnx_path, my_mailbox,
+                                                         config.queue_depth);
 
         std::cout << "[Setup] Decoder " << i
                   << ": input_size=" << pd->get_input_size()
@@ -272,69 +411,72 @@ int main() {
 
         predecoders.push_back(std::move(pd));
     }
-    int actual_func_count = NUM_PREDECODERS;
 
     cudaq_function_entry_t* d_function_entries;
-    CUDA_CHECK(cudaMalloc(&d_function_entries, actual_func_count * sizeof(cudaq_function_entry_t)));
+    CUDA_CHECK(cudaMalloc(&d_function_entries,
+               config.num_predecoders * sizeof(cudaq_function_entry_t)));
     CUDA_CHECK(cudaMemcpy(d_function_entries, function_entries.data(),
-               actual_func_count * sizeof(cudaq_function_entry_t), cudaMemcpyHostToDevice));
+               config.num_predecoders * sizeof(cudaq_function_entry_t),
+               cudaMemcpyHostToDevice));
 
     // Start GPU Dispatcher
     std::cout << "[Setup] Launching Dispatcher Kernel...\n";
     cudaq_dispatch_graph_context* dispatch_ctx = nullptr;
     CUDA_CHECK(cudaq_create_dispatch_graph_regular(
-        rx_flags_dev, tx_flags_dev, d_function_entries, actual_func_count,
-        d_global_mailbox_bank, d_shutdown_flag, d_stats, NUM_SLOTS, 1, 32, capture_stream, &dispatch_ctx
+        rx_flags_dev, tx_flags_dev, d_function_entries, config.num_predecoders,
+        d_global_mailbox_bank, d_shutdown_flag, d_stats, NUM_SLOTS, 1, 32,
+        capture_stream, &dispatch_ctx
     ));
     CUDA_CHECK(cudaq_launch_dispatch_graph(dispatch_ctx, capture_stream));
 
     // Start CPU Infrastructure
-    std::cout << "[Setup] Booting Thread Pool & Polling Loop...\n";
-    cudaq::qec::utils::ThreadPool pymatching_pool(4);
+    std::cout << "[Setup] Booting Thread Pool (" << config.num_workers
+              << " workers) & Polling Loop...\n";
+    cudaq::qec::utils::ThreadPool pymatching_pool(config.num_workers);
     std::atomic<bool> system_stop{false};
 
-    cudaq::qec::decoder* pm_raw = pm_decoder.get();
     std::thread incoming_thread([&]() {
-        incoming_polling_loop(predecoders, pymatching_pool, pm_raw, decode_mtx, system_stop);
+        incoming_polling_loop(predecoders, pymatching_pool, &decoder_ctx,
+                              system_stop);
     });
 
     // =========================================================================
-    // Test Stimulus: Fire requests in batches of NUM_PREDECODERS.
+    // Test Stimulus: Fire requests in batches of num_predecoders.
     // The dispatcher advances its slot pointer linearly and only retries
     // while rx_value != 0, so we must wait for each batch to complete
     // before firing the next to avoid stranding un-dispatched slots.
     // =========================================================================
-    constexpr int TOTAL_REQUESTS = 20;
-    constexpr int BATCH_SIZE = NUM_PREDECODERS;
-    std::cout << "\n[Test] Firing " << TOTAL_REQUESTS
-              << " syndromes in batches of " << BATCH_SIZE
-              << " (d=7, r=7, error_rate=0.01)...\n";
+    const int batch_size = config.num_predecoders;
+    std::cout << "\n[Test] Firing " << config.total_requests
+              << " syndromes in batches of " << batch_size
+              << " (" << config.label << ", error_rate=0.01)...\n";
 
     std::mt19937 rng(42);
-    const size_t payload_bytes = INPUT_ELEMENTS * sizeof(int32_t);
+    const size_t payload_bytes = config.input_bytes();
     int requests_sent = 0;
     int responses_received = 0;
 
-    for (int batch_start = 0; batch_start < TOTAL_REQUESTS; batch_start += BATCH_SIZE) {
-        int batch_end = std::min(batch_start + BATCH_SIZE, TOTAL_REQUESTS);
-        int batch_count = batch_end - batch_start;
+    for (int batch_start = 0; batch_start < config.total_requests;
+         batch_start += batch_size) {
+        int batch_end = std::min(batch_start + batch_size, config.total_requests);
 
         // Fire one batch
         for (int i = batch_start; i < batch_end; ++i) {
-            int target_decoder = i % NUM_PREDECODERS;
+            int target_decoder = i % config.num_predecoders;
             std::string target_func = "predecode_target_" + std::to_string(target_decoder);
 
-            int slot = i % NUM_SLOTS;
+            int slot = i % (int)NUM_SLOTS;
             while (rx_flags_host[slot] != 0) usleep(10);
 
-            uint8_t* slot_data = rx_data_host + (slot * SLOT_SIZE);
+            uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
             auto* header = reinterpret_cast<cudaq::nvqlink::RPCHeader*>(slot_data);
             header->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
             header->function_id = fnv1a_hash(target_func);
             header->arg_len = static_cast<uint32_t>(payload_bytes);
 
-            int32_t* payload = reinterpret_cast<int32_t*>(slot_data + sizeof(cudaq::nvqlink::RPCHeader));
-            fill_measurement_payload(payload, rng, 0.01);
+            int32_t* payload = reinterpret_cast<int32_t*>(
+                slot_data + sizeof(cudaq::nvqlink::RPCHeader));
+            fill_measurement_payload(payload, config.input_elements(), rng, 0.01);
 
             __sync_synchronize();
             rx_flags_host[slot] = reinterpret_cast<uint64_t>(slot_data);
@@ -343,7 +485,7 @@ int main() {
 
         // Wait for this batch to complete
         for (int i = batch_start; i < batch_end; ++i) {
-            int slot = i % NUM_SLOTS;
+            int slot = i % (int)NUM_SLOTS;
 
             int timeout = 10000;
             while (tx_flags_host[slot] == 0 && timeout-- > 0) usleep(1000);
@@ -355,7 +497,7 @@ int main() {
                           << cuda_err << " (" << cudaGetErrorString((cudaError_t)cuda_err) << ")\n";
             } else if (tv != 0) {
                 responses_received++;
-                uint8_t* slot_data = rx_data_host + (slot * SLOT_SIZE);
+                uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
                 int32_t corrections = 0, converged = 0;
                 std::memcpy(&corrections,
                             slot_data + sizeof(cudaq::nvqlink::RPCResponse),
