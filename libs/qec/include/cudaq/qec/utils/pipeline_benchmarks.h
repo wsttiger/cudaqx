@@ -27,7 +27,7 @@ namespace cudaq::qec::utils {
 ///       bench.mark_submit(i);
 ///       // ... submit request ...
 ///       // ... wait for response ...
-///       bench.mark_complete(i);
+///       bench.mark_complete(i);   // only if successful
 ///   }
 ///   bench.stop();
 ///   bench.report();
@@ -40,10 +40,11 @@ public:
 
     explicit PipelineBenchmark(const std::string &label = "Pipeline",
                                size_t expected_requests = 0)
-        : label_(label) {
+        : label_(label), total_submitted_(0) {
         if (expected_requests > 0) {
             submit_times_.resize(expected_requests);
             complete_times_.resize(expected_requests);
+            completed_.resize(expected_requests, false);
         }
     }
 
@@ -53,15 +54,18 @@ public:
     void mark_submit(int request_id) {
         ensure_capacity(request_id);
         submit_times_[request_id] = clock::now();
+        total_submitted_++;
     }
 
     void mark_complete(int request_id) {
         ensure_capacity(request_id);
         complete_times_[request_id] = clock::now();
+        completed_[request_id] = true;
     }
 
     struct Stats {
-        size_t count = 0;
+        size_t submitted = 0;
+        size_t completed = 0;
         double min_us = 0, max_us = 0, mean_us = 0;
         double p50_us = 0, p90_us = 0, p95_us = 0, p99_us = 0;
         double stddev_us = 0;
@@ -69,12 +73,15 @@ public:
         double throughput_rps = 0;
     };
 
-    /// Return per-request latencies in microseconds.
+    /// Return per-request latencies in microseconds (completed requests only).
     std::vector<double> latencies_us() const {
-        size_t n = std::min(submit_times_.size(), complete_times_.size());
+        size_t n = std::min({submit_times_.size(), complete_times_.size(),
+                             completed_.size()});
         std::vector<double> lats;
         lats.reserve(n);
         for (size_t i = 0; i < n; ++i) {
+            if (!completed_[i])
+                continue;
             auto dt = std::chrono::duration_cast<duration_us>(
                 complete_times_[i] - submit_times_[i]);
             lats.push_back(dt.count());
@@ -82,11 +89,27 @@ public:
         return lats;
     }
 
+    /// Return per-request latency or -1.0 for incomplete (preserves indices).
+    std::vector<double> all_latencies_us() const {
+        size_t n = std::min({submit_times_.size(), complete_times_.size(),
+                             completed_.size()});
+        std::vector<double> lats(n, -1.0);
+        for (size_t i = 0; i < n; ++i) {
+            if (!completed_[i])
+                continue;
+            auto dt = std::chrono::duration_cast<duration_us>(
+                complete_times_[i] - submit_times_[i]);
+            lats[i] = dt.count();
+        }
+        return lats;
+    }
+
     Stats compute_stats() const {
         auto lats = latencies_us();
         Stats s;
-        s.count = lats.size();
-        if (s.count == 0)
+        s.submitted = total_submitted_;
+        s.completed = lats.size();
+        if (s.completed == 0)
             return s;
 
         std::sort(lats.begin(), lats.end());
@@ -94,7 +117,7 @@ public:
         s.min_us = lats.front();
         s.max_us = lats.back();
         s.mean_us =
-            std::accumulate(lats.begin(), lats.end(), 0.0) / s.count;
+            std::accumulate(lats.begin(), lats.end(), 0.0) / s.completed;
         s.p50_us = percentile(lats, 50.0);
         s.p90_us = percentile(lats, 90.0);
         s.p95_us = percentile(lats, 95.0);
@@ -103,32 +126,35 @@ public:
         double sum_sq = 0;
         for (auto v : lats)
             sum_sq += (v - s.mean_us) * (v - s.mean_us);
-        s.stddev_us = std::sqrt(sum_sq / s.count);
+        s.stddev_us = std::sqrt(sum_sq / s.completed);
 
         auto wall =
             std::chrono::duration_cast<duration_us>(run_end_ - run_start_);
         s.total_wall_us = wall.count();
         s.throughput_rps =
-            (s.total_wall_us > 0) ? (s.count * 1e6 / s.total_wall_us) : 0;
+            (s.total_wall_us > 0) ? (s.completed * 1e6 / s.total_wall_us) : 0;
 
         return s;
     }
 
     void report(std::ostream &os = std::cout) const {
         auto s = compute_stats();
-        auto lats = latencies_us();
+        auto all = all_latencies_us();
 
         os << "\n";
         os << "================================================================\n";
         os << "  Benchmark: " << label_ << "\n";
         os << "================================================================\n";
         os << std::fixed;
-        os << "  Requests:       " << s.count << "\n";
+        os << "  Submitted:      " << s.submitted << "\n";
+        os << "  Completed:      " << s.completed << "\n";
+        if (s.submitted > s.completed)
+            os << "  Timed out:      " << (s.submitted - s.completed) << "\n";
         os << std::setprecision(1);
         os << "  Wall time:      " << s.total_wall_us / 1000.0 << " ms\n";
         os << "  Throughput:     " << s.throughput_rps << " req/s\n";
         os << "  ---------------------------------------------------------------\n";
-        os << "  Latency (us)\n";
+        os << "  Latency (us)     [completed requests only]\n";
         os << std::setprecision(1);
         os << "    min    = " << std::setw(10) << s.min_us << "\n";
         os << "    p50    = " << std::setw(10) << s.p50_us << "\n";
@@ -140,13 +166,16 @@ public:
         os << "    stddev = " << std::setw(10) << s.stddev_us << "\n";
         os << "  ---------------------------------------------------------------\n";
 
-        // Per-request breakdown (compact, one line per request)
-        if (!lats.empty()) {
+        // Per-request breakdown: only show for small runs (<=50 requests)
+        if (!all.empty() && all.size() <= 50) {
             os << "  Per-request latencies (us):\n";
-            for (size_t i = 0; i < lats.size(); ++i) {
-                os << "    [" << std::setw(4) << i << "] "
-                   << std::setprecision(1) << std::setw(10) << lats[i]
-                   << "\n";
+            for (size_t i = 0; i < all.size(); ++i) {
+                os << "    [" << std::setw(4) << i << "] ";
+                if (all[i] < 0)
+                    os << "   TIMEOUT\n";
+                else
+                    os << std::setprecision(1) << std::setw(10) << all[i]
+                       << "\n";
             }
         }
         os << "================================================================\n";
@@ -154,9 +183,11 @@ public:
 
 private:
     std::string label_;
+    size_t total_submitted_;
     time_point run_start_{}, run_end_{};
     std::vector<time_point> submit_times_;
     std::vector<time_point> complete_times_;
+    std::vector<bool> completed_;
 
     void ensure_capacity(int id) {
         size_t needed = static_cast<size_t>(id) + 1;
@@ -164,6 +195,8 @@ private:
             submit_times_.resize(needed);
         if (complete_times_.size() < needed)
             complete_times_.resize(needed);
+        if (completed_.size() < needed)
+            completed_.resize(needed, false);
     }
 
     static double percentile(const std::vector<double> &sorted, double p) {

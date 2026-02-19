@@ -63,6 +63,7 @@
 #include "cudaq/qec/realtime/ai_decoder_service.h"
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
 #include "cudaq/qec/utils/thread_pool.h"
+#include "cudaq/qec/utils/pipeline_benchmarks.h"
 #include "cudaq/qec/code.h"
 #include "cudaq/qec/decoder.h"
 
@@ -112,7 +113,7 @@ struct PipelineConfig {
             /*residual_detectors=*/336,
             "model1_d7_r7_unified_Z_batch1.onnx",
             /*slot_size=*/4096,
-            /*total_requests=*/20,
+            /*total_requests=*/100,
             /*num_predecoders=*/4,
             /*queue_depth=*/16,
             /*num_workers=*/4
@@ -128,7 +129,7 @@ struct PipelineConfig {
             /*residual_detectors=*/2184,
             "model1_d13_r13_unified_Z_batch1.onnx",
             /*slot_size=*/16384,
-            /*total_requests=*/20,
+            /*total_requests=*/100,
             /*num_predecoders=*/4,
             /*queue_depth=*/16,
             /*num_workers=*/4
@@ -144,7 +145,7 @@ struct PipelineConfig {
             /*residual_detectors=*/9240,
             "model1_d21_r21_unified_X_batch1.onnx",
             /*slot_size=*/65536,
-            /*total_requests=*/20,
+            /*total_requests=*/100,
             /*num_predecoders=*/4,
             /*queue_depth=*/16,
             /*num_workers=*/4
@@ -160,7 +161,7 @@ struct PipelineConfig {
             /*residual_detectors=*/29760,
             "model1_d31_r31_unified_Z_batch1.onnx",
             /*slot_size=*/262144,
-            /*total_requests=*/20,
+            /*total_requests=*/100,
             /*num_predecoders=*/4,
             /*queue_depth=*/16,
             /*num_workers=*/4
@@ -451,10 +452,15 @@ int main(int argc, char* argv[]) {
               << " syndromes in batches of " << batch_size
               << " (" << config.label << ", error_rate=0.01)...\n";
 
+    cudaq::qec::utils::PipelineBenchmark bench(config.label,
+                                                config.total_requests);
+
     std::mt19937 rng(42);
     const size_t payload_bytes = config.input_bytes();
     int requests_sent = 0;
     int responses_received = 0;
+
+    bench.start();
 
     for (int batch_start = 0; batch_start < config.total_requests;
          batch_start += batch_size) {
@@ -479,16 +485,20 @@ int main(int argc, char* argv[]) {
             fill_measurement_payload(payload, config.input_elements(), rng, 0.01);
 
             __sync_synchronize();
+            bench.mark_submit(i);
             rx_flags_host[slot] = reinterpret_cast<uint64_t>(slot_data);
             requests_sent++;
         }
 
-        // Wait for this batch to complete
+        // Wait for this batch to complete (spin-wait for accurate latency)
         for (int i = batch_start; i < batch_end; ++i) {
             int slot = i % (int)NUM_SLOTS;
 
-            int timeout = 10000;
-            while (tx_flags_host[slot] == 0 && timeout-- > 0) usleep(1000);
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (tx_flags_host[slot] == 0) {
+                if (std::chrono::steady_clock::now() > deadline) break;
+                QEC_CPU_RELAX();
+            }
 
             uint64_t tv = tx_flags_host[slot];
             if (tv != 0 && (tv >> 48) == 0xDEAD) {
@@ -496,6 +506,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "  [FAIL] Slot " << slot << " cudaGraphLaunch error "
                           << cuda_err << " (" << cudaGetErrorString((cudaError_t)cuda_err) << ")\n";
             } else if (tv != 0) {
+                bench.mark_complete(i);
                 responses_received++;
                 uint8_t* slot_data = rx_data_host + (slot * config.slot_size);
                 int32_t corrections = 0, converged = 0;
@@ -515,8 +526,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    bench.stop();
+
     std::cout << "\n[Result] Processed " << responses_received << "/" << requests_sent
               << " requests successfully.\n";
+
+    bench.report();
 
     // Teardown
     std::cout << "[Teardown] Shutting down...\n";
