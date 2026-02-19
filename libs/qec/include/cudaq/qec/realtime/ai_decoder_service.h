@@ -27,7 +27,10 @@ public:
     ///        an ONNX model (.onnx) which will be compiled to a TRT engine.
     /// @param model_path Path to the model file
     /// @param device_mailbox_slot Pointer to the specific slot in the global mailbox bank
-    AIDecoderService(const std::string& model_path, void** device_mailbox_slot);
+    /// @param engine_save_path If non-empty and model_path is .onnx, save the
+    ///        built engine to this path for fast reloading on subsequent runs
+    AIDecoderService(const std::string& model_path, void** device_mailbox_slot,
+                     const std::string& engine_save_path = "");
 
     virtual ~AIDecoderService();
 
@@ -43,7 +46,8 @@ public:
 
 protected:
     void load_engine(const std::string& path);
-    void build_engine_from_onnx(const std::string& onnx_path);
+    void build_engine_from_onnx(const std::string& onnx_path,
+                                const std::string& engine_save_path = "");
     void setup_bindings();
     void allocate_resources();
 

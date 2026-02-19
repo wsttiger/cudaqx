@@ -52,6 +52,7 @@
 #include <mutex>
 #include <string>
 #include <iomanip>
+#include <fstream>
 
 #include <cuda_runtime.h>
 
@@ -103,6 +104,14 @@ struct PipelineConfig {
 
     std::string onnx_path() const {
         return std::string(ONNX_MODEL_DIR) + "/" + onnx_filename;
+    }
+
+    std::string engine_path() const {
+        std::string name = onnx_filename;
+        auto dot = name.rfind('.');
+        if (dot != std::string::npos)
+            name = name.substr(0, dot);
+        return std::string(ONNX_MODEL_DIR) + "/" + name + ".engine";
     }
 
     static PipelineConfig d7_r7() {
@@ -172,12 +181,17 @@ struct PipelineConfig {
 
 // Runtime decoder state populated during setup
 struct DecoderContext {
-    std::unique_ptr<cudaq::qec::decoder> pm_decoder;
-    std::mutex decode_mtx;
+    std::vector<std::unique_ptr<cudaq::qec::decoder>> decoders;
+    std::atomic<int> next_decoder_idx{0};
     int z_stabilizers = 0;
     int spatial_slices = 0;
 
-    // Per-worker timing accumulators (protected by decode_mtx)
+    cudaq::qec::decoder* acquire_decoder() {
+        thread_local int my_idx = next_decoder_idx.fetch_add(1, std::memory_order_relaxed);
+        return decoders[my_idx % decoders.size()].get();
+    }
+
+    // Per-worker timing accumulators (lock-free)
     std::atomic<int64_t> total_decode_us{0};
     std::atomic<int64_t> total_worker_us{0};
     std::atomic<int> decode_count{0};
@@ -211,6 +225,7 @@ void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
     auto worker_start = hrclock::now();
 
     const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
+    auto* my_decoder = ctx->acquire_decoder();
 
     int total_corrections = 0;
     bool all_converged = true;
@@ -222,11 +237,7 @@ void pymatching_worker_task(PreDecoderJob job, AIPreDecoderService* predecoder,
         for (int i = 0; i < ctx->z_stabilizers; ++i)
             syndrome[i] = static_cast<double>(slice[i]);
 
-        cudaq::qec::decoder_result result;
-        {
-            std::lock_guard<std::mutex> lock(ctx->decode_mtx);
-            result = ctx->pm_decoder->decode(syndrome);
-        }
+        auto result = my_decoder->decode(syndrome);
 
         all_converged &= result.converged;
         for (auto v : result.result)
@@ -338,8 +349,21 @@ int main(int argc, char* argv[]) {
 
     CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceMapHost));
 
-    std::string onnx_path = config.onnx_path();
-    std::cout << "[Setup] Building TRT engines from: " << onnx_path << "\n";
+    std::string engine_file = config.engine_path();
+    std::string onnx_file = config.onnx_path();
+    std::string model_path;
+
+    // Prefer cached .engine file; fall back to ONNX build + save
+    std::ifstream engine_probe(engine_file, std::ios::binary);
+    if (engine_probe.good()) {
+        engine_probe.close();
+        model_path = engine_file;
+        std::cout << "[Setup] Loading cached TRT engine: " << engine_file << "\n";
+    } else {
+        model_path = onnx_file;
+        std::cout << "[Setup] Building TRT engines from ONNX: " << onnx_file << "\n";
+        std::cout << "[Setup] Engine will be cached to: " << engine_file << "\n";
+    }
 
     // Create PyMatching decoder from surface code Z parity check matrix
     std::cout << "[Setup] Creating PyMatching decoder (d=" << config.distance
@@ -358,8 +382,12 @@ int main(int argc, char* argv[]) {
 
     cudaqx::heterogeneous_map pm_params;
     pm_params.insert("merge_strategy", std::string("smallest_weight"));
-    decoder_ctx.pm_decoder = cudaq::qec::decoder::get("pymatching", H_z, pm_params);
-    std::cout << "[Setup] PyMatching decoder ready.\n";
+    std::cout << "[Setup] Pre-allocating " << config.num_workers
+              << " PyMatching decoders (one per worker)...\n";
+    for (int i = 0; i < config.num_workers; ++i)
+        decoder_ctx.decoders.push_back(
+            cudaq::qec::decoder::get("pymatching", H_z, pm_params));
+    std::cout << "[Setup] PyMatching decoder pool ready.\n";
 
     // Allocate Ring Buffers
     void* tmp = nullptr;
@@ -402,17 +430,20 @@ int main(int argc, char* argv[]) {
 
     // Initialize AIPreDecoder Instances from ONNX
     std::cout << "[Setup] Capturing " << config.num_predecoders
-              << "x AIPreDecoder Graphs (ONNX -> TRT)...\n";
+              << "x AIPreDecoder Graphs...\n";
     cudaStream_t capture_stream;
     CUDA_CHECK(cudaStreamCreate(&capture_stream));
 
     std::vector<std::unique_ptr<AIPreDecoderService>> predecoders;
     std::vector<cudaq_function_entry_t> function_entries(config.num_predecoders);
 
+    bool need_save = (model_path == onnx_file);
     for (int i = 0; i < config.num_predecoders; ++i) {
         void** my_mailbox = d_global_mailbox_bank + i;
-        auto pd = std::make_unique<AIPreDecoderService>(onnx_path, my_mailbox,
-                                                         config.queue_depth);
+        std::string save_path = (need_save && i == 0) ? engine_file : "";
+        auto pd = std::make_unique<AIPreDecoderService>(model_path, my_mailbox,
+                                                         config.queue_depth,
+                                                         save_path);
 
         std::cout << "[Setup] Decoder " << i
                   << ": input_size=" << pd->get_input_size()

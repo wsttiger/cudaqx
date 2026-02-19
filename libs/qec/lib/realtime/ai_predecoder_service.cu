@@ -91,8 +91,9 @@ __global__ void passthrough_copy_kernel(void* dst, const void* src, size_t num_b
 // Class Implementation
 // =============================================================================
 
-AIPreDecoderService::AIPreDecoderService(const std::string& path, void** mailbox, int queue_depth)
-    : AIDecoderService(path, mailbox), queue_depth_(queue_depth)
+AIPreDecoderService::AIPreDecoderService(const std::string& path, void** mailbox,
+                                         int queue_depth, const std::string& engine_save_path)
+    : AIDecoderService(path, mailbox, engine_save_path), queue_depth_(queue_depth)
 {
     SERVICE_CUDA_CHECK(cudaHostAlloc(&h_ready_flags_, queue_depth_ * sizeof(int), cudaHostAllocMapped));
     SERVICE_CUDA_CHECK(cudaHostAlloc(&h_ring_ptrs_, queue_depth_ * sizeof(void*), cudaHostAllocMapped));

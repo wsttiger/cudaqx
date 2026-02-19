@@ -94,7 +94,8 @@ void AIDecoderService::Logger::log(Severity severity, const char* msg) noexcept 
     }
 }
 
-AIDecoderService::AIDecoderService(const std::string& model_path, void** device_mailbox_slot)
+AIDecoderService::AIDecoderService(const std::string& model_path, void** device_mailbox_slot,
+                                   const std::string& engine_save_path)
     : device_mailbox_slot_(device_mailbox_slot) {
 
     if (std::getenv("SKIP_TRT")) {
@@ -104,7 +105,7 @@ AIDecoderService::AIDecoderService(const std::string& model_path, void** device_
     } else {
         std::string ext = model_path.substr(model_path.find_last_of('.'));
         if (ext == ".onnx") {
-            build_engine_from_onnx(model_path);
+            build_engine_from_onnx(model_path, engine_save_path);
         } else {
             load_engine(model_path);
         }
@@ -136,7 +137,8 @@ void AIDecoderService::load_engine(const std::string& path) {
     context_.reset(engine_->createExecutionContext());
 }
 
-void AIDecoderService::build_engine_from_onnx(const std::string& onnx_path) {
+void AIDecoderService::build_engine_from_onnx(const std::string& onnx_path,
+                                              const std::string& engine_save_path) {
     runtime_.reset(nvinfer1::createInferRuntime(gLogger));
 
     auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(gLogger));
@@ -153,6 +155,17 @@ void AIDecoderService::build_engine_from_onnx(const std::string& onnx_path) {
     auto plan = std::unique_ptr<nvinfer1::IHostMemory>(
         builder->buildSerializedNetwork(*network, *config));
     if (!plan) throw std::runtime_error("Failed to build TRT engine from ONNX");
+
+    if (!engine_save_path.empty()) {
+        std::ofstream out(engine_save_path, std::ios::binary);
+        if (out.good()) {
+            out.write(static_cast<const char*>(plan->data()), plan->size());
+            std::printf("[TensorRT] Saved engine to: %s\n", engine_save_path.c_str());
+        } else {
+            std::fprintf(stderr, "[TensorRT] Warning: could not save engine to %s\n",
+                         engine_save_path.c_str());
+        }
+    }
 
     engine_.reset(runtime_->deserializeCudaEngine(plan->data(), plan->size()));
     if (!engine_) throw std::runtime_error("Failed to deserialize built engine");

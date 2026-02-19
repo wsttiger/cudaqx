@@ -31,7 +31,8 @@ struct PreDecoderJob {
 
 class AIPreDecoderService : public AIDecoderService {
 public:
-    AIPreDecoderService(const std::string& engine_path, void** device_mailbox_slot, int queue_depth = 16);
+    AIPreDecoderService(const std::string& engine_path, void** device_mailbox_slot,
+                        int queue_depth = 16, const std::string& engine_save_path = "");
     virtual ~AIPreDecoderService();
 
     void capture_graph(cudaStream_t stream) override;
