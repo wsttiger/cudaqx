@@ -7,49 +7,43 @@
  ******************************************************************************/
 
 #include "cudaq/qec/realtime/ai_decoder_service.h"
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h" // For RPCHeader, RPCResponse
+#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
+#include <NvOnnxParser.h>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <algorithm>
 
 namespace cudaq::qec {
 
 // =============================================================================
-// Gateway Kernels (The Bridge)
+// Gateway Kernels
 // =============================================================================
 
-/// @brief Reads the dynamic buffer address from the mailbox and copies to fixed buffer
 __global__ void gateway_input_kernel(
-    void** mailbox_slot_ptr,    // The specific slot in the Global Bank
-    float* trt_fixed_input,     // The persistent TRT input buffer
-    size_t copy_size_bytes) 
+    void** mailbox_slot_ptr,
+    void* trt_fixed_input,
+    size_t copy_size_bytes)
 {
-    // 1. Read the pointer provided by the Dispatcher
     void* ring_buffer_data = *mailbox_slot_ptr;
-
     if (ring_buffer_data == nullptr) return;
 
-    // 2. Skip RPC Header to find payload
     const char* src = (const char*)ring_buffer_data + sizeof(cudaq::nvqlink::RPCHeader);
     char* dst = (char*)trt_fixed_input;
 
-    // 3. Grid-Stride Copy
     for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < copy_size_bytes; i += blockDim.x * gridDim.x) {
         dst[i] = src[i];
     }
 }
 
-/// @brief Copies result back to Ring Buffer and writes RPC Response
 __global__ void gateway_output_kernel(
     void** mailbox_slot_ptr,
-    const float* trt_fixed_output,
+    const void* trt_fixed_output,
     size_t result_size_bytes)
 {
     void* ring_buffer_data = *mailbox_slot_ptr;
     if (ring_buffer_data == nullptr) return;
 
-    // 1. Write Result Payload (Overwriting input args in this design, or append after)
-    // Assuming Input/Output fit in the same slot allocation.
     char* dst = (char*)ring_buffer_data + sizeof(cudaq::nvqlink::RPCHeader);
     const char* src = (const char*)trt_fixed_output;
 
@@ -57,16 +51,35 @@ __global__ void gateway_output_kernel(
         dst[i] = src[i];
     }
 
-    // 2. Write RPC Response Header (Thread 0 only)
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         auto* response = (cudaq::nvqlink::RPCResponse*)ring_buffer_data;
         response->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
-        response->status = 0; // Success
+        response->status = 0;
         response->result_len = static_cast<uint32_t>(result_size_bytes);
-        
-        // Ensure memory visibility
         __threadfence_system();
     }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+static size_t trt_dtype_size(nvinfer1::DataType dtype) {
+    switch (dtype) {
+        case nvinfer1::DataType::kFLOAT: return 4;
+        case nvinfer1::DataType::kHALF:  return 2;
+        case nvinfer1::DataType::kINT8:  return 1;
+        case nvinfer1::DataType::kINT32: return 4;
+        case nvinfer1::DataType::kINT64: return 8;
+        case nvinfer1::DataType::kBOOL:  return 1;
+        default: return 4;
+    }
+}
+
+static size_t tensor_volume(const nvinfer1::Dims& d) {
+    size_t v = 1;
+    for (int i = 0; i < d.nbDims; ++i) v *= d.d[i];
+    return v;
 }
 
 // =============================================================================
@@ -81,18 +94,21 @@ void AIDecoderService::Logger::log(Severity severity, const char* msg) noexcept 
     }
 }
 
-AIDecoderService::AIDecoderService(const std::string& engine_path, void** device_mailbox_slot)
+AIDecoderService::AIDecoderService(const std::string& model_path, void** device_mailbox_slot)
     : device_mailbox_slot_(device_mailbox_slot) {
-    
+
     if (std::getenv("SKIP_TRT")) {
-        // Skip TRT entirely; use fixed sizes for testing
         input_size_ = 16 * sizeof(float);
         output_size_ = 16 * sizeof(float);
-        input_idx_ = 0;
-        output_idx_ = 1;
         allocate_resources();
     } else {
-        load_engine(engine_path);
+        std::string ext = model_path.substr(model_path.find_last_of('.'));
+        if (ext == ".onnx") {
+            build_engine_from_onnx(model_path);
+        } else {
+            load_engine(model_path);
+        }
+        setup_bindings();
         allocate_resources();
     }
 }
@@ -101,83 +117,136 @@ AIDecoderService::~AIDecoderService() {
     if (graph_exec_) cudaGraphExecDestroy(graph_exec_);
     if (d_trt_input_) cudaFree(d_trt_input_);
     if (d_trt_output_) cudaFree(d_trt_output_);
-    // Note: We do not free device_mailbox_slot_ as it is a view into the global bank
+    for (auto* buf : d_aux_buffers_) cudaFree(buf);
 }
 
 void AIDecoderService::load_engine(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.good()) throw std::runtime_error("Error opening engine file: " + path);
-    
+
     file.seekg(0, file.end);
     size_t size = file.tellg();
     file.seekg(0, file.beg);
-    
+
     std::vector<char> engine_data(size);
     file.read(engine_data.data(), size);
-    
+
     runtime_.reset(nvinfer1::createInferRuntime(gLogger));
     engine_.reset(runtime_->deserializeCudaEngine(engine_data.data(), size));
     context_.reset(engine_->createExecutionContext());
+}
 
-    // Auto-detect bindings
-    input_idx_ = 0; // Simplified assumption, use engine_->getBindingName() in prod
-    output_idx_ = 1;
-    
-    // Inspect shapes (assuming static shapes for realtime)
-    auto input_dims = engine_->getTensorShape(engine_->getIOTensorName(input_idx_));
-    auto output_dims = engine_->getTensorShape(engine_->getIOTensorName(output_idx_));
+void AIDecoderService::build_engine_from_onnx(const std::string& onnx_path) {
+    runtime_.reset(nvinfer1::createInferRuntime(gLogger));
 
-    // Calculate sizes (Assuming float)
-    auto volume = [](const nvinfer1::Dims& d) {
-        size_t v = 1;
-        for (int i = 0; i < d.nbDims; ++i) v *= d.d[i];
-        return v;
-    };
-    
-    input_size_ = volume(input_dims) * sizeof(float);
-    output_size_ = volume(output_dims) * sizeof(float);
+    auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(gLogger));
+    auto network = std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(0));
+    auto config = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
+    auto parser = std::unique_ptr<nvonnxparser::IParser>(
+        nvonnxparser::createParser(*network, gLogger));
+
+    if (!parser->parseFromFile(onnx_path.c_str(),
+            static_cast<int>(nvinfer1::ILogger::Severity::kWARNING))) {
+        throw std::runtime_error("Failed to parse ONNX file: " + onnx_path);
+    }
+
+    auto plan = std::unique_ptr<nvinfer1::IHostMemory>(
+        builder->buildSerializedNetwork(*network, *config));
+    if (!plan) throw std::runtime_error("Failed to build TRT engine from ONNX");
+
+    engine_.reset(runtime_->deserializeCudaEngine(plan->data(), plan->size()));
+    if (!engine_) throw std::runtime_error("Failed to deserialize built engine");
+
+    context_.reset(engine_->createExecutionContext());
+
+    std::printf("[TensorRT] Built engine from ONNX: %s\n", onnx_path.c_str());
+}
+
+void AIDecoderService::setup_bindings() {
+    int num_io = engine_->getNbIOTensors();
+    bool found_input = false;
+    bool found_output = false;
+
+    for (int i = 0; i < num_io; ++i) {
+        const char* name = engine_->getIOTensorName(i);
+        auto mode = engine_->getTensorIOMode(name);
+        auto dims = engine_->getTensorShape(name);
+        auto dtype = engine_->getTensorDataType(name);
+        size_t size_bytes = tensor_volume(dims) * trt_dtype_size(dtype);
+
+        bool is_input = (mode == nvinfer1::TensorIOMode::kINPUT);
+
+        std::printf("[TensorRT] Binding %d: \"%s\" %s, %zu bytes\n",
+                    i, name, is_input ? "INPUT" : "OUTPUT", size_bytes);
+
+        TensorBinding binding{name, nullptr, size_bytes, is_input};
+
+        if (is_input && !found_input) {
+            input_size_ = size_bytes;
+            found_input = true;
+        } else if (!is_input && !found_output) {
+            output_size_ = size_bytes;
+            found_output = true;
+        }
+
+        all_bindings_.push_back(std::move(binding));
+    }
 }
 
 void AIDecoderService::allocate_resources() {
-    if (cudaMalloc(&d_trt_input_, input_size_) != cudaSuccess) 
-        throw std::runtime_error("Failed to allocate TRT Input");
-    if (cudaMalloc(&d_trt_output_, output_size_) != cudaSuccess) 
-        throw std::runtime_error("Failed to allocate TRT Output");
+    if (all_bindings_.empty()) {
+        // SKIP_TRT fallback path
+        if (cudaMalloc(&d_trt_input_, input_size_) != cudaSuccess)
+            throw std::runtime_error("Failed to allocate TRT Input");
+        if (cudaMalloc(&d_trt_output_, output_size_) != cudaSuccess)
+            throw std::runtime_error("Failed to allocate TRT Output");
+        return;
+    }
+
+    bool assigned_input = false;
+    bool assigned_output = false;
+
+    for (auto& b : all_bindings_) {
+        void* buf = nullptr;
+        if (cudaMalloc(&buf, b.size_bytes) != cudaSuccess)
+            throw std::runtime_error("Failed to allocate buffer for " + b.name);
+        cudaMemset(buf, 0, b.size_bytes);
+        b.d_buffer = buf;
+
+        if (b.is_input && !assigned_input) {
+            d_trt_input_ = buf;
+            assigned_input = true;
+        } else if (!b.is_input && !assigned_output) {
+            d_trt_output_ = buf;
+            assigned_output = true;
+        } else {
+            d_aux_buffers_.push_back(buf);
+        }
+    }
 }
 
 void AIDecoderService::capture_graph(cudaStream_t stream) {
-    // 1. Bind TensorRT to our fixed buffers
-    context_->setTensorAddress(engine_->getIOTensorName(input_idx_), d_trt_input_);
-    context_->setTensorAddress(engine_->getIOTensorName(output_idx_), d_trt_output_);
+    // Bind all tensors to TRT context
+    for (auto& b : all_bindings_) {
+        context_->setTensorAddress(b.name.c_str(), b.d_buffer);
+    }
 
-    // 2. Warmup
     context_->enqueueV3(stream);
     cudaStreamSynchronize(stream);
 
-    // 3. Capture
     cudaGraph_t graph;
     cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
 
-    // --- Node A: Gateway Input ---
-    // Reads from *device_mailbox_slot_ -> Writes to d_trt_input_
     gateway_input_kernel<<<1, 128, 0, stream>>>(device_mailbox_slot_, d_trt_input_, input_size_);
-
-    // --- Node B: TensorRT ---
     context_->enqueueV3(stream);
-
-    // --- Node C: Gateway Output ---
-    // Reads from d_trt_output_ -> Writes back to *device_mailbox_slot_
     gateway_output_kernel<<<1, 128, 0, stream>>>(device_mailbox_slot_, d_trt_output_, output_size_);
 
     cudaStreamEndCapture(stream, &graph);
 
-    // 4. Instantiate for Device Launch
     cudaGraphInstantiateWithFlags(&graph_exec_, graph, cudaGraphInstantiateFlagDeviceLaunch);
-    
-    // 5. Upload & Cleanup
+
     cudaGraphUpload(graph_exec_, stream);
     cudaGraphDestroy(graph);
-    
     cudaStreamSynchronize(stream);
 }
 

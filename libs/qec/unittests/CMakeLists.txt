@@ -186,7 +186,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       TEST_PREFIX "test_realtime_decoding."
     )
     # Hybrid AI predecoder + PyMatching pipeline test
-    # Requires TensorRT for the AI inference engine
+    # Requires TensorRT + ONNX parser for building engines from ONNX models
     find_path(TENSORRT_INCLUDE_DIR NvInfer.h
       PATHS
         ${TENSORRT_ROOT}/include
@@ -204,8 +204,16 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         /usr/local/tensorrt/lib
         /opt/tensorrt/lib
     )
+    find_library(TENSORRT_ONNX_PARSER_LIBRARY nvonnxparser
+      PATHS
+        ${TENSORRT_ROOT}/lib
+        /usr/lib/x86_64-linux-gnu
+        /usr/local/cuda/lib64
+        /usr/local/tensorrt/lib
+        /opt/tensorrt/lib
+    )
 
-    if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY)
+    if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_PARSER_LIBRARY)
       add_executable(test_realtime_predecoder_w_pymatching
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/test_realtime_predecoder_w_pymatching.cpp
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
@@ -219,6 +227,10 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         LINKER_LANGUAGE CUDA
       )
 
+      target_compile_definitions(test_realtime_predecoder_w_pymatching PRIVATE
+        ONNX_MODEL_PATH="${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/model1_d7_r7_unified_Z_batch1.onnx"
+      )
+
       target_include_directories(test_realtime_predecoder_w_pymatching PRIVATE
         ${CUDAToolkit_INCLUDE_DIRS}
         ${TENSORRT_INCLUDE_DIR}
@@ -230,6 +242,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
         CUDA::cudart
         ${TENSORRT_LIBRARY}
+        ${TENSORRT_ONNX_PARSER_LIBRARY}
         ${CUDAQ_REALTIME_LIBRARY}
         ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
       )
@@ -241,7 +254,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
 
       add_dependencies(CUDAQXQECUnitTests test_realtime_predecoder_w_pymatching)
     else()
-      message(WARNING "TensorRT not found. Skipping test_realtime_predecoder_w_pymatching.")
+      message(WARNING "TensorRT or ONNX parser not found. Skipping test_realtime_predecoder_w_pymatching.")
     endif()
 
   else()
