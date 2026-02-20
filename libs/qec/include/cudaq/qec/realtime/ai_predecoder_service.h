@@ -35,7 +35,11 @@ public:
                         int queue_depth = 16, const std::string& engine_save_path = "");
     virtual ~AIPreDecoderService();
 
-    void capture_graph(cudaStream_t stream) override;
+    /// @param device_launch If true, instantiate graph with DeviceLaunch flag
+    ///        (for device-side dispatcher). If false, use standard instantiation
+    ///        (for host-side dispatcher).
+    void capture_graph(cudaStream_t stream, bool device_launch);
+    void capture_graph(cudaStream_t stream) override { capture_graph(stream, true); }
 
     bool poll_next_job(PreDecoderJob& out_job);
     void release_job(int slot_idx);
@@ -43,6 +47,11 @@ public:
     int* get_device_queue_idx() const { return d_queue_idx_; }
     volatile int* get_device_ready_flags() const { return d_ready_flags_; }
     int* get_device_inflight_flag() const { return d_inflight_flag_; }
+
+    // Host-side accessors (for host dispatcher backpressure checks)
+    volatile int* get_host_ready_flags() const { return h_ready_flags_; }
+    volatile int* get_host_queue_idx() const { return h_queue_idx_; }
+    int get_queue_depth() const { return queue_depth_; }
 
 private:
     int queue_depth_;
@@ -58,8 +67,9 @@ private:
     void** d_ring_ptrs_ = nullptr;
     void* d_outputs_ = nullptr;
 
-    // Device State
-    int* d_queue_idx_ = nullptr;
+    // Queue index: mapped pinned so both GPU and host can access
+    volatile int* h_queue_idx_ = nullptr;   // Host pointer
+    int* d_queue_idx_ = nullptr;            // Device pointer (same physical memory)
     int* d_claimed_slot_ = nullptr;
     int* d_inflight_flag_ = nullptr;
 };

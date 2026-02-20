@@ -218,6 +218,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/test_realtime_predecoder_w_pymatching.cpp
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_predecoder_service.cu
+        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/host_dispatcher.cpp
       )
 
       set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES

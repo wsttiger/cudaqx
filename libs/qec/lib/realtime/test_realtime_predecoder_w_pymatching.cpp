@@ -64,6 +64,7 @@
 
 #include "cudaq/qec/realtime/ai_decoder_service.h"
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
+#include "cudaq/qec/realtime/host_dispatcher.h"
 #include "cudaq/qec/utils/thread_pool.h"
 #include "cudaq/qec/utils/pipeline_benchmarks.h"
 #include "cudaq/qec/code.h"
@@ -327,10 +328,13 @@ void run_streaming_test(
     volatile uint64_t* rx_flags_host,
     volatile uint64_t* tx_flags_host,
     uint8_t* rx_data_host,
+    uint8_t* rx_data_dev,
     DecoderContext& decoder_ctx,
     std::vector<std::unique_ptr<AIPreDecoderService>>& predecoders,
     cudaq::qec::utils::ThreadPool& pymatching_pool,
-    std::atomic<bool>& system_stop)
+    std::atomic<bool>& system_stop,
+    void** h_mailbox_bank,
+    std::vector<cudaStream_t>& predecoder_streams)
 {
     using hrclock = std::chrono::high_resolution_clock;
 
@@ -341,21 +345,42 @@ void run_streaming_test(
     std::vector<hrclock::time_point> complete_ts(max_requests);
     std::vector<bool> completed(max_requests, false);
 
-    // slot -> request_id mapping so consumer can correlate completions
     std::vector<int> slot_request(NUM_SLOTS, -1);
 
     std::atomic<int> total_submitted{0};
     std::atomic<int> total_completed{0};
-    std::atomic<int> in_flight{0};
     std::atomic<int64_t> backpressure_stalls{0};
     std::atomic<bool> producer_done{false};
 
-    // Cap in-flight to num_predecoders. The dispatcher scans slots
-    // sequentially and only advances on non-empty slots. With the inflight
-    // flag limiting one graph launch per predecoder, only num_predecoders
-    // slots can be consumed per scan. Any excess slots get backpressured,
-    // then the dispatcher parks on an empty slot and never revisits them.
-    const int max_in_flight = config.num_predecoders;
+    // Set up host dispatcher
+    volatile int dispatcher_shutdown = 0;
+    uint64_t dispatcher_stats = 0;
+
+    HostDispatcherConfig disp_cfg;
+    disp_cfg.rx_flags_host = rx_flags_host;
+    disp_cfg.tx_flags_host = tx_flags_host;
+    disp_cfg.rx_data_host = rx_data_host;
+    disp_cfg.rx_data_dev = rx_data_dev;
+    disp_cfg.h_mailbox_bank = h_mailbox_bank;
+    disp_cfg.num_slots = NUM_SLOTS;
+    disp_cfg.slot_size = config.slot_size;
+    disp_cfg.shutdown_flag = &dispatcher_shutdown;
+    disp_cfg.stats_counter = &dispatcher_stats;
+
+    for (int i = 0; i < config.num_predecoders; ++i) {
+        std::string func_name = "predecode_target_" + std::to_string(i);
+        HostDispatchEntry entry;
+        entry.function_id = fnv1a_hash(func_name);
+        entry.graph_exec = predecoders[i]->get_executable_graph();
+        entry.mailbox_idx = i;
+        entry.predecoder = predecoders[i].get();
+        entry.stream = predecoder_streams[i];
+        disp_cfg.entries.push_back(entry);
+    }
+
+    std::thread dispatcher_thread([&disp_cfg]() {
+        host_dispatcher_loop(disp_cfg);
+    });
 
     auto run_deadline = std::chrono::steady_clock::now()
                       + std::chrono::seconds(scfg.duration_s);
@@ -364,11 +389,12 @@ void run_streaming_test(
         ? std::to_string(scfg.rate_us) + " us"
         : "open-loop";
 
-    std::cout << "\n[Stream] Starting streaming test (" << config.label << ")\n"
+    std::cout << "\n[Stream] Starting streaming test (" << config.label
+              << ", HOST dispatcher)\n"
               << "  Rate:       " << rate_label << "\n"
               << "  Duration:   " << scfg.duration_s << " s\n"
               << "  Warmup:     " << scfg.warmup_count << " requests\n"
-              << "  Max flight: " << max_in_flight << "\n"
+              << "  Predecoders:" << config.num_predecoders << " (dedicated streams)\n"
               << "  Max reqs:   " << max_requests << "\n\n";
 
     // --- Producer thread (simulates FPGA) ---
@@ -379,12 +405,6 @@ void run_streaming_test(
 
         while (std::chrono::steady_clock::now() < run_deadline
                && req_id < max_requests) {
-
-            // Throttle: don't exceed max_in_flight to prevent ring buffer flooding
-            while (in_flight.load(std::memory_order_acquire) >= max_in_flight) {
-                QEC_CPU_RELAX();
-                if (std::chrono::steady_clock::now() >= run_deadline) return;
-            }
 
             int slot = next_slot % (int)NUM_SLOTS;
 
@@ -413,13 +433,11 @@ void run_streaming_test(
             __sync_synchronize();
             submit_ts[req_id] = hrclock::now();
             rx_flags_host[slot] = reinterpret_cast<uint64_t>(slot_data);
-            in_flight.fetch_add(1, std::memory_order_release);
             total_submitted.fetch_add(1, std::memory_order_release);
 
             next_slot++;
             req_id++;
 
-            // Rate limiting (busy-wait for precision)
             if (scfg.rate_us > 0) {
                 auto target_time = submit_ts[req_id - 1]
                                  + std::chrono::microseconds(scfg.rate_us);
@@ -443,7 +461,6 @@ void run_streaming_test(
             if (pdone && ncomp >= nsub)
                 break;
 
-            // Nothing to harvest yet
             if (next_harvest >= nsub) {
                 QEC_CPU_RELAX();
                 continue;
@@ -469,7 +486,6 @@ void run_streaming_test(
 
                 tx_flags_host[slot] = 0;
                 slot_request[slot] = -1;
-                in_flight.fetch_sub(1, std::memory_order_release);
                 next_harvest++;
             } else {
                 QEC_CPU_RELAX();
@@ -485,6 +501,11 @@ void run_streaming_test(
            && std::chrono::steady_clock::now() < grace_deadline) {
         usleep(1000);
     }
+
+    // Shut down the host dispatcher thread
+    dispatcher_shutdown = 1;
+    __sync_synchronize();
+    dispatcher_thread.join();
 
     consumer.join();
 
@@ -601,6 +622,8 @@ void run_streaming_test(
         std::cout << "    Per-round (/" << config.num_rounds << "): "
                   << std::setw(10) << (mean / config.num_rounds) << " us/round\n";
     }
+    std::cout << "  ---------------------------------------------------------------\n";
+    std::cout << "  Host dispatcher processed " << dispatcher_stats << " packets.\n";
     std::cout << "================================================================\n";
 }
 
@@ -733,24 +756,54 @@ int main(int argc, char* argv[]) {
     g_sys_ctx.rx_data_host = rx_data_host;
     g_sys_ctx.slot_size = config.slot_size;
 
-    // Allocate Global Mailbox Bank & Control signals
-    void** d_global_mailbox_bank;
-    CUDA_CHECK(cudaMalloc(&d_global_mailbox_bank, config.num_predecoders * sizeof(void*)));
-    CUDA_CHECK(cudaMemset(d_global_mailbox_bank, 0, config.num_predecoders * sizeof(void*)));
+    // =========================================================================
+    // Mailbox & Dispatcher Setup (mode-dependent)
+    // =========================================================================
 
-    int* shutdown_flag_host;
-    CUDA_CHECK(cudaHostAlloc(&shutdown_flag_host, sizeof(int), cudaHostAllocMapped));
-    *shutdown_flag_host = 0;
-    int* d_shutdown_flag;
-    CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_shutdown_flag, shutdown_flag_host, 0));
+    // Mapped pinned mailbox (used by both modes -- host writes, GPU reads)
+    void** h_mailbox_bank = nullptr;
+    void** d_mailbox_bank = nullptr;
+    CUDA_CHECK(cudaHostAlloc(&h_mailbox_bank, config.num_predecoders * sizeof(void*), cudaHostAllocMapped));
+    std::memset(h_mailbox_bank, 0, config.num_predecoders * sizeof(void*));
+    CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_mailbox_bank, h_mailbox_bank, 0));
 
-    uint64_t* d_stats;
-    CUDA_CHECK(cudaMalloc(&d_stats, sizeof(uint64_t)));
-    CUDA_CHECK(cudaMemset(d_stats, 0, sizeof(uint64_t)));
+    // Device memory mailbox (for device-side dispatcher backward compat)
+    void** d_global_mailbox_bank = nullptr;
+
+    int* shutdown_flag_host = nullptr;
+    int* d_shutdown_flag = nullptr;
+    uint64_t* d_stats = nullptr;
+    cudaq_function_entry_t* d_function_entries = nullptr;
+    cudaq_dispatch_graph_context* dispatch_ctx = nullptr;
+
+    // Per-predecoder streams (for host dispatcher)
+    std::vector<cudaStream_t> predecoder_streams;
+
+    const bool use_host_dispatcher = streaming_mode;
+    bool device_launch = !use_host_dispatcher;
+
+    if (!use_host_dispatcher) {
+        CUDA_CHECK(cudaMalloc(&d_global_mailbox_bank, config.num_predecoders * sizeof(void*)));
+        CUDA_CHECK(cudaMemset(d_global_mailbox_bank, 0, config.num_predecoders * sizeof(void*)));
+
+        CUDA_CHECK(cudaHostAlloc(&shutdown_flag_host, sizeof(int), cudaHostAllocMapped));
+        *shutdown_flag_host = 0;
+        CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_shutdown_flag, shutdown_flag_host, 0));
+
+        CUDA_CHECK(cudaMalloc(&d_stats, sizeof(uint64_t)));
+        CUDA_CHECK(cudaMemset(d_stats, 0, sizeof(uint64_t)));
+    } else {
+        for (int i = 0; i < config.num_predecoders; ++i) {
+            cudaStream_t s;
+            CUDA_CHECK(cudaStreamCreate(&s));
+            predecoder_streams.push_back(s);
+        }
+    }
 
     // Initialize AIPreDecoder Instances from ONNX
     std::cout << "[Setup] Capturing " << config.num_predecoders
-              << "x AIPreDecoder Graphs...\n";
+              << "x AIPreDecoder Graphs ("
+              << (device_launch ? "device-launch" : "host-launch") << ")...\n";
     cudaStream_t capture_stream;
     CUDA_CHECK(cudaStreamCreate(&capture_stream));
 
@@ -759,7 +812,9 @@ int main(int argc, char* argv[]) {
 
     bool need_save = (model_path == onnx_file);
     for (int i = 0; i < config.num_predecoders; ++i) {
-        void** my_mailbox = d_global_mailbox_bank + i;
+        void** my_mailbox = use_host_dispatcher
+            ? (d_mailbox_bank + i)
+            : (d_global_mailbox_bank + i);
         std::string save_path = (need_save && i == 0) ? engine_file : "";
         auto pd = std::make_unique<AIPreDecoderService>(model_path, my_mailbox,
                                                          config.queue_depth,
@@ -769,37 +824,40 @@ int main(int argc, char* argv[]) {
                   << ": input_size=" << pd->get_input_size()
                   << " output_size=" << pd->get_output_size() << "\n";
 
-        pd->capture_graph(capture_stream);
+        pd->capture_graph(capture_stream, device_launch);
 
-        cudaGraphExec_t gexec = pd->get_executable_graph();
-        std::string func_name = "predecode_target_" + std::to_string(i);
-        function_entries[i].function_id = fnv1a_hash(func_name);
-        function_entries[i].dispatch_mode = CUDAQ_DISPATCH_GRAPH_LAUNCH;
-        function_entries[i].handler.graph_exec = gexec;
-        function_entries[i].mailbox_idx = i;
-        function_entries[i].d_queue_idx = pd->get_device_queue_idx();
-        function_entries[i].d_ready_flags = pd->get_device_ready_flags();
-        function_entries[i].d_inflight_flag = pd->get_device_inflight_flag();
+        if (!use_host_dispatcher) {
+            cudaGraphExec_t gexec = pd->get_executable_graph();
+            std::string func_name = "predecode_target_" + std::to_string(i);
+            function_entries[i].function_id = fnv1a_hash(func_name);
+            function_entries[i].dispatch_mode = CUDAQ_DISPATCH_GRAPH_LAUNCH;
+            function_entries[i].handler.graph_exec = gexec;
+            function_entries[i].mailbox_idx = i;
+            function_entries[i].d_queue_idx = pd->get_device_queue_idx();
+            function_entries[i].d_ready_flags = pd->get_device_ready_flags();
+            function_entries[i].d_inflight_flag = pd->get_device_inflight_flag();
+        }
 
         predecoders.push_back(std::move(pd));
     }
 
-    cudaq_function_entry_t* d_function_entries;
-    CUDA_CHECK(cudaMalloc(&d_function_entries,
-               config.num_predecoders * sizeof(cudaq_function_entry_t)));
-    CUDA_CHECK(cudaMemcpy(d_function_entries, function_entries.data(),
-               config.num_predecoders * sizeof(cudaq_function_entry_t),
-               cudaMemcpyHostToDevice));
+    if (!use_host_dispatcher) {
+        CUDA_CHECK(cudaMalloc(&d_function_entries,
+                   config.num_predecoders * sizeof(cudaq_function_entry_t)));
+        CUDA_CHECK(cudaMemcpy(d_function_entries, function_entries.data(),
+                   config.num_predecoders * sizeof(cudaq_function_entry_t),
+                   cudaMemcpyHostToDevice));
 
-    // Start GPU Dispatcher
-    std::cout << "[Setup] Launching Dispatcher Kernel...\n";
-    cudaq_dispatch_graph_context* dispatch_ctx = nullptr;
-    CUDA_CHECK(cudaq_create_dispatch_graph_regular(
-        rx_flags_dev, tx_flags_dev, d_function_entries, config.num_predecoders,
-        d_global_mailbox_bank, d_shutdown_flag, d_stats, NUM_SLOTS, 1, 32,
-        capture_stream, &dispatch_ctx
-    ));
-    CUDA_CHECK(cudaq_launch_dispatch_graph(dispatch_ctx, capture_stream));
+        std::cout << "[Setup] Launching GPU Dispatcher Kernel...\n";
+        CUDA_CHECK(cudaq_create_dispatch_graph_regular(
+            rx_flags_dev, tx_flags_dev, d_function_entries, config.num_predecoders,
+            d_global_mailbox_bank, d_shutdown_flag, d_stats, NUM_SLOTS, 1, 32,
+            capture_stream, &dispatch_ctx
+        ));
+        CUDA_CHECK(cudaq_launch_dispatch_graph(dispatch_ctx, capture_stream));
+    } else {
+        std::cout << "[Setup] Host-side dispatcher will be launched in streaming test.\n";
+    }
 
     // Start CPU Infrastructure
     std::cout << "[Setup] Booting Thread Pool (" << config.num_workers
@@ -817,8 +875,9 @@ int main(int argc, char* argv[]) {
     // =========================================================================
     if (streaming_mode) {
         run_streaming_test(config, stream_cfg, rx_flags_host, tx_flags_host,
-                           rx_data_host, decoder_ctx, predecoders,
-                           pymatching_pool, system_stop);
+                           rx_data_host, rx_data_dev, decoder_ctx, predecoders,
+                           pymatching_pool, system_stop,
+                           h_mailbox_bank, predecoder_streams);
     } else {
         // Batch mode: fire requests in batches of num_predecoders, wait for
         // each batch to complete before firing the next.
@@ -941,26 +1000,37 @@ int main(int argc, char* argv[]) {
 
     // Teardown
     std::cout << "[Teardown] Shutting down...\n";
-    *shutdown_flag_host = 1;
-    __sync_synchronize();
     system_stop = true;
+
+    if (!use_host_dispatcher) {
+        *shutdown_flag_host = 1;
+        __sync_synchronize();
+    }
 
     incoming_thread.join();
     CUDA_CHECK(cudaStreamSynchronize(capture_stream));
 
-    uint64_t dispatched_packets = 0;
-    CUDA_CHECK(cudaMemcpy(&dispatched_packets, d_stats, sizeof(uint64_t), cudaMemcpyDeviceToHost));
-    std::cout << "[Stats] Dispatcher processed " << dispatched_packets << " packets.\n";
+    if (!use_host_dispatcher) {
+        uint64_t dispatched_packets = 0;
+        CUDA_CHECK(cudaMemcpy(&dispatched_packets, d_stats, sizeof(uint64_t), cudaMemcpyDeviceToHost));
+        std::cout << "[Stats] Dispatcher processed " << dispatched_packets << " packets.\n";
+        CUDA_CHECK(cudaq_destroy_dispatch_graph(dispatch_ctx));
+    }
 
-    CUDA_CHECK(cudaq_destroy_dispatch_graph(dispatch_ctx));
+    // Synchronize predecoder streams before cleanup
+    for (auto& s : predecoder_streams) {
+        cudaStreamSynchronize(s);
+        cudaStreamDestroy(s);
+    }
 
     cudaFreeHost((void*)rx_flags_host);
     cudaFreeHost((void*)tx_flags_host);
     cudaFreeHost(rx_data_host);
-    cudaFreeHost(shutdown_flag_host);
-    cudaFree(d_global_mailbox_bank);
-    cudaFree(d_stats);
-    cudaFree(d_function_entries);
+    cudaFreeHost(h_mailbox_bank);
+    if (shutdown_flag_host) cudaFreeHost(shutdown_flag_host);
+    if (d_global_mailbox_bank) cudaFree(d_global_mailbox_bank);
+    if (d_stats) cudaFree(d_stats);
+    if (d_function_entries) cudaFree(d_function_entries);
     cudaStreamDestroy(capture_stream);
 
     std::cout << "Done.\n";

@@ -105,8 +105,9 @@ AIPreDecoderService::AIPreDecoderService(const std::string& path, void** mailbox
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_ring_ptrs_, (void*)h_ring_ptrs_, 0));
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_outputs_, (void*)h_outputs_, 0));
 
-    SERVICE_CUDA_CHECK(cudaMalloc(&d_queue_idx_, sizeof(int)));
-    SERVICE_CUDA_CHECK(cudaMemset(d_queue_idx_, 0, sizeof(int)));
+    SERVICE_CUDA_CHECK(cudaHostAlloc((void**)&h_queue_idx_, sizeof(int), cudaHostAllocMapped));
+    *const_cast<int*>(const_cast<volatile int*>(h_queue_idx_)) = 0;
+    SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_queue_idx_, (void*)h_queue_idx_, 0));
 
     SERVICE_CUDA_CHECK(cudaMalloc(&d_claimed_slot_, sizeof(int)));
     SERVICE_CUDA_CHECK(cudaMemset(d_claimed_slot_, 0, sizeof(int)));
@@ -119,12 +120,12 @@ AIPreDecoderService::~AIPreDecoderService() {
     if (h_ready_flags_) cudaFreeHost((void*)h_ready_flags_);
     if (h_ring_ptrs_) cudaFreeHost(h_ring_ptrs_);
     if (h_outputs_) cudaFreeHost(h_outputs_);
-    if (d_queue_idx_) cudaFree(d_queue_idx_);
+    if (h_queue_idx_) cudaFreeHost((void*)h_queue_idx_);
     if (d_claimed_slot_) cudaFree(d_claimed_slot_);
     if (d_inflight_flag_) cudaFree(d_inflight_flag_);
 }
 
-void AIPreDecoderService::capture_graph(cudaStream_t stream) {
+void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch) {
     bool skip_trt = (std::getenv("SKIP_TRT") != nullptr);
 
     if (!skip_trt) {
@@ -156,15 +157,27 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream) {
         d_inflight_flag_);
 
     SERVICE_CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
-    
-    cudaError_t inst_err = cudaGraphInstantiateWithFlags(&graph_exec_, graph, cudaGraphInstantiateFlagDeviceLaunch);
-    if (inst_err != cudaSuccess) {
-        cudaGraphDestroy(graph);
-        throw std::runtime_error(
-            std::string("cudaGraphInstantiateWithFlags FAILED: ") + cudaGetErrorString(inst_err));
+
+    if (device_launch) {
+        cudaError_t inst_err = cudaGraphInstantiateWithFlags(
+            &graph_exec_, graph, cudaGraphInstantiateFlagDeviceLaunch);
+        if (inst_err != cudaSuccess) {
+            cudaGraphDestroy(graph);
+            throw std::runtime_error(
+                std::string("cudaGraphInstantiateWithFlags (DeviceLaunch) FAILED: ")
+                + cudaGetErrorString(inst_err));
+        }
+        SERVICE_CUDA_CHECK(cudaGraphUpload(graph_exec_, stream));
+    } else {
+        cudaError_t inst_err = cudaGraphInstantiate(&graph_exec_, graph, 0);
+        if (inst_err != cudaSuccess) {
+            cudaGraphDestroy(graph);
+            throw std::runtime_error(
+                std::string("cudaGraphInstantiate FAILED: ")
+                + cudaGetErrorString(inst_err));
+        }
     }
-    
-    SERVICE_CUDA_CHECK(cudaGraphUpload(graph_exec_, stream));
+
     cudaGraphDestroy(graph);
     SERVICE_CUDA_CHECK(cudaStreamSynchronize(stream));
 }
