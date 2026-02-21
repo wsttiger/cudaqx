@@ -232,7 +232,13 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         ONNX_MODEL_DIR="${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime"
       )
 
+      # libcu++ (cuda/std/atomic) lives in CUDA toolkit under cccl/
+      get_filename_component(_cuda_bin "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+      get_filename_component(_cuda_root "${_cuda_bin}" DIRECTORY)
+      set(_cuda_cccl_include "${_cuda_root}/include/cccl")
+
       target_include_directories(test_realtime_predecoder_w_pymatching PRIVATE
+        ${_cuda_cccl_include}
         ${CUDAToolkit_INCLUDE_DIRS}
         ${TENSORRT_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

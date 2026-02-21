@@ -10,6 +10,7 @@
 #include "cudaq/nvqlink/daemon/dispatcher/dispatch_modes.h"
 #include "cudaq/nvqlink/daemon/dispatcher/kernel_types.h"
 
+#include <cuda/std/atomic>
 #include <cuda_runtime.h>
 #include <cuda_device_runtime_api.h>
 #include <cstdint>
@@ -174,10 +175,10 @@ __global__ void dispatch_kernel_with_graph(
               bool queue_full = false;
               if (!already_in_flight) {
                   int* d_queue_idx = entry->d_queue_idx;
-                  volatile int* d_ready_flags = entry->d_ready_flags;
+                  auto* d_ready_flags = static_cast<cuda::std::atomic<int>*>(entry->d_ready_flags);
                   if (d_queue_idx != nullptr && d_ready_flags != nullptr) {
                       int current_tail = *d_queue_idx;
-                      if (d_ready_flags[current_tail] == 1) {
+                      if (d_ready_flags[current_tail].load(cuda::std::memory_order_acquire) == 1) {
                           queue_full = true;
                       }
                   }

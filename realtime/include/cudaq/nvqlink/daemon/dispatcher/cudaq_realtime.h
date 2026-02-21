@@ -106,7 +106,7 @@ typedef struct {
   uint32_t mailbox_idx;            // index into global_mailbox_bank
   uint32_t _pad0;                  // alignment padding
   int *d_queue_idx;                // device pointer to queue tail tracker
-  volatile int *d_ready_flags;     // device-mapped pointer to ready flags
+  void *d_ready_flags;             // device-mapped: cuda::std::atomic<int,thread_scope_system>*
   volatile int *d_inflight_flag;   // 0 = idle, 1 = graph in flight (single-launch guard)
 } cudaq_function_entry_t;
 

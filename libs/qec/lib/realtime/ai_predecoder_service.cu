@@ -9,6 +9,7 @@
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
 #include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
 #include "cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h"
+#include <cuda/atomic>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -23,28 +24,25 @@
 
 namespace cudaq::qec {
 
+// System scope for NVLink/PCIe visibility to host (design: no __threadfence_system)
+using atomic_int_sys = cuda::atomic<int, cuda::thread_scope_system>;
+
 // =============================================================================
-// Kernels
+// Kernels (single slot 0 only; queue removed for host-side dynamic pool)
 // =============================================================================
 
 __global__ void predecoder_input_kernel(
-    void** mailbox_slot_ptr, int* d_queue_idx, volatile int* d_ready_flags, 
-    void** d_ring_ptrs, void* trt_input, size_t input_size_bytes,
-    int* d_claimed_slot) 
+    void** mailbox_slot_ptr,
+    atomic_int_sys* d_ready_flags,
+    void** d_ring_ptrs,
+    void* trt_input,
+    size_t input_size_bytes)
 {
-    __shared__ int slot_idx;
     __shared__ void* ring_ptr;
 
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         ring_ptr = *mailbox_slot_ptr;
-        slot_idx = *d_queue_idx;
-        *d_claimed_slot = slot_idx;
-
-        if (d_ready_flags[slot_idx] == 1) {
-            ring_ptr = nullptr;
-        } else {
-            d_ring_ptrs[slot_idx] = ring_ptr; 
-        }
+        d_ring_ptrs[0] = ring_ptr;
     }
     __syncthreads();
 
@@ -58,26 +56,22 @@ __global__ void predecoder_input_kernel(
 }
 
 __global__ void predecoder_output_kernel(
-    int* d_claimed_slot, int* d_queue_idx, int queue_depth,
-    volatile int* d_ready_flags, void* d_outputs, const void* trt_output,
-    size_t output_size_bytes, volatile int* d_inflight_flag)
+    atomic_int_sys* d_ready_flags,
+    void* d_outputs,
+    const void* trt_output,
+    size_t output_size_bytes)
 {
-    int slot_idx = *d_claimed_slot;
-
-    char* dst = (char*)d_outputs + (slot_idx * output_size_bytes);
+    char* dst = (char*)d_outputs;
     const char* src = (const char*)trt_output;
+
     for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < output_size_bytes; i += blockDim.x * gridDim.x) {
         dst[i] = src[i];
     }
 
     __syncthreads();
-    __threadfence_system();
 
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        d_ready_flags[slot_idx] = 1; 
-        *d_queue_idx = (slot_idx + 1) % queue_depth;
-        __threadfence_system();
-        *d_inflight_flag = 0;
+        d_ready_flags[0].store(1, cuda::std::memory_order_release);
     }
 }
 
@@ -92,37 +86,39 @@ __global__ void passthrough_copy_kernel(void* dst, const void* src, size_t num_b
 // =============================================================================
 
 AIPreDecoderService::AIPreDecoderService(const std::string& path, void** mailbox,
-                                         int queue_depth, const std::string& engine_save_path)
-    : AIDecoderService(path, mailbox, engine_save_path), queue_depth_(queue_depth)
+                                         int /* queue_depth (ignored; always 1) */,
+                                         const std::string& engine_save_path)
+    : AIDecoderService(path, mailbox, engine_save_path), queue_depth_(1)
 {
-    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_ready_flags_, queue_depth_ * sizeof(int), cudaHostAllocMapped));
-    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_ring_ptrs_, queue_depth_ * sizeof(void*), cudaHostAllocMapped));
-    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_outputs_, queue_depth_ * get_output_size(), cudaHostAllocMapped));
+    void* buf = nullptr;
 
-    memset((void*)h_ready_flags_, 0, queue_depth_ * sizeof(int));
+    SERVICE_CUDA_CHECK(cudaHostAlloc(&buf, sizeof(atomic_int_sys), cudaHostAllocMapped));
+    h_ready_flags_ = static_cast<atomic_int_sys*>(buf);
+    new (h_ready_flags_) atomic_int_sys(0);
+
+    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_ring_ptrs_, sizeof(void*), cudaHostAllocMapped));
+    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_outputs_, get_output_size(), cudaHostAllocMapped));
 
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_ready_flags_, (void*)h_ready_flags_, 0));
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_ring_ptrs_, (void*)h_ring_ptrs_, 0));
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_outputs_, (void*)h_outputs_, 0));
-
-    SERVICE_CUDA_CHECK(cudaHostAlloc((void**)&h_queue_idx_, sizeof(int), cudaHostAllocMapped));
-    *const_cast<int*>(const_cast<volatile int*>(h_queue_idx_)) = 0;
-    SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_queue_idx_, (void*)h_queue_idx_, 0));
-
-    SERVICE_CUDA_CHECK(cudaMalloc(&d_claimed_slot_, sizeof(int)));
-    SERVICE_CUDA_CHECK(cudaMemset(d_claimed_slot_, 0, sizeof(int)));
-
-    SERVICE_CUDA_CHECK(cudaMalloc(&d_inflight_flag_, sizeof(int)));
-    SERVICE_CUDA_CHECK(cudaMemset(d_inflight_flag_, 0, sizeof(int)));
 }
 
 AIPreDecoderService::~AIPreDecoderService() {
-    if (h_ready_flags_) cudaFreeHost((void*)h_ready_flags_);
-    if (h_ring_ptrs_) cudaFreeHost(h_ring_ptrs_);
-    if (h_outputs_) cudaFreeHost(h_outputs_);
-    if (h_queue_idx_) cudaFreeHost((void*)h_queue_idx_);
-    if (d_claimed_slot_) cudaFree(d_claimed_slot_);
-    if (d_inflight_flag_) cudaFree(d_inflight_flag_);
+    if (h_ready_flags_) {
+        h_ready_flags_[0].~atomic_int_sys();
+        cudaFreeHost((void*)h_ready_flags_);
+        h_ready_flags_ = nullptr;
+        d_ready_flags_ = nullptr;
+    }
+    if (h_ring_ptrs_) {
+        cudaFreeHost(h_ring_ptrs_);
+        h_ring_ptrs_ = nullptr;
+    }
+    if (h_outputs_) {
+        cudaFreeHost(h_outputs_);
+        h_outputs_ = nullptr;
+    }
 }
 
 void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch) {
@@ -140,9 +136,9 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
     SERVICE_CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
     predecoder_input_kernel<<<1, 128, 0, stream>>>(
-        device_mailbox_slot_, d_queue_idx_, d_ready_flags_, 
-        d_ring_ptrs_, d_trt_input_, get_input_size(),
-        d_claimed_slot_);
+        device_mailbox_slot_,
+        static_cast<atomic_int_sys*>(d_ready_flags_),
+        d_ring_ptrs_, d_trt_input_, get_input_size());
 
     if (skip_trt) {
         passthrough_copy_kernel<<<1, 128, 0, stream>>>(
@@ -152,9 +148,8 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
     }
 
     predecoder_output_kernel<<<1, 128, 0, stream>>>(
-        d_claimed_slot_, d_queue_idx_, queue_depth_, d_ready_flags_, 
-        d_outputs_, d_trt_output_, get_output_size(),
-        d_inflight_flag_);
+        static_cast<atomic_int_sys*>(d_ready_flags_),
+        d_outputs_, d_trt_output_, get_output_size());
 
     SERVICE_CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
 
@@ -183,21 +178,24 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
 }
 
 bool AIPreDecoderService::poll_next_job(PreDecoderJob& out_job) {
-    if (h_ready_flags_[cpu_poll_idx_] == 1) {
-        std::atomic_thread_fence(std::memory_order_acquire);
-        
-        out_job.slot_idx = cpu_poll_idx_;
-        out_job.ring_buffer_ptr = h_ring_ptrs_[cpu_poll_idx_];
-        out_job.inference_data = static_cast<char*>(h_outputs_) + (cpu_poll_idx_ * get_output_size());
-
-        cpu_poll_idx_ = (cpu_poll_idx_ + 1) % queue_depth_;
+    auto* sys_flags = static_cast<atomic_int_sys*>(h_ready_flags_);
+    int expected = 1;
+    // Atomically claim: 1 (Ready) -> 2 (Processing) so we enqueue the job exactly once.
+    // Use relaxed on failure so spinning doesn't add barriers that delay seeing GPU's store(1).
+    if (sys_flags[0].compare_exchange_strong(expected, 2,
+            cuda::std::memory_order_acquire, cuda::std::memory_order_relaxed)) {
+        out_job.slot_idx = 0;
+        out_job.ring_buffer_ptr = h_ring_ptrs_[0];
+        out_job.inference_data = h_outputs_;
         return true;
     }
     return false;
 }
 
-void AIPreDecoderService::release_job(int slot_idx) {
-    __atomic_store_n(&h_ready_flags_[slot_idx], 0, __ATOMIC_RELEASE);
+void AIPreDecoderService::release_job(int /* slot_idx */) {
+    auto* sys_flags = static_cast<atomic_int_sys*>(h_ready_flags_);
+    // PyMatching done: 2 (Processing) -> 0 (Idle)
+    sys_flags[0].store(0, cuda::std::memory_order_release);
 }
 
 } // namespace cudaq::qec
