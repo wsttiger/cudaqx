@@ -144,6 +144,15 @@ void AIDecoderService::build_engine_from_onnx(const std::string& onnx_path,
     auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(gLogger));
     auto network = std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(0));
     auto config = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
+    
+    // Enable FP16 optimization for Grace Blackwell / Hopper
+    if (builder->platformHasFastFp16()) {
+        config->setFlag(nvinfer1::BuilderFlag::kFP16);
+        std::printf("[TensorRT] FP16 precision enabled.\n");
+    } else {
+        std::printf("[TensorRT] Warning: Platform does not support fast FP16. Using FP32.\n");
+    }
+
     auto parser = std::unique_ptr<nvonnxparser::IParser>(
         nvonnxparser::createParser(*network, gLogger));
 

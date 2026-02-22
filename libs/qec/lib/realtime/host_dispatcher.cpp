@@ -9,6 +9,7 @@
 #include "cudaq/qec/realtime/host_dispatcher.h"
 
 #include <iostream>
+#include <nvtx3/nvToolsExt.h>
 
 namespace cudaq::qec {
 
@@ -18,13 +19,20 @@ void host_dispatcher_loop(const HostDispatcherConfig& config) {
     const int num_workers = static_cast<int>(config.workers.size());
     uint64_t packets_dispatched = 0;
 
+    nvtxRangePushA("Dispatcher Loop");
+
     while (config.shutdown_flag->load(cuda::std::memory_order_acquire) == 0) {
         uint64_t rx_value = config.rx_flags[current_slot].load(cuda::std::memory_order_acquire);
 
         if (rx_value != 0) {
+            nvtxRangePushA("Process Slot");
+            
             uint64_t mask = config.idle_mask->load(cuda::std::memory_order_acquire);
             if (mask == 0) {
+                nvtxRangePushA("Wait Worker");
                 QEC_CPU_RELAX();
+                nvtxRangePop(); // Wait Worker
+                nvtxRangePop(); // Process Slot
                 continue;
             }
 
@@ -40,8 +48,16 @@ void host_dispatcher_loop(const HostDispatcherConfig& config) {
             config.h_mailbox_bank[worker_id] = data_dev;
             __sync_synchronize();
 
+            if (config.debug_dispatch_ts) {
+                config.debug_dispatch_ts[current_slot] = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+            }
+
+            nvtxRangePushA("Launch Graph");
             cudaError_t err = cudaGraphLaunch(config.workers[worker_id].graph_exec,
                                              config.workers[worker_id].stream);
+            nvtxRangePop(); // Launch Graph
+
             if (err != cudaSuccess) {
                 uint64_t error_val = (uint64_t)0xDEAD << 48 | (uint64_t)err;
                 config.tx_flags[current_slot].store(error_val, cuda::std::memory_order_release);
@@ -56,10 +72,14 @@ void host_dispatcher_loop(const HostDispatcherConfig& config) {
             if (config.live_dispatched)
                 config.live_dispatched->fetch_add(1, cuda::std::memory_order_relaxed);
             current_slot = (current_slot + 1) % num_slots;
+            
+            nvtxRangePop(); // Process Slot
         } else {
             QEC_CPU_RELAX();
         }
     }
+    
+    nvtxRangePop(); // Dispatcher Loop
 
     for (const auto& w : config.workers) {
         cudaStreamSynchronize(w.stream);

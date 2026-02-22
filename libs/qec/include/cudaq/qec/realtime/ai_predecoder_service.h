@@ -29,6 +29,11 @@ struct PreDecoderJob {
     int origin_slot;           ///< FPGA ring slot for tx_flags routing (dynamic pool)
     void* ring_buffer_ptr;
     void* inference_data;      ///< Points into the pinned output (single slot)
+    
+    // Performance Tracking
+    uint64_t submit_ts_ns;
+    uint64_t dispatch_ts_ns;
+    uint64_t poll_ts_ns;
 };
 
 class AIPreDecoderService : public AIDecoderService {

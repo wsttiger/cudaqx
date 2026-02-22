@@ -53,8 +53,11 @@
  #include <string>
  #include <iomanip>
  #include <fstream>
- 
- #include <cuda_runtime.h>
+ #include <pthread.h>
+#include <sched.h>
+#include <nvtx3/nvToolsExt.h>
+
+#include <cuda_runtime.h>
  
  #ifndef CUDA_VERSION
  #define CUDA_VERSION 13000
@@ -71,16 +74,37 @@
  #include "cudaq/qec/code.h"
  #include "cudaq/qec/decoder.h"
  
- #define CUDA_CHECK(call) \
-     do { \
-         cudaError_t err = call; \
-         if (err != cudaSuccess) { \
-             std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at line " << __LINE__ << std::endl; \
-             exit(1); \
-         } \
-     } while(0)
- 
- using namespace cudaq::qec;
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            std::cerr << "CUDA Error: " << cudaGetErrorString(err) << " at line " << __LINE__ << std::endl; \
+            exit(1); \
+        } \
+    } while(0)
+
+// Pin a thread to a specific CPU core (Cores 2-5 = spinning infra, 10+ = workers; 0-1 = OS).
+static void pin_thread_to_core(std::thread& t, int core_id) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    int rc = pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (rc != 0) {
+        std::cerr << "Warning: Failed to pin thread to core " << core_id << " (Error: " << rc << ")\n";
+    }
+}
+
+static void pin_current_thread_to_core(int core_id) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    if (rc != 0) {
+        std::cerr << "Warning: Failed to pin current thread to core " << core_id << " (Error: " << rc << ")\n";
+    }
+}
+
+using namespace cudaq::qec;
  
  // =============================================================================
  // Pipeline Configuration
@@ -126,9 +150,9 @@
              "model1_d7_r7_unified_Z_batch1.onnx",
              /*slot_size=*/4096,
              /*total_requests=*/100,
-             /*num_predecoders=*/4,
+             /*num_predecoders=*/64,
              /*queue_depth=*/16,
-             /*num_workers=*/4
+             /*num_workers=*/64
          };
      }
  
@@ -142,9 +166,9 @@
              "model1_d13_r13_unified_Z_batch1.onnx",
              /*slot_size=*/16384,
              /*total_requests=*/100,
-             /*num_predecoders=*/4,
+             /*num_predecoders=*/64,
              /*queue_depth=*/16,
-             /*num_workers=*/4
+             /*num_workers=*/64
          };
      }
  
@@ -158,9 +182,9 @@
              "model1_d21_r21_unified_X_batch1.onnx",
              /*slot_size=*/65536,
              /*total_requests=*/100,
-             /*num_predecoders=*/4,
+             /*num_predecoders=*/64,
              /*queue_depth=*/16,
-             /*num_workers=*/4
+             /*num_workers=*/64
          };
      }
  
@@ -174,9 +198,9 @@
              "model1_d31_r31_unified_Z_batch1.onnx",
              /*slot_size=*/262144,
              /*total_requests=*/100,
-             /*num_predecoders=*/4,
+             /*num_predecoders=*/64,
              /*queue_depth=*/16,
-             /*num_workers=*/4
+             /*num_workers=*/64
          };
      }
  };
@@ -217,6 +241,7 @@
      cudaq::qec::atomic_uint64_sys* tx_flags = nullptr;
      cudaq::qec::atomic_uint64_sys* idle_mask = nullptr;
      int* inflight_slot_tags = nullptr;
+     uint64_t* debug_poll_ts = nullptr;
  };
  
  // =============================================================================
@@ -231,66 +256,79 @@
  void pymatching_worker_task(PreDecoderJob job, int worker_id,
                              AIPreDecoderService* predecoder,
                              DecoderContext* ctx,
-                             WorkerPoolContext* pool_ctx) {
-     using hrclock = std::chrono::high_resolution_clock;
-     auto worker_start = hrclock::now();
- 
-     const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
-     auto* my_decoder = ctx->acquire_decoder();
- 
-     int total_corrections = 0;
-     bool all_converged = true;
- 
-     auto decode_start = hrclock::now();
-     for (int s = 0; s < ctx->spatial_slices; ++s) {
-         const int32_t* slice = residual + s * ctx->z_stabilizers;
-         std::vector<double> syndrome(ctx->z_stabilizers);
-         for (int i = 0; i < ctx->z_stabilizers; ++i)
-             syndrome[i] = static_cast<double>(slice[i]);
- 
-         auto result = my_decoder->decode(syndrome);
- 
-         all_converged &= result.converged;
-         for (auto v : result.result)
-             if (v > 0.5) total_corrections++;
-     }
-     auto decode_end = hrclock::now();
- 
-     DecodeResponse resp_data{total_corrections, all_converged ? 1 : 0};
- 
-     char* response_payload = (char*)job.ring_buffer_ptr + sizeof(cudaq::nvqlink::RPCResponse);
-     std::memcpy(response_payload, &resp_data, sizeof(resp_data));
- 
-     auto* header = static_cast<cudaq::nvqlink::RPCResponse*>(job.ring_buffer_ptr);
-     header->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
-     header->status = 0;
-     header->result_len = sizeof(resp_data);
- 
-     uint64_t rx_value = reinterpret_cast<uint64_t>(job.ring_buffer_ptr);
-     int origin_slot = job.origin_slot;
- 
-     if (pool_ctx && pool_ctx->tx_flags) {
-         pool_ctx->tx_flags[origin_slot].store(rx_value, cuda::std::memory_order_release);
-     } else {
-         size_t slot_idx = ((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size;
-         g_sys_ctx.tx_flags_host[slot_idx].store(rx_value, cuda::std::memory_order_release);
-     }
- 
-     predecoder->release_job(job.slot_idx);
- 
-     if (pool_ctx && pool_ctx->idle_mask) {
-         pool_ctx->idle_mask->fetch_or(1ULL << worker_id, cuda::std::memory_order_release);
-     }
- 
-     auto worker_end = hrclock::now();
-     auto decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
-         decode_end - decode_start).count();
-     auto worker_us = std::chrono::duration_cast<std::chrono::microseconds>(
-         worker_end - worker_start).count();
-     ctx->total_decode_us.fetch_add(decode_us, std::memory_order_relaxed);
-     ctx->total_worker_us.fetch_add(worker_us, std::memory_order_relaxed);
-     ctx->decode_count.fetch_add(1, std::memory_order_relaxed);
- }
+    WorkerPoolContext* pool_ctx) {
+    nvtxRangePushA("Worker Task");
+    using hrclock = std::chrono::high_resolution_clock;
+    auto worker_start = hrclock::now();
+
+    if (pool_ctx && pool_ctx->debug_poll_ts) {
+        pool_ctx->debug_poll_ts[job.origin_slot] = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            worker_start.time_since_epoch()).count();
+    }
+
+    const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
+    auto* my_decoder = ctx->acquire_decoder();
+
+    int total_corrections = 0;
+    bool all_converged = true;
+
+    auto decode_start = hrclock::now();
+    nvtxRangePushA("PyMatching Decode");
+    
+    cudaqx::tensor<uint8_t> syndrome_tensor({(size_t)ctx->z_stabilizers});
+    uint8_t* syn_data = syndrome_tensor.data();
+
+    for (int s = 0; s < ctx->spatial_slices; ++s) {
+        const int32_t* slice = residual + s * ctx->z_stabilizers;
+        for (int i = 0; i < ctx->z_stabilizers; ++i) {
+            syn_data[i] = static_cast<uint8_t>(slice[i]);
+        }
+
+        auto result = my_decoder->decode(syndrome_tensor);
+
+        all_converged &= result.converged;
+        for (auto v : result.result)
+            if (v > 0.5) total_corrections++;
+    }
+    nvtxRangePop(); // PyMatching Decode
+    auto decode_end = hrclock::now();
+
+    DecodeResponse resp_data{total_corrections, all_converged ? 1 : 0};
+
+    char* response_payload = (char*)job.ring_buffer_ptr + sizeof(cudaq::nvqlink::RPCResponse);
+    std::memcpy(response_payload, &resp_data, sizeof(resp_data));
+
+    auto* header = static_cast<cudaq::nvqlink::RPCResponse*>(job.ring_buffer_ptr);
+    header->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
+    header->status = 0;
+    header->result_len = sizeof(resp_data);
+
+    uint64_t rx_value = reinterpret_cast<uint64_t>(job.ring_buffer_ptr);
+    int origin_slot = job.origin_slot;
+
+    if (pool_ctx && pool_ctx->tx_flags) {
+        pool_ctx->tx_flags[origin_slot].store(rx_value, cuda::std::memory_order_release);
+    } else {
+        size_t slot_idx = ((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size;
+        g_sys_ctx.tx_flags_host[slot_idx].store(rx_value, cuda::std::memory_order_release);
+    }
+
+    predecoder->release_job(job.slot_idx);
+
+    if (pool_ctx && pool_ctx->idle_mask) {
+        pool_ctx->idle_mask->fetch_or(1ULL << worker_id, cuda::std::memory_order_release);
+    }
+
+    auto worker_end = hrclock::now();
+    auto decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        decode_end - decode_start).count();
+    auto worker_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        worker_end - worker_start).count();
+    ctx->total_decode_us.fetch_add(decode_us, std::memory_order_relaxed);
+    ctx->total_worker_us.fetch_add(worker_us, std::memory_order_relaxed);
+    ctx->decode_count.fetch_add(1, std::memory_order_relaxed);
+    nvtxRangePop(); // Worker Task
+}
  
  // =============================================================================
  // Incoming Polling Thread
@@ -301,34 +339,38 @@
      DecoderContext* ctx,
      std::atomic<bool>& stop_signal,
      WorkerPoolContext* pool_ctx = nullptr,
-     std::atomic<uint64_t>* total_claimed = nullptr)
- {
-     PreDecoderJob job;
-     int num_workers = static_cast<int>(predecoders.size());
-     while (!stop_signal.load(std::memory_order_relaxed)) {
-         bool found_work = false;
-         for (int i = 0; i < num_workers; ++i) {
-             if (predecoders[i]->poll_next_job(job)) {
-                 if (pool_ctx && pool_ctx->inflight_slot_tags) {
-                     job.origin_slot = pool_ctx->inflight_slot_tags[i];
-                 } else {
-                     job.origin_slot = static_cast<int>(((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size);
-                 }
-                 if (total_claimed) total_claimed->fetch_add(1, std::memory_order_relaxed);
-                 AIPreDecoderService* pd_ptr = predecoders[i].get();
-                 int worker_id = i;
-                 WorkerPoolContext* pctx = pool_ctx;
-                 thread_pool.enqueue([job, worker_id, pd_ptr, ctx, pctx]() {
-                     pymatching_worker_task(job, worker_id, pd_ptr, ctx, pctx);
-                 });
-                 found_work = true;
-             }
-         }
-         if (!found_work) {
-             QEC_CPU_RELAX();
-         }
-     }
- }
+    std::atomic<uint64_t>* total_claimed = nullptr)
+{
+    nvtxRangePushA("Polling Loop");
+    PreDecoderJob job;
+    int num_workers = static_cast<int>(predecoders.size());
+    while (!stop_signal.load(std::memory_order_relaxed)) {
+        bool found_work = false;
+        for (int i = 0; i < num_workers; ++i) {
+            if (predecoders[i]->poll_next_job(job)) {
+                nvtxRangePushA("Dispatch Job");
+                if (pool_ctx && pool_ctx->inflight_slot_tags) {
+                    job.origin_slot = pool_ctx->inflight_slot_tags[i];
+                } else {
+                    job.origin_slot = static_cast<int>(((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size);
+                }
+                if (total_claimed) total_claimed->fetch_add(1, std::memory_order_relaxed);
+                AIPreDecoderService* pd_ptr = predecoders[i].get();
+                int worker_id = i;
+                WorkerPoolContext* pctx = pool_ctx;
+                thread_pool.enqueue([job, worker_id, pd_ptr, ctx, pctx]() {
+                    pymatching_worker_task(job, worker_id, pd_ptr, ctx, pctx);
+                });
+                found_work = true;
+                nvtxRangePop(); // Dispatch Job
+            }
+        }
+        if (!found_work) {
+            QEC_CPU_RELAX();
+        }
+    }
+    nvtxRangePop(); // Polling Loop
+}
  
  // =============================================================================
  // Generate Realistic Syndrome Data
@@ -360,7 +402,6 @@
      cudaq::qec::atomic_uint64_sys* tx_flags,
      DecoderContext& decoder_ctx,
      std::vector<std::unique_ptr<AIPreDecoderService>>& predecoders,
-     cudaq::qec::utils::ThreadPool& pymatching_pool,
      std::atomic<bool>& system_stop,
      void** h_mailbox_bank,
      std::vector<cudaStream_t>& predecoder_streams,
@@ -378,8 +419,11 @@
      std::vector<hrclock::time_point> submit_ts(max_requests);
      std::vector<hrclock::time_point> complete_ts(max_requests);
      std::vector<bool> completed(max_requests, false);
+     std::vector<uint64_t> dispatch_ts(max_requests, 0);
+     std::vector<uint64_t> poll_ts(max_requests, 0);
  
      std::vector<int> slot_request(NUM_SLOTS, -1);
+     std::vector<uint64_t> debug_dispatch_ts_arr(NUM_SLOTS, 0);
  
      std::atomic<int> total_submitted{0};
      std::atomic<int> total_completed{0};
@@ -404,16 +448,18 @@
      disp_cfg.live_dispatched = &live_dispatched;
      disp_cfg.idle_mask = pool_ctx->idle_mask;
      disp_cfg.inflight_slot_tags = pool_ctx->inflight_slot_tags;
+     disp_cfg.debug_dispatch_ts = debug_dispatch_ts_arr.data();
      disp_cfg.workers.resize(num_workers);
      for (int i = 0; i < num_workers; ++i) {
          disp_cfg.workers[i].graph_exec = predecoders[i]->get_executable_graph();
          disp_cfg.workers[i].stream = predecoder_streams[i];
      }
  
-     std::thread dispatcher_thread([&disp_cfg]() {
-         host_dispatcher_loop(disp_cfg);
-     });
- 
+    std::thread dispatcher_thread([&disp_cfg]() {
+        host_dispatcher_loop(disp_cfg);
+    });
+    pin_thread_to_core(dispatcher_thread, 2);
+
      auto run_deadline = std::chrono::steady_clock::now()
                        + std::chrono::seconds(scfg.duration_s);
  
@@ -505,7 +551,8 @@
  
          producer_done.store(true, std::memory_order_seq_cst);
      });
- 
+    pin_thread_to_core(producer, 3);
+
      // --- Consumer thread (harvests completions sequentially) ---
      std::thread consumer([&]() {
          int next_harvest = 0;
@@ -533,6 +580,8 @@
                  int rid = slot_request[slot];
                  if (rid >= 0 && (tv >> 48) != 0xDEAD) {
                      complete_ts[rid] = hrclock::now();
+                     dispatch_ts[rid] = debug_dispatch_ts_arr[slot];
+                     poll_ts[rid] = pool_ctx->debug_poll_ts[slot];
                      completed[rid] = true;
                      total_completed.fetch_add(1, std::memory_order_relaxed);
                  } else if ((tv >> 48) == 0xDEAD) {
@@ -552,6 +601,7 @@
              }
          }
      });
+    pin_thread_to_core(consumer, 4);
 
     // --- DIAGNOSTIC WATCHDOG THREAD (debug only; set true to diagnose stalls) ---
     constexpr bool kEnableWatchdog = false;
@@ -722,22 +772,47 @@
          double avg_decode = (double)decoder_ctx.total_decode_us.load() / n_decoded;
          double avg_worker = (double)decoder_ctx.total_worker_us.load() / n_decoded;
          double avg_overhead = avg_worker - avg_decode;
+         
+         double sum_dispatch_latency = 0;
+         double sum_gpu_execution = 0;
+         int count_valid_ts = 0;
+         for (int i = warmup; i < nsub; ++i) {
+             if (completed[i] && dispatch_ts[i] > 0) {
+                 uint64_t submit_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(submit_ts[i].time_since_epoch()).count();
+                 if (dispatch_ts[i] > submit_ns && poll_ts[i] > dispatch_ts[i]) {
+                     sum_dispatch_latency += (dispatch_ts[i] - submit_ns) / 1000.0;
+                     sum_gpu_execution += (poll_ts[i] - dispatch_ts[i]) / 1000.0;
+                     count_valid_ts++;
+                 } else if (i == warmup) {
+                     std::cout << "Debug [warmup]: submit=" << submit_ns << " dispatch=" << dispatch_ts[i] << " poll=" << poll_ts[i] << "\n";
+                 }
+             }
+         }
+         double avg_dispatch_latency = count_valid_ts > 0 ? (sum_dispatch_latency / count_valid_ts) : 0;
+         double avg_gpu_execution = count_valid_ts > 0 ? (sum_gpu_execution / count_valid_ts) : 0;
+         
          double avg_pipeline = mean - avg_worker;
  
          std::cout << std::setprecision(1);
          std::cout << "  Worker Timing Breakdown (avg over " << n_decoded << " requests):\n";
-         std::cout << "    PyMatching decode:" << std::setw(10) << avg_decode
+         std::cout << "    Host Dispatch overhead:" << std::setw(9) << avg_dispatch_latency
+                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_dispatch_latency / mean : 0)
+                   << "%)\n";
+         std::cout << "    GPU TRT Inference:    " << std::setw(9) << avg_gpu_execution
+                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_gpu_execution / mean : 0)
+                   << "%)\n";
+         std::cout << "    PyMatching decode:    " << std::setw(9) << avg_decode
                    << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_decode / mean : 0)
                    << "%)\n";
-         std::cout << "    Worker overhead:  " << std::setw(10) << avg_overhead
+         std::cout << "    Worker overhead:      " << std::setw(9) << avg_overhead
                    << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_overhead / mean : 0)
                    << "%)\n";
-         std::cout << "    GPU+dispatch+poll:" << std::setw(10) << avg_pipeline
-                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_pipeline / mean : 0)
+         std::cout << "    Other/Misc Wait:      " << std::setw(9) << (avg_pipeline - avg_dispatch_latency - avg_gpu_execution)
+                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * (avg_pipeline - avg_dispatch_latency - avg_gpu_execution) / mean : 0)
                    << "%)\n";
-         std::cout << "    Total end-to-end: " << std::setw(10) << mean << " us\n";
-         std::cout << "    Per-round (/" << config.num_rounds << "): "
-                   << std::setw(10) << (mean / config.num_rounds) << " us/round\n";
+         std::cout << "    Total end-to-end:     " << std::setw(9) << mean << " us\n";
+         std::cout << "    Per-round (/" << config.num_rounds << "):      "
+                   << std::setw(9) << (mean / config.num_rounds) << " us/round\n";
      }
      std::cout << "  ---------------------------------------------------------------\n";
      std::cout << "  Host dispatcher processed " << dispatcher_stats << " packets.\n";
@@ -877,13 +952,19 @@
      g_sys_ctx.slot_size = config.slot_size;
  
      // Define the dynamic pool variables HERE so they live until the program exits
-     atomic_uint64_sys idle_mask((1ULL << config.num_predecoders) - 1);  
+     // Avoid 1ULL<<64 (UB); for 64 workers use all-ones mask.
+     uint64_t initial_idle = (config.num_predecoders >= 64)
+         ? ~0ULL
+         : ((1ULL << config.num_predecoders) - 1);
+     atomic_uint64_sys idle_mask(initial_idle);  
      std::vector<int> inflight_slot_tags(config.num_predecoders, 0);
- 
+     std::vector<uint64_t> debug_poll_ts_arr(NUM_SLOTS, 0);
+     
      WorkerPoolContext pool_ctx;
      pool_ctx.tx_flags = tx_flags_host;
      pool_ctx.idle_mask = &idle_mask;
      pool_ctx.inflight_slot_tags = inflight_slot_tags.data();
+     pool_ctx.debug_poll_ts = debug_poll_ts_arr.data();
  
      // =========================================================================
      // Mailbox & Dispatcher Setup (mode-dependent)
@@ -985,16 +1066,42 @@
          std::cout << "[Setup] Host-side dispatcher will be launched in streaming test.\n";
      }
  
-    std::cout << "[Setup] Booting Thread Pool (" << config.num_workers
-               << " workers) & Polling Loop...\n";
-     cudaq::qec::utils::ThreadPool pymatching_pool(config.num_workers);
-     std::atomic<bool> system_stop{false};
-     std::atomic<uint64_t> total_claimed{0};
+    std::atomic<bool> system_stop{false};
+    std::atomic<uint64_t> total_claimed{0};
 
-     std::thread incoming_thread([&]() {
-         incoming_polling_loop(predecoders, pymatching_pool, &decoder_ctx,
-                               system_stop, &pool_ctx, &total_claimed);
-     });
+    std::cout << "[Setup] Booting " << config.num_workers << " Dedicated Polling/Worker Threads...\n";
+    std::vector<std::thread> worker_threads;
+    for (int i = 0; i < config.num_workers; ++i) {
+        worker_threads.emplace_back([i, &predecoders, &decoder_ctx, &system_stop, &pool_ctx, &total_claimed]() {
+            int target_core = 10 + i;
+            pin_current_thread_to_core(target_core);
+
+            AIPreDecoderService* pd_ptr = predecoders[i].get();
+
+            nvtxRangePushA("Worker Loop");
+            PreDecoderJob job;
+            while (!system_stop.load(std::memory_order_relaxed)) {
+                // Wait for GPU to set ready flag to 1
+                if (pd_ptr->poll_next_job(job)) {
+                    nvtxRangePushA("Process Job");
+                    
+                    total_claimed.fetch_add(1, std::memory_order_relaxed);
+
+                    if (pool_ctx.inflight_slot_tags) {
+                        job.origin_slot = pool_ctx.inflight_slot_tags[i];
+                    } else {
+                        job.origin_slot = static_cast<int>(((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size);
+                    }
+
+                    pymatching_worker_task(job, i, pd_ptr, &decoder_ctx, &pool_ctx);
+                    nvtxRangePop(); // Process Job
+                } else {
+                    QEC_CPU_RELAX();
+                }
+            }
+            nvtxRangePop(); // Worker Loop
+        });
+    }
  
      // =========================================================================
      // Test Stimulus
@@ -1002,7 +1109,7 @@
      if (streaming_mode) {
          run_streaming_test(config, stream_cfg,
                             rx_data_host, rx_data_dev, rx_flags_host, tx_flags_host,
-                            decoder_ctx, predecoders, pymatching_pool, system_stop,
+                            decoder_ctx, predecoders, system_stop,
                             h_mailbox_bank, predecoder_streams, &pool_ctx, &total_claimed);
      } else {
          const int batch_size = config.num_predecoders;
@@ -1125,13 +1232,15 @@
      std::cout << "[Teardown] Shutting down...\n";
      system_stop = true;
  
-     if (!use_host_dispatcher) {
-         *shutdown_flag_host = 1;
-         __sync_synchronize();
-     }
- 
-     incoming_thread.join();
-     CUDA_CHECK(cudaStreamSynchronize(capture_stream));
+    if (!use_host_dispatcher) {
+        *shutdown_flag_host = 1;
+        __sync_synchronize();
+    }
+
+    for (auto& t : worker_threads) {
+        if (t.joinable()) t.join();
+    }
+    CUDA_CHECK(cudaStreamSynchronize(capture_stream));
  
      if (!use_host_dispatcher) {
          uint64_t dispatched_packets = 0;

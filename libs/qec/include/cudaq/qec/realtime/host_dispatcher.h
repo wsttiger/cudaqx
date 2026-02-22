@@ -52,6 +52,9 @@ struct HostDispatcherConfig {
     /// Dynamic worker pool (design: Host-Side Spin-Polling Dispatcher)
     atomic_uint64_sys* idle_mask;   ///< 1 = free, 0 = busy; bit index = worker_id
     int* inflight_slot_tags;        ///< worker_id -> origin FPGA slot for tx_flags routing
+
+    // Optional arrays for timestamping
+    uint64_t* debug_dispatch_ts = nullptr;
 };
 
 /// Run the host-side dispatcher loop. Blocks until *config.shutdown_flag
