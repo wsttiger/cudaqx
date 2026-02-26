@@ -41,6 +41,10 @@
  * Usage: test_realtime_predecoder_w_pymatching [d7|d13|d21|d31] [rate_us] [duration_s]
  ******************************************************************************/
 
+ // Run the test:
+ // ./build/unittests/test_realtime_predecoder_w_pymatching d13 30 10
+ // distance 13, 30 us between requests, 10 seconds
+
  #include <iostream>
  #include <vector>
  #include <thread>
@@ -110,7 +114,7 @@ namespace realtime_ns = cudaq::realtime;
  // Pipeline Configuration
  // =============================================================================
  
- constexpr size_t NUM_SLOTS = 16;
+ constexpr size_t NUM_SLOTS = 32;
  
  struct PipelineConfig {
      std::string label;
@@ -147,8 +151,8 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/336,
              "model1_d7_r7_unified_Z_batch1.onnx",
              /*slot_size=*/4096,
-             /*num_predecoders=*/8,
-             /*num_workers=*/8
+             /*num_predecoders=*/16,
+             /*num_workers=*/16
          };
      }
 
@@ -161,8 +165,8 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/2184,
              "model1_d13_r13_unified_Z_batch1.onnx",
              /*slot_size=*/16384,
-             /*num_predecoders=*/8,
-             /*num_workers=*/8
+             /*num_predecoders=*/16,
+             /*num_workers=*/16
          };
      }
 
@@ -175,8 +179,8 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/9240,
              "model1_d21_r21_unified_X_batch1.onnx",
              /*slot_size=*/65536,
-             /*num_predecoders=*/8,
-             /*num_workers=*/8
+             /*num_predecoders=*/16,
+             /*num_workers=*/16
          };
      }
 
@@ -189,8 +193,8 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/29760,
              "model1_d31_r31_unified_Z_batch1.onnx",
              /*slot_size=*/262144,
-             /*num_predecoders=*/8,
-             /*num_workers=*/8
+             /*num_predecoders=*/16,
+             /*num_workers=*/16
          };
      }
  };
