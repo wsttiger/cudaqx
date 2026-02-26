@@ -110,7 +110,7 @@ namespace realtime_ns = cudaq::realtime;
  // Pipeline Configuration
  // =============================================================================
  
- constexpr size_t NUM_SLOTS = 64;
+ constexpr size_t NUM_SLOTS = 16;
  
  struct PipelineConfig {
      std::string label;
@@ -121,7 +121,6 @@ namespace realtime_ns = cudaq::realtime;
      std::string onnx_filename;
      size_t slot_size;         // must fit RPC header (CUDAQ_RPC_HEADER_SIZE) + input payload
      int num_predecoders;
-     int queue_depth;
      int num_workers;
  
      int input_elements() const { return meas_qubits * num_rounds; }
@@ -148,8 +147,7 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/336,
              "model1_d7_r7_unified_Z_batch1.onnx",
              /*slot_size=*/4096,
-/*num_predecoders=*/8,
-             /*queue_depth=*/16,
+             /*num_predecoders=*/8,
              /*num_workers=*/8
          };
      }
@@ -163,8 +161,7 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/2184,
              "model1_d13_r13_unified_Z_batch1.onnx",
              /*slot_size=*/16384,
-/*num_predecoders=*/8,
-             /*queue_depth=*/16,
+             /*num_predecoders=*/8,
              /*num_workers=*/8
          };
      }
@@ -178,8 +175,7 @@ namespace realtime_ns = cudaq::realtime;
              /*residual_detectors=*/9240,
              "model1_d21_r21_unified_X_batch1.onnx",
              /*slot_size=*/65536,
-/*num_predecoders=*/8,
-             /*queue_depth=*/16,
+             /*num_predecoders=*/8,
              /*num_workers=*/8
          };
      }
@@ -194,7 +190,6 @@ namespace realtime_ns = cudaq::realtime;
              "model1_d31_r31_unified_Z_batch1.onnx",
              /*slot_size=*/262144,
              /*num_predecoders=*/8,
-             /*queue_depth=*/16,
              /*num_workers=*/8
          };
      }
@@ -230,7 +225,8 @@ namespace realtime_ns = cudaq::realtime;
      realtime_ns::atomic_uint64_sys* tx_flags = nullptr;
      realtime_ns::atomic_uint64_sys* idle_mask = nullptr;
      int* inflight_slot_tags = nullptr;
-     uint64_t* debug_poll_ts = nullptr;
+     uint64_t* debug_poll_ts = nullptr;      // when worker poll_next_job succeeded (ns epoch)
+     uint64_t* debug_worker_done_ts = nullptr; // when worker set tx_flags (ns epoch)
  };
  
  // =============================================================================
@@ -255,13 +251,14 @@ namespace realtime_ns = cudaq::realtime;
             worker_start.time_since_epoch()).count();
     }
 
-    const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
-    auto* my_decoder = ctx->acquire_decoder();
-
     int total_corrections = 0;
     bool all_converged = true;
 
     auto decode_start = hrclock::now();
+#if !defined(DISABLE_PYMATCHING)
+    const int32_t* residual = static_cast<const int32_t*>(job.inference_data);
+    auto* my_decoder = ctx->acquire_decoder();
+
     nvtxRangePushA("PyMatching Decode");
     
     cudaqx::tensor<uint8_t> syndrome_tensor({(size_t)ctx->z_stabilizers});
@@ -280,6 +277,7 @@ namespace realtime_ns = cudaq::realtime;
             if (v > 0.5) total_corrections++;
     }
     nvtxRangePop(); // PyMatching Decode
+#endif
     auto decode_end = hrclock::now();
 
     DecodeResponse resp_data{total_corrections, all_converged ? 1 : 0};
@@ -300,6 +298,11 @@ namespace realtime_ns = cudaq::realtime;
     } else {
         size_t slot_idx = ((uint8_t*)job.ring_buffer_ptr - g_sys_ctx.rx_data_host) / g_sys_ctx.slot_size;
         g_sys_ctx.tx_flags_host[slot_idx].store(rx_value, cuda::std::memory_order_release);
+    }
+
+    if (pool_ctx && pool_ctx->debug_worker_done_ts) {
+        pool_ctx->debug_worker_done_ts[origin_slot] = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            hrclock::now().time_since_epoch()).count();
     }
 
     predecoder->release_job(job.slot_idx);
@@ -368,6 +371,7 @@ namespace realtime_ns = cudaq::realtime;
      std::vector<bool> completed(max_requests, false);
      std::vector<uint64_t> dispatch_ts(max_requests, 0);
      std::vector<uint64_t> poll_ts(max_requests, 0);
+     std::vector<uint64_t> worker_done_ts(max_requests, 0);
  
      std::vector<int> slot_request(NUM_SLOTS, -1);
      std::vector<uint64_t> debug_dispatch_ts_arr(NUM_SLOTS, 0);
@@ -397,9 +401,9 @@ namespace realtime_ns = cudaq::realtime;
     disp_cfg.tx_flags = tx_flags;
     disp_cfg.rx_data_host = rx_data_host;
     disp_cfg.rx_data_dev = rx_data_dev;
-    disp_cfg.tx_data_host = rx_data_host;
-    disp_cfg.tx_data_dev = rx_data_dev;
-    disp_cfg.tx_stride_sz = config.slot_size;
+    disp_cfg.tx_data_host = nullptr;
+     disp_cfg.tx_data_dev = nullptr;
+     disp_cfg.tx_stride_sz = config.slot_size;
     disp_cfg.h_mailbox_bank = h_mailbox_bank;
     disp_cfg.num_slots = NUM_SLOTS;
     disp_cfg.slot_size = config.slot_size;
@@ -452,7 +456,7 @@ namespace realtime_ns = cudaq::realtime;
               << std::flush;
 
     // Progress reporter (debug only; set to true to print submitted/completed every second)
-    constexpr bool kEnableProgressReporter = false;
+    constexpr bool kEnableProgressReporter = true;
     std::atomic<bool> progress_done{false};
     std::thread progress_reporter;
     if (kEnableProgressReporter) {
@@ -523,10 +527,8 @@ namespace realtime_ns = cudaq::realtime;
      });
     pin_thread_to_core(producer, 3);
 
-     // --- Consumer thread (harvests completions sequentially) ---
+     // --- Consumer thread (harvests completions out-of-order) ---
      std::thread consumer([&]() {
-         int next_harvest = 0;
-
          while (true) {
              if (consumer_stop.load(std::memory_order_acquire))
                  break;
@@ -537,40 +539,40 @@ namespace realtime_ns = cudaq::realtime;
              if (pdone && ncomp >= nsub)
                  break;
 
-             if (next_harvest >= nsub) {
-                 QEC_CPU_RELAX();
-                 continue;
-             }
+             bool found_any = false;
+             for (uint32_t s = 0; s < NUM_SLOTS; ++s) {
+                 if (slot_request[s] < 0) continue;
 
-            int slot = next_harvest % (int)NUM_SLOTS;
-             int cuda_error = 0;
-             cudaq_tx_status_t status = cudaq_host_ringbuffer_poll_tx_flag(
-                 &rb, static_cast<uint32_t>(slot), &cuda_error);
+                 int cuda_error = 0;
+                 cudaq_tx_status_t status = cudaq_host_ringbuffer_poll_tx_flag(
+                     &rb, s, &cuda_error);
 
-             if (status == CUDAQ_TX_READY) {
-                 int rid = slot_request[slot];
-                 if (rid >= 0) {
-                     complete_ts[rid] = hrclock::now();
-                     dispatch_ts[rid] = 0;
-                     poll_ts[rid] = pool_ctx->debug_poll_ts ? pool_ctx->debug_poll_ts[slot] : 0;
-                     completed[rid] = true;
+                 if (status == CUDAQ_TX_READY) {
+                     int rid = slot_request[s];
+                     if (rid >= 0) {
+                         complete_ts[rid] = hrclock::now();
+                         poll_ts[rid] = pool_ctx->debug_poll_ts ? pool_ctx->debug_poll_ts[s] : 0;
+                         worker_done_ts[rid] = pool_ctx->debug_worker_done_ts ? pool_ctx->debug_worker_done_ts[s] : 0;
+                         completed[rid] = true;
+                         total_completed.fetch_add(1, std::memory_order_relaxed);
+                     }
+                     slot_request[s] = -1;
+                     __sync_synchronize();
+                     cudaq_host_ringbuffer_clear_slot(&rb, s);
+                     found_any = true;
+                 } else if (status == CUDAQ_TX_ERROR) {
+                     std::cerr << "  [FAIL] Slot " << s
+                               << " cudaGraphLaunch error " << cuda_error
+                               << " (" << cudaGetErrorString(static_cast<cudaError_t>(cuda_error))
+                               << ")\n";
                      total_completed.fetch_add(1, std::memory_order_relaxed);
+                     slot_request[s] = -1;
+                     __sync_synchronize();
+                     cudaq_host_ringbuffer_clear_slot(&rb, s);
+                     found_any = true;
                  }
-                 cudaq_host_ringbuffer_clear_slot(&rb, static_cast<uint32_t>(slot));
-                 slot_request[slot] = -1;
-                 next_harvest++;
-             } else if (status == CUDAQ_TX_ERROR) {
-                 std::cerr << "  [FAIL] Slot " << slot
-                           << " cudaGraphLaunch error " << cuda_error
-                           << " (" << cudaGetErrorString(static_cast<cudaError_t>(cuda_error))
-                           << ")\n";
-                 total_completed.fetch_add(1, std::memory_order_relaxed);
-                 cudaq_host_ringbuffer_clear_slot(&rb, static_cast<uint32_t>(slot));
-                 slot_request[slot] = -1;
-                 next_harvest++;
-             } else {
-                 QEC_CPU_RELAX();
              }
+             if (!found_any) QEC_CPU_RELAX();
          }
      });
     pin_thread_to_core(consumer, 4);
@@ -579,11 +581,38 @@ namespace realtime_ns = cudaq::realtime;
      producer.join();
 
      // Grace period for in-flight requests
-     auto grace_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+     auto grace_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
      while (total_completed.load() < total_submitted.load()
             && std::chrono::steady_clock::now() < grace_deadline) {
          usleep(1000);
      }
+
+     if (total_completed.load() < total_submitted.load()) {
+         int nsub_dbg = total_submitted.load();
+         int ncomp_dbg = total_completed.load();
+         std::cerr << "  [DEBUG] Stuck: submitted=" << nsub_dbg << " completed=" << ncomp_dbg
+                   << " diff=" << (nsub_dbg - ncomp_dbg) << "\n";
+         for (uint32_t s = 0; s < NUM_SLOTS; ++s) {
+             uint64_t rx_val = reinterpret_cast<volatile uint64_t*>(rx_flags)[s];
+             uint64_t tx_val = reinterpret_cast<volatile uint64_t*>(tx_flags)[s];
+             int rid = slot_request[s];
+             if (rx_val != 0 || tx_val != 0 || rid >= 0) {
+                 std::cerr << "    slot[" << s << "] rx=0x" << std::hex << rx_val
+                           << " tx=0x" << tx_val << std::dec
+                           << " slot_request=" << rid
+                           << " (completed=" << (rid >= 0 ? (completed[rid] ? "YES" : "NO") : "n/a")
+                           << ")\n";
+             }
+         }
+         for (int w = 0; w < config.num_predecoders; ++w) {
+             auto* pd = predecoders[w].get();
+             std::cerr << "    worker[" << w << "] inflight_slot_tag="
+                       << pool_ctx->inflight_slot_tags[w]
+                       << " idle=" << ((pool_ctx->idle_mask->load(cuda::std::memory_order_relaxed) >> w) & 1)
+                       << "\n";
+         }
+     }
+
      consumer_stop.store(true, std::memory_order_release);
 
      shutdown_flag.store(1, cuda::std::memory_order_release);
@@ -692,47 +721,66 @@ namespace realtime_ns = cudaq::realtime;
          double avg_decode = (double)decoder_ctx.total_decode_us.load() / n_decoded;
          double avg_worker = (double)decoder_ctx.total_worker_us.load() / n_decoded;
          double avg_overhead = avg_worker - avg_decode;
-         
-         double sum_dispatch_latency = 0;
-         double sum_gpu_execution = 0;
-         int count_valid_ts = 0;
+
+         // Per-request breakdown using submit, poll (worker start), worker_done, complete timestamps.
+         // Stage A: submit → poll_ts  = dispatch + graph launch + GPU execution + poll CAS
+         // Stage B: poll_ts → worker_done_ts = worker task (decode + response write + tx_flags set)
+         // Stage C: worker_done_ts → complete_ts = consumer polling delay
+         double sum_stage_a = 0, sum_stage_b = 0, sum_stage_c = 0;
+         int count_valid = 0;
+         std::vector<double> stage_a_samples, stage_b_samples, stage_c_samples;
          for (int i = warmup; i < nsub; ++i) {
-             if (completed[i] && dispatch_ts[i] > 0) {
-                 uint64_t submit_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(submit_ts[i].time_since_epoch()).count();
-                 if (dispatch_ts[i] > submit_ns && poll_ts[i] > dispatch_ts[i]) {
-                     sum_dispatch_latency += (dispatch_ts[i] - submit_ns) / 1000.0;
-                     sum_gpu_execution += (poll_ts[i] - dispatch_ts[i]) / 1000.0;
-                     count_valid_ts++;
-                 } else if (i == warmup) {
-                     std::cout << "Debug [warmup]: submit=" << submit_ns << " dispatch=" << dispatch_ts[i] << " poll=" << poll_ts[i] << "\n";
-                 }
-             }
+             if (!completed[i] || poll_ts[i] == 0 || worker_done_ts[i] == 0) continue;
+             uint64_t submit_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                 submit_ts[i].time_since_epoch()).count();
+             uint64_t complete_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                 complete_ts[i].time_since_epoch()).count();
+             if (poll_ts[i] <= submit_ns || worker_done_ts[i] < poll_ts[i] || complete_ns < worker_done_ts[i])
+                 continue;
+             double a = (poll_ts[i] - submit_ns) / 1000.0;
+             double b = (worker_done_ts[i] - poll_ts[i]) / 1000.0;
+             double c = (complete_ns - worker_done_ts[i]) / 1000.0;
+             sum_stage_a += a; sum_stage_b += b; sum_stage_c += c;
+             stage_a_samples.push_back(a);
+             stage_b_samples.push_back(b);
+             stage_c_samples.push_back(c);
+             count_valid++;
          }
-         double avg_dispatch_latency = count_valid_ts > 0 ? (sum_dispatch_latency / count_valid_ts) : 0;
-         double avg_gpu_execution = count_valid_ts > 0 ? (sum_gpu_execution / count_valid_ts) : 0;
-         
-         double avg_pipeline = mean - avg_worker;
- 
+
+         auto percentile = [](std::vector<double>& v, double pct) -> double {
+             if (v.empty()) return 0;
+             std::sort(v.begin(), v.end());
+             size_t idx = std::min((size_t)(pct / 100.0 * v.size()), v.size() - 1);
+             return v[idx];
+         };
+
+         double avg_a = count_valid > 0 ? sum_stage_a / count_valid : 0;
+         double avg_b = count_valid > 0 ? sum_stage_b / count_valid : 0;
+         double avg_c = count_valid > 0 ? sum_stage_c / count_valid : 0;
+
          std::cout << std::setprecision(1);
-         std::cout << "  Worker Timing Breakdown (avg over " << n_decoded << " requests):\n";
-         std::cout << "    Host Dispatch overhead:" << std::setw(9) << avg_dispatch_latency
-                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_dispatch_latency / mean : 0)
-                   << "%)\n";
-         std::cout << "    GPU TRT Inference:    " << std::setw(9) << avg_gpu_execution
-                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_gpu_execution / mean : 0)
-                   << "%)\n";
-         std::cout << "    PyMatching decode:    " << std::setw(9) << avg_decode
-                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_decode / mean : 0)
-                   << "%)\n";
-         std::cout << "    Worker overhead:      " << std::setw(9) << avg_overhead
-                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * avg_overhead / mean : 0)
-                   << "%)\n";
-         std::cout << "    Other/Misc Wait:      " << std::setw(9) << (avg_pipeline - avg_dispatch_latency - avg_gpu_execution)
-                   << " us  (" << std::setw(4) << (mean > 0 ? 100.0 * (avg_pipeline - avg_dispatch_latency - avg_gpu_execution) / mean : 0)
-                   << "%)\n";
-         std::cout << "    Total end-to-end:     " << std::setw(9) << mean << " us\n";
+         std::cout << "  Pipeline Timing Breakdown (" << count_valid << " valid samples):\n";
+         std::cout << "    [A] Submit→Worker poll:" << std::setw(9) << avg_a
+                   << " us  (p50=" << percentile(stage_a_samples, 50)
+                   << " p99=" << percentile(stage_a_samples, 99) << ")\n";
+         std::cout << "        (dispatch + graph launch + GPU exec + CAS)\n";
+         std::cout << "    [B] Worker task:       " << std::setw(9) << avg_b
+                   << " us  (p50=" << percentile(stage_b_samples, 50)
+                   << " p99=" << percentile(stage_b_samples, 99) << ")\n";
+         std::cout << "        (decode + response write + tx_flags set)\n";
+         std::cout << "    [C] Consumer poll lag: " << std::setw(9) << avg_c
+                   << " us  (p50=" << percentile(stage_c_samples, 50)
+                   << " p99=" << percentile(stage_c_samples, 99) << ")\n";
+         std::cout << "        (tx_flags set → consumer sees it)\n";
+         std::cout << "    [A+B+C] Sum:           " << std::setw(9) << (avg_a + avg_b + avg_c) << " us\n";
+         std::cout << "    End-to-end mean:       " << std::setw(9) << mean << " us\n";
          std::cout << "    Per-round (/" << config.num_rounds << "):      "
                    << std::setw(9) << (mean / config.num_rounds) << " us/round\n";
+         std::cout << "  ---------------------------------------------------------------\n";
+         std::cout << "  Worker-level averages (" << n_decoded << " completed):\n";
+         std::cout << "    PyMatching decode:    " << std::setw(9) << avg_decode << " us\n";
+         std::cout << "    Total worker:         " << std::setw(9) << avg_worker << " us\n";
+         std::cout << "    Worker overhead:      " << std::setw(9) << avg_overhead << " us\n";
      }
      std::cout << "  ---------------------------------------------------------------\n";
      std::cout << "  Host dispatcher processed " << dispatcher_stats << " packets.\n";
@@ -864,12 +912,14 @@ namespace realtime_ns = cudaq::realtime;
      atomic_uint64_sys idle_mask(initial_idle);  
      std::vector<int> inflight_slot_tags(config.num_predecoders, 0);
      std::vector<uint64_t> debug_poll_ts_arr(NUM_SLOTS, 0);
+    std::vector<uint64_t> debug_worker_done_ts_arr(NUM_SLOTS, 0);
      
      WorkerPoolContext pool_ctx;
      pool_ctx.tx_flags = tx_flags_host;
      pool_ctx.idle_mask = &idle_mask;
      pool_ctx.inflight_slot_tags = inflight_slot_tags.data();
      pool_ctx.debug_poll_ts = debug_poll_ts_arr.data();
+     pool_ctx.debug_worker_done_ts = debug_worker_done_ts_arr.data();
  
      // =========================================================================
      // Mailbox & Dispatcher Setup (mode-dependent)
