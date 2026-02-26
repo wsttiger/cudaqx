@@ -48,37 +48,36 @@ __global__ void predecoder_input_kernel(
 
     if (!ring_ptr) return;
 
-    const char* src = (const char*)ring_ptr + sizeof(cudaq::nvqlink::RPCHeader);
-    char* dst = (char*)trt_input;
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < input_size_bytes; i += blockDim.x * gridDim.x) {
-        dst[i] = src[i];
-    }
+    // RPCHeader is 12 bytes (3 x uint32_t), so src is 4-byte aligned.
+    const uint32_t* src4 = (const uint32_t*)((const char*)ring_ptr + sizeof(cudaq::nvqlink::RPCHeader));
+    uint32_t* dst4 = (uint32_t*)trt_input;
+    size_t n4 = input_size_bytes / sizeof(uint32_t);
+    for (size_t i = threadIdx.x; i < n4; i += blockDim.x)
+        dst4[i] = src4[i];
+
+    size_t done = n4 * sizeof(uint32_t);
+    const char* src_tail = (const char*)src4 + done;
+    char* dst_tail = (char*)trt_input + done;
+    for (size_t i = done + threadIdx.x; i < input_size_bytes; i += blockDim.x)
+        dst_tail[i - done] = src_tail[i - done];
 }
 
-__global__ void predecoder_output_kernel(
-    atomic_int_sys* d_ready_flags,
-    void* d_outputs,
-    const void* trt_output,
-    size_t output_size_bytes)
+__global__ void predecoder_signal_ready_kernel(atomic_int_sys* d_ready_flags)
 {
-    char* dst = (char*)d_outputs;
-    const char* src = (const char*)trt_output;
-
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < output_size_bytes; i += blockDim.x * gridDim.x) {
-        dst[i] = src[i];
-    }
-
-    __syncthreads();
-
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
+    if (threadIdx.x == 0)
         d_ready_flags[0].store(1, cuda::std::memory_order_release);
-    }
 }
 
 __global__ void passthrough_copy_kernel(void* dst, const void* src, size_t num_bytes) {
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < num_bytes; i += blockDim.x * gridDim.x) {
+    const uint4* src4 = (const uint4*)src;
+    uint4* dst4 = (uint4*)dst;
+    size_t n4 = num_bytes / sizeof(uint4);
+    for (size_t i = threadIdx.x; i < n4; i += blockDim.x)
+        dst4[i] = src4[i];
+
+    size_t done = n4 * sizeof(uint4);
+    for (size_t i = done + threadIdx.x; i < num_bytes; i += blockDim.x)
         ((char*)dst)[i] = ((const char*)src)[i];
-    }
 }
 
 // =============================================================================
@@ -135,21 +134,24 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
     cudaGraph_t graph;
     SERVICE_CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
-    predecoder_input_kernel<<<1, 128, 0, stream>>>(
+    predecoder_input_kernel<<<1, 256, 0, stream>>>(
         device_mailbox_slot_,
         static_cast<atomic_int_sys*>(d_ready_flags_),
         d_ring_ptrs_, d_trt_input_, get_input_size());
 
     if (skip_trt) {
-        passthrough_copy_kernel<<<1, 128, 0, stream>>>(
+        passthrough_copy_kernel<<<1, 256, 0, stream>>>(
             d_trt_output_, d_trt_input_, get_input_size());
     } else {
         context_->enqueueV3(stream);
     }
 
-    predecoder_output_kernel<<<1, 128, 0, stream>>>(
-        static_cast<atomic_int_sys*>(d_ready_flags_),
-        d_outputs_, d_trt_output_, get_output_size());
+    SERVICE_CUDA_CHECK(cudaMemcpyAsync(
+        d_outputs_, d_trt_output_, get_output_size(),
+        cudaMemcpyDeviceToDevice, stream));
+
+    predecoder_signal_ready_kernel<<<1, 1, 0, stream>>>(
+        static_cast<atomic_int_sys*>(d_ready_flags_));
 
     SERVICE_CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
 
