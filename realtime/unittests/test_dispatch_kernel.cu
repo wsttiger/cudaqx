@@ -14,10 +14,10 @@
 #include <unistd.h>
 #include <iostream>
 
-#include "cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h"
-#include "cudaq/nvqlink/daemon/dispatcher/kernel_types.h"
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_modes.h"
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel.cuh"
+#include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
+#include "cudaq/realtime/daemon/dispatcher/kernel_types.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_modes.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel.cuh"
 
 // Helper macro for CUDA error checking
 #define CUDA_CHECK(call)                                                       \
@@ -33,12 +33,14 @@ namespace {
 //==============================================================================
 
 /// @brief Test handler that adds 1 to each byte.
-__device__ int increment_handler(void* buffer, std::uint32_t arg_len,
+__device__ int increment_handler(const void* input, void* output,
+                                  std::uint32_t arg_len,
                                   std::uint32_t max_result_len,
                                   std::uint32_t* result_len) {
-  std::uint8_t* data = static_cast<std::uint8_t*>(buffer);
+  const std::uint8_t* in_data = static_cast<const std::uint8_t*>(input);
+  std::uint8_t* out_data = static_cast<std::uint8_t*>(output);
   for (std::uint32_t i = 0; i < arg_len && i < max_result_len; ++i) {
-    data[i] = data[i] + 1;
+    out_data[i] = in_data[i] + 1;
   }
   *result_len = arg_len;
   return 0;
@@ -49,14 +51,16 @@ __device__ int increment_handler(void* buffer, std::uint32_t arg_len,
 //==============================================================================
 
 constexpr std::uint32_t RPC_INCREMENT_FUNCTION_ID =
-    cudaq::nvqlink::fnv1a_hash("rpc_increment");
+    cudaq::realtime::fnv1a_hash("rpc_increment");
 
-__device__ int rpc_increment_handler(void* buffer, std::uint32_t arg_len,
+__device__ int rpc_increment_handler(const void* input, void* output,
+                                     std::uint32_t arg_len,
                                      std::uint32_t max_result_len,
                                      std::uint32_t* result_len) {
-  std::uint8_t* data = static_cast<std::uint8_t*>(buffer);
+  const std::uint8_t* in_data = static_cast<const std::uint8_t*>(input);
+  std::uint8_t* out_data = static_cast<std::uint8_t*>(output);
   for (std::uint32_t i = 0; i < arg_len && i < max_result_len; ++i) {
-    data[i] = static_cast<std::uint8_t>(data[i] + 1);
+    out_data[i] = static_cast<std::uint8_t>(in_data[i] + 1);
   }
   *result_len = arg_len;
   return 0;
@@ -146,6 +150,10 @@ void free_ring_buffer(volatile uint64_t* host_flags,
 extern "C" void launch_dispatch_kernel_wrapper(
     volatile std::uint64_t* rx_flags,
     volatile std::uint64_t* tx_flags,
+    std::uint8_t* rx_data,
+    std::uint8_t* tx_data,
+    std::size_t rx_stride_sz,
+    std::size_t tx_stride_sz,
     cudaq_function_entry_t* function_table,
     std::size_t func_count,
     volatile int* shutdown_flag,
@@ -155,7 +163,8 @@ extern "C" void launch_dispatch_kernel_wrapper(
     std::uint32_t threads_per_block,
     cudaStream_t stream) {
   cudaq_launch_dispatch_kernel_regular(
-      rx_flags, tx_flags, function_table, func_count,
+      rx_flags, tx_flags, rx_data, tx_data, rx_stride_sz, tx_stride_sz,
+      function_table, func_count,
       shutdown_flag, stats, num_slots, num_blocks, threads_per_block, stream);
 }
 
@@ -163,7 +172,7 @@ extern "C" void launch_dispatch_kernel_wrapper(
 // Test Kernel for DeviceCallMode
 //==============================================================================
 
-using HandlerFunc = int (*)(void*, std::uint32_t, std::uint32_t, std::uint32_t*);
+using HandlerFunc = int (*)(const void*, void*, std::uint32_t, std::uint32_t, std::uint32_t*);
 
 __device__ HandlerFunc d_increment_handler = increment_handler;
 
@@ -171,14 +180,15 @@ __device__ HandlerFunc d_increment_handler = increment_handler;
 template <typename KernelType>
 __global__ void test_dispatch_kernel(
     HandlerFunc handler,
-    void* buffer,
+    const void* input,
+    void* output,
     std::uint32_t arg_len,
     std::uint32_t max_result_len,
     std::uint32_t* result_len,
     int* status) {
   
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    *status = handler(buffer, arg_len, max_result_len, result_len);
+    *status = handler(input, output, arg_len, max_result_len, result_len);
   }
   
   KernelType::sync();
@@ -212,10 +222,13 @@ protected:
 //==============================================================================
 
 TEST_F(DispatchKernelTest, IncrementHandlerBasic) {
-  // Prepare test data
+  // Prepare test data - separate input and output buffers
   std::vector<uint8_t> input = {0, 1, 2, 3, 4};
   std::vector<uint8_t> expected = {1, 2, 3, 4, 5};
-  CUDA_CHECK(cudaMemcpy(d_buffer_, input.data(), input.size(), 
+
+  void* d_input = nullptr;
+  CUDA_CHECK(cudaMalloc(&d_input, 1024));
+  CUDA_CHECK(cudaMemcpy(d_input, input.data(), input.size(), 
                         cudaMemcpyHostToDevice));
   
   // Get device function pointer
@@ -223,9 +236,9 @@ TEST_F(DispatchKernelTest, IncrementHandlerBasic) {
   CUDA_CHECK(cudaMemcpyFromSymbol(&h_handler, d_increment_handler, 
                                    sizeof(HandlerFunc)));
   
-  // Launch kernel
+  // Launch kernel with separate input/output buffers
   test_dispatch_kernel<cudaq::realtime::RegularKernel><<<1, 32>>>(
-      h_handler, d_buffer_, input.size(), 1024, d_result_len_, d_status_);
+      h_handler, d_input, d_buffer_, input.size(), 1024, d_result_len_, d_status_);
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaDeviceSynchronize());
   
@@ -239,22 +252,32 @@ TEST_F(DispatchKernelTest, IncrementHandlerBasic) {
   EXPECT_EQ(status, 0) << "Handler should return success";
   EXPECT_EQ(result_len, input.size()) << "Result length should match input";
   
-  // Verify data incremented
+  // Verify output buffer has incremented data
   std::vector<uint8_t> output(input.size());
   CUDA_CHECK(cudaMemcpy(output.data(), d_buffer_, output.size(), 
                         cudaMemcpyDeviceToHost));
   EXPECT_EQ(expected, output) << "Increment handler should add 1 to each byte";
+
+  // Verify input buffer is unchanged
+  std::vector<uint8_t> input_readback(input.size());
+  CUDA_CHECK(cudaMemcpy(input_readback.data(), d_input, input.size(),
+                        cudaMemcpyDeviceToHost));
+  EXPECT_EQ(input, input_readback) << "Input buffer should be unchanged";
+
+  cudaFree(d_input);
 }
 
 TEST_F(DispatchKernelTest, LargeBuffer) {
-  // Test with larger data
+  // Test with larger data - separate input/output buffers
   const std::size_t size = 512;
   std::vector<uint8_t> input(size);
   for (std::size_t i = 0; i < size; ++i) {
     input[i] = static_cast<uint8_t>(i & 0xFF);
   }
   
-  CUDA_CHECK(cudaMemcpy(d_buffer_, input.data(), input.size(), 
+  void* d_input = nullptr;
+  CUDA_CHECK(cudaMalloc(&d_input, 1024));
+  CUDA_CHECK(cudaMemcpy(d_input, input.data(), input.size(), 
                         cudaMemcpyHostToDevice));
   
   HandlerFunc h_handler;
@@ -262,7 +285,7 @@ TEST_F(DispatchKernelTest, LargeBuffer) {
                                    sizeof(HandlerFunc)));
   
   test_dispatch_kernel<cudaq::realtime::RegularKernel><<<1, 256>>>(
-      h_handler, d_buffer_, input.size(), 1024, d_result_len_, d_status_);
+      h_handler, d_input, d_buffer_, input.size(), 1024, d_result_len_, d_status_);
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaDeviceSynchronize());
   
@@ -271,7 +294,7 @@ TEST_F(DispatchKernelTest, LargeBuffer) {
                         cudaMemcpyDeviceToHost));
   EXPECT_EQ(result_len, size) << "Should process all bytes";
   
-  // Verify all bytes incremented
+  // Verify all bytes incremented in output buffer
   std::vector<uint8_t> output(size);
   CUDA_CHECK(cudaMemcpy(output.data(), d_buffer_, output.size(), 
                         cudaMemcpyDeviceToHost));
@@ -280,6 +303,8 @@ TEST_F(DispatchKernelTest, LargeBuffer) {
     uint8_t expected = static_cast<uint8_t>((i + 1) & 0xFF);
     EXPECT_EQ(output[i], expected) << "Mismatch at index " << i;
   }
+
+  cudaFree(d_input);
 }
 
 class HostApiDispatchTest : public ::testing::Test {
@@ -324,6 +349,10 @@ protected:
     cudaq_ringbuffer_t ringbuffer{};
     ringbuffer.rx_flags = rx_flags_;
     ringbuffer.tx_flags = tx_flags_;
+    ringbuffer.rx_data = rx_data_;
+    ringbuffer.tx_data = tx_data_;
+    ringbuffer.rx_stride_sz = slot_size_;
+    ringbuffer.tx_stride_sz = slot_size_;
     ASSERT_EQ(cudaq_dispatcher_set_ringbuffer(dispatcher_, &ringbuffer), CUDAQ_OK);
 
     cudaq_function_table_t table{};
@@ -369,11 +398,11 @@ protected:
                          const std::vector<std::uint8_t>& payload) {
     std::uint8_t* slot_data =
         const_cast<std::uint8_t*>(rx_data_host_) + slot * slot_size_;
-    auto* header = reinterpret_cast<cudaq::nvqlink::RPCHeader*>(slot_data);
-    header->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
+    auto* header = reinterpret_cast<cudaq::realtime::RPCHeader*>(slot_data);
+    header->magic = cudaq::realtime::RPC_MAGIC_REQUEST;
     header->function_id = RPC_INCREMENT_FUNCTION_ID;
     header->arg_len = static_cast<std::uint32_t>(payload.size());
-    memcpy(slot_data + sizeof(cudaq::nvqlink::RPCHeader), payload.data(),
+    memcpy(slot_data + sizeof(cudaq::realtime::RPCHeader), payload.data(),
            payload.size());
   }
 
@@ -382,12 +411,13 @@ protected:
                          std::int32_t* status_out = nullptr,
                          std::uint32_t* result_len_out = nullptr) {
     __sync_synchronize();
+    // Read from TX buffer (dispatch kernel writes response to symmetric TX)
     const std::uint8_t* slot_data =
-        const_cast<std::uint8_t*>(rx_data_host_) + slot * slot_size_;
+        const_cast<std::uint8_t*>(tx_data_host_) + slot * slot_size_;
     auto* response =
-        reinterpret_cast<const cudaq::nvqlink::RPCResponse*>(slot_data);
+        reinterpret_cast<const cudaq::realtime::RPCResponse*>(slot_data);
 
-    if (response->magic != cudaq::nvqlink::RPC_MAGIC_RESPONSE)
+    if (response->magic != cudaq::realtime::RPC_MAGIC_RESPONSE)
       return false;
     if (status_out)
       *status_out = response->status;
@@ -398,7 +428,7 @@ protected:
 
     payload.resize(response->result_len);
     memcpy(payload.data(),
-           slot_data + sizeof(cudaq::nvqlink::RPCResponse),
+           slot_data + sizeof(cudaq::realtime::RPCResponse),
            response->result_len);
     return true;
   }
@@ -458,7 +488,7 @@ TEST_F(HostApiDispatchTest, RpcIncrementHandler) {
 __global__ void graph_increment_kernel(void** buffer_ptr) {
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     void* buffer = *buffer_ptr;
-    cudaq::nvqlink::RPCHeader* header = static_cast<cudaq::nvqlink::RPCHeader*>(buffer);
+    cudaq::realtime::RPCHeader* header = static_cast<cudaq::realtime::RPCHeader*>(buffer);
     
     std::uint32_t arg_len = header->arg_len;
     void* arg_buffer = static_cast<void*>(header + 1);
@@ -470,15 +500,15 @@ __global__ void graph_increment_kernel(void** buffer_ptr) {
     }
     
     // Write response
-    cudaq::nvqlink::RPCResponse* response = static_cast<cudaq::nvqlink::RPCResponse*>(buffer);
-    response->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
+    cudaq::realtime::RPCResponse* response = static_cast<cudaq::realtime::RPCResponse*>(buffer);
+    response->magic = cudaq::realtime::RPC_MAGIC_RESPONSE;
     response->status = 0;
     response->result_len = arg_len;
   }
 }
 
 constexpr std::uint32_t RPC_GRAPH_INCREMENT_FUNCTION_ID =
-    cudaq::nvqlink::fnv1a_hash("rpc_graph_increment");
+    cudaq::realtime::fnv1a_hash("rpc_graph_increment");
 
 __global__ void init_graph_function_table(cudaq_function_entry_t* entries, 
                                           cudaGraphExec_t graph_exec) {
@@ -499,8 +529,8 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
   cudaDeviceProp prop;
   CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
   
-  if (prop.major < 8) {
-    GTEST_SKIP() << "Graph device launch requires compute capability 8.0+, found " 
+  if (prop.major < 9) {
+    GTEST_SKIP() << "Graph device launch requires compute capability 9.0+, found " 
                  << prop.major << "." << prop.minor;
   }
   
@@ -553,12 +583,12 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
   
   // Set up RPC buffer on host
   std::uint8_t* h_buffer = new std::uint8_t[buffer_size];
-  cudaq::nvqlink::RPCHeader* h_header = reinterpret_cast<cudaq::nvqlink::RPCHeader*>(h_buffer);
-  h_header->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
+  cudaq::realtime::RPCHeader* h_header = reinterpret_cast<cudaq::realtime::RPCHeader*>(h_buffer);
+  h_header->magic = cudaq::realtime::RPC_MAGIC_REQUEST;
   h_header->function_id = RPC_GRAPH_INCREMENT_FUNCTION_ID;
   h_header->arg_len = 4;
   
-  std::uint8_t* h_data = h_buffer + sizeof(cudaq::nvqlink::RPCHeader);
+  std::uint8_t* h_data = h_buffer + sizeof(cudaq::realtime::RPCHeader);
   h_data[0] = 0;
   h_data[1] = 1;
   h_data[2] = 2;
@@ -593,7 +623,6 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
     CUDA_CHECK(cudaHostGetDevicePointer(&tmp_d_shutdown, tmp_shutdown, 0));
     d_shutdown = static_cast<volatile int*>(tmp_d_shutdown);
   }
-  int shutdown_val = 0;  // Local variable for tracking
   
   // Set up stats
   uint64_t* d_stats;
@@ -604,8 +633,13 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
   // so that device-side cudaGraphLaunch() can work!
   cudaq_dispatch_graph_context* dispatch_ctx = nullptr;
   cudaError_t err = cudaq_create_dispatch_graph_regular(
-      d_rx_flags, d_tx_flags, d_function_entries, 1,
-      nullptr, d_shutdown, d_stats, 1,
+      d_rx_flags, d_tx_flags,
+      reinterpret_cast<std::uint8_t*>(d_buffer),  // rx_data
+      reinterpret_cast<std::uint8_t*>(d_buffer),  // tx_data (same buffer for single-slot test)
+      buffer_size,  // rx_stride_sz
+      buffer_size,  // tx_stride_sz
+      d_function_entries, 1,
+      d_graph_buffer_ptr, d_shutdown, d_stats, 1,
       1, 32, stream, &dispatch_ctx);
   
   if (err != cudaSuccess) {
@@ -619,8 +653,8 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
   // Poll for the response using pinned memory and async operations
   // The child graph runs asynchronously (fire-and-forget) so we need to poll
   std::uint8_t* h_poll_buffer;
-  CUDA_CHECK(cudaHostAlloc(&h_poll_buffer, sizeof(cudaq::nvqlink::RPCResponse), cudaHostAllocDefault));
-  memset(h_poll_buffer, 0, sizeof(cudaq::nvqlink::RPCResponse));
+  CUDA_CHECK(cudaHostAlloc(&h_poll_buffer, sizeof(cudaq::realtime::RPCResponse), cudaHostAllocDefault));
+  memset(h_poll_buffer, 0, sizeof(cudaq::realtime::RPCResponse));
   
   cudaStream_t poll_stream;
   CUDA_CHECK(cudaStreamCreate(&poll_stream));
@@ -630,12 +664,12 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
   bool got_response = false;
   
   for (int elapsed = 0; elapsed < timeout_ms; elapsed += poll_interval_ms) {
-    CUDA_CHECK(cudaMemcpyAsync(h_poll_buffer, d_buffer, sizeof(cudaq::nvqlink::RPCResponse), 
+    CUDA_CHECK(cudaMemcpyAsync(h_poll_buffer, d_buffer, sizeof(cudaq::realtime::RPCResponse), 
                                 cudaMemcpyDeviceToHost, poll_stream));
     CUDA_CHECK(cudaStreamSynchronize(poll_stream));
     
-    cudaq::nvqlink::RPCResponse* peek = reinterpret_cast<cudaq::nvqlink::RPCResponse*>(h_poll_buffer);
-    if (peek->magic == cudaq::nvqlink::RPC_MAGIC_RESPONSE) {
+    cudaq::realtime::RPCResponse* peek = reinterpret_cast<cudaq::realtime::RPCResponse*>(h_poll_buffer);
+    if (peek->magic == cudaq::realtime::RPC_MAGIC_RESPONSE) {
       got_response = true;
       break;
     }
@@ -662,14 +696,14 @@ TEST(GraphLaunchTest, DispatchKernelGraphLaunch) {
   ASSERT_TRUE(got_response) << "Timeout waiting for device-side graph launch response";
   
   // Verify response
-  cudaq::nvqlink::RPCResponse* h_response = reinterpret_cast<cudaq::nvqlink::RPCResponse*>(h_buffer);
-  EXPECT_EQ(h_response->magic, cudaq::nvqlink::RPC_MAGIC_RESPONSE) 
+  cudaq::realtime::RPCResponse* h_response = reinterpret_cast<cudaq::realtime::RPCResponse*>(h_buffer);
+  EXPECT_EQ(h_response->magic, cudaq::realtime::RPC_MAGIC_RESPONSE) 
       << "Expected RPC_MAGIC_RESPONSE, got 0x" << std::hex << h_response->magic;
   EXPECT_EQ(h_response->status, 0) << "Handler returned error status";
   EXPECT_EQ(h_response->result_len, 4u) << "Unexpected result length";
   
   // Verify data was incremented by graph kernel launched from dispatch kernel
-  std::uint8_t* h_result = h_buffer + sizeof(cudaq::nvqlink::RPCResponse);
+  std::uint8_t* h_result = h_buffer + sizeof(cudaq::realtime::RPCResponse);
   EXPECT_EQ(h_result[0], 1) << "Expected h_result[0]=1";
   EXPECT_EQ(h_result[1], 2) << "Expected h_result[1]=2";
   EXPECT_EQ(h_result[2], 3) << "Expected h_result[2]=3";

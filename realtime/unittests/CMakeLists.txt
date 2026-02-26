@@ -48,7 +48,7 @@ if(CMAKE_CUDA_COMPILER)
   
   target_include_directories(test_dispatch_kernel PRIVATE
     ${CUDAToolkit_INCLUDE_DIRS}
-    ${CUDAQ_NVQLINK_INCLUDE_DIR}
+    ${CUDAQ_REALTIME_INCLUDE_DIR}
   )
   
   # Find CUDA device runtime library (required for device-side API calls like cudaGraphLaunch)
@@ -65,14 +65,40 @@ if(CMAKE_CUDA_COMPILER)
     ${CUDADEVRT_LIBRARY}
   )
   
-  add_dependencies(NVQLINKUnitTests test_dispatch_kernel)
+  add_dependencies(CudaqRealtimeUnitTests test_dispatch_kernel)
   gtest_discover_tests(test_dispatch_kernel
     TEST_PREFIX "test_dispatch_kernel."
   )
   
   message(STATUS "  - test_dispatch_kernel (GPU dispatch infrastructure)")
+
+  # Host dispatcher tests (CUDAQ_BACKEND_HOST_LOOP)
+  add_executable(test_host_dispatcher test_host_dispatcher.cu)
+  set_target_properties(test_host_dispatcher PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_STANDARD 17
+  )
+  target_include_directories(test_host_dispatcher PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+    ${CUDAQ_REALTIME_INCLUDE_DIR}
+  )
+  target_link_libraries(test_host_dispatcher PRIVATE
+    GTest::gtest_main
+    CUDA::cudart
+    cudaq-realtime
+    cudaq-realtime-host-dispatch
+  )
+  add_dependencies(CudaqRealtimeUnitTests test_host_dispatcher)
+  gtest_discover_tests(test_host_dispatcher
+    TEST_PREFIX "test_host_dispatcher."
+  )
+  message(STATUS "  - test_host_dispatcher (host dispatcher loop)")
 endif()
 
 # ==============================================================================
+# Hololink bridge/emulator/playback tools (optional, not CI)
+# ==============================================================================
 
-
+if (CUDAQ_REALTIME_ENABLE_HOLOLINK_TOOLS)
+  add_subdirectory(utils)
+endif()

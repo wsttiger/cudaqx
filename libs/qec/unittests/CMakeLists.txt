@@ -122,11 +122,20 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
     list(APPEND _cudaq_realtime_prefixes "${CUDAQ_INSTALL_PREFIX}")
   endif()
 
+  # Realtime API lives under install prefix (CUDAQ_REALTIME_ROOT = install directory).
+  # Header layout: include/cudaq/realtime/daemon/dispatcher/cudaq_realtime.h
   find_path(CUDAQ_REALTIME_INCLUDE_DIR
-    NAMES cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h
+    NAMES cudaq/realtime/daemon/dispatcher/cudaq_realtime.h
     PATHS ${_cudaq_realtime_prefixes}
-    PATH_SUFFIXES include ../include
+    PATH_SUFFIXES include
   )
+  if(NOT CUDAQ_REALTIME_INCLUDE_DIR)
+    find_path(CUDAQ_REALTIME_INCLUDE_DIR
+      NAMES cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h
+      PATHS ${_cudaq_realtime_prefixes}
+      PATH_SUFFIXES include ../include
+    )
+  endif()
 
   find_library(CUDAQ_REALTIME_LIBRARY
     NAMES cudaq-realtime
@@ -140,10 +149,25 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
     PATH_SUFFIXES lib
   )
 
+  # In-tree realtime (built from top-level add_subdirectory(realtime)) provides new API
+  set(_predecoder_use_in_tree_realtime FALSE)
+  if(TARGET cudaq-realtime)
+    set(_predecoder_use_in_tree_realtime TRUE)
+    message(STATUS "Using in-tree realtime (cudaq-realtime) for predecoder test")
+  endif()
+
+  set(_have_realtime_for_tests FALSE)
   if(CUDAQ_REALTIME_INCLUDE_DIR AND CUDAQ_REALTIME_LIBRARY AND CUDAQ_REALTIME_DISPATCH_LIBRARY)
+    set(_have_realtime_for_tests TRUE)
     message(STATUS "Found cuda-quantum realtime headers at ${CUDAQ_REALTIME_INCLUDE_DIR}")
     message(STATUS "Found cuda-quantum realtime library at ${CUDAQ_REALTIME_LIBRARY}")
     message(STATUS "Found cuda-quantum realtime dispatch library at ${CUDAQ_REALTIME_DISPATCH_LIBRARY}")
+  endif()
+  if(TARGET cudaq-realtime)
+    set(_have_realtime_for_tests TRUE)
+  endif()
+
+  if(_have_realtime_for_tests)
 
     add_executable(test_realtime_decoding 
       ${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/test_realtime_decoding.cu
@@ -218,7 +242,6 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/test_realtime_predecoder_w_pymatching.cpp
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
         ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_predecoder_service.cu
-        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/host_dispatcher.cpp
       )
 
       set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
@@ -237,33 +260,57 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       get_filename_component(_cuda_root "${_cuda_bin}" DIRECTORY)
       set(_cuda_cccl_include "${_cuda_root}/include/cccl")
 
+      # Includes: in-tree realtime target brings include; else in-repo or install dir
+      set(_realtime_predecoder_includes "")
+      if(NOT _predecoder_use_in_tree_realtime)
+        set(_realtime_include "${CMAKE_SOURCE_DIR}/realtime/include")
+        if(EXISTS "${_realtime_include}/cudaq/realtime/daemon/dispatcher/cudaq_realtime.h")
+          list(APPEND _realtime_predecoder_includes "${_realtime_include}")
+        endif()
+      endif()
       target_include_directories(test_realtime_predecoder_w_pymatching PRIVATE
         ${_cuda_cccl_include}
         ${CUDAToolkit_INCLUDE_DIRS}
         ${TENSORRT_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
         ${CMAKE_SOURCE_DIR}/libs/core/include
+        ${_realtime_predecoder_includes}
         ${CUDAQ_REALTIME_INCLUDE_DIR}
       )
 
-      target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
-        CUDA::cudart
-        ${TENSORRT_LIBRARY}
-        ${TENSORRT_ONNX_PARSER_LIBRARY}
-        ${CUDAQ_REALTIME_LIBRARY}
-        ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
-        cudaq-qec
-        cudaq::cudaq
-      )
-
-      target_link_directories(test_realtime_predecoder_w_pymatching PRIVATE
-        ${CMAKE_BINARY_DIR}/lib
-      )
-
-      set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
-        BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
-        INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
-      )
+      if(_predecoder_use_in_tree_realtime)
+        target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
+          CUDA::cudart
+          ${TENSORRT_LIBRARY}
+          ${TENSORRT_ONNX_PARSER_LIBRARY}
+          cudaq-realtime
+          cudaq-realtime-host-dispatch
+          cudaq-realtime-dispatch
+          cudaq-qec
+          cudaq::cudaq
+        )
+        set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
+          BUILD_RPATH "${CMAKE_BINARY_DIR}/lib;${CMAKE_BINARY_DIR}/realtime/lib"
+          INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib;${CMAKE_BINARY_DIR}/realtime/lib"
+        )
+      else()
+        target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
+          CUDA::cudart
+          ${TENSORRT_LIBRARY}
+          ${TENSORRT_ONNX_PARSER_LIBRARY}
+          ${CUDAQ_REALTIME_LIBRARY}
+          ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+          cudaq-qec
+          cudaq::cudaq
+        )
+        target_link_directories(test_realtime_predecoder_w_pymatching PRIVATE
+          ${CMAKE_BINARY_DIR}/lib
+        )
+        set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
+          BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+          INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+        )
+      endif()
 
       add_dependencies(CUDAQXQECUnitTests test_realtime_predecoder_w_pymatching)
     else()
@@ -272,8 +319,8 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
 
   else()
     message(WARNING "cuda-quantum realtime dependency not found. "
-                    "Set CUDAQ_REALTIME_ROOT or CUDAQ_INSTALL_PREFIX to enable "
-                    "test_realtime_decoding.")
+                    "Set CUDAQ_REALTIME_ROOT or build with in-tree realtime to enable "
+                    "test_realtime_decoding and test_realtime_predecoder_w_pymatching.")
   endif()
 endif()
 

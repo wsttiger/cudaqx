@@ -286,6 +286,13 @@ if (CUDAQX_INCLUDE_DOCS)
   add_subdirectory(docs)
 endif()
 
+# In-tree realtime (optional): provides cudaq-realtime and host-dispatcher for QEC tests
+if(EXISTS "${CMAKE_SOURCE_DIR}/realtime/CMakeLists.txt" AND CMAKE_CUDA_COMPILER)
+  set(CUDAQ_REALTIME_STANDALONE_BUILD FALSE)
+  add_subdirectory(realtime)
+  set(CUDAQX_BUILD_REALTIME_IN_TREE TRUE)
+endif()
+
 foreach(lib ${CUDAQX_ENABLE_LIBS})
   add_subdirectory(libs/${lib})
 endforeach()

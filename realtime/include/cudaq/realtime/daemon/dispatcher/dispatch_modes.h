@@ -48,10 +48,10 @@ struct GraphLaunchMode {
   /// @param ctx Handler context containing the graph executable
   template <typename ContextType>
   __device__ static void dispatch(ContextType &ctx) {
-// Device graph launch requires CUDA 13+ and compute capability 8.0+
+// Device graph launch requires CUDA 12.0+ and appropriate context setup
 // The graph_exec must be a cudaGraphExec_t captured at initialization
-#if __CUDA_ARCH__ >= 800
-    // cudaGraphLaunch is available from device code on sm_80+
+#if __CUDA_ARCH__ >= 900
+    // cudaGraphLaunch is available from device code on Hopper+
     // Note: This is a placeholder - actual implementation requires
     // the graph_exec to be properly set up in the context
     if (ctx.graph_exec != nullptr) {

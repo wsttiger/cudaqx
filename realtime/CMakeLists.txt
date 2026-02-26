@@ -17,15 +17,17 @@ set(CMAKE_BUILD_TYPE "Release" CACHE STRING
     "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel")
 
 # Set a default install prefix if none was specified.
-set(CMAKE_INSTALL_PREFIX "$ENV{HOME}/.nvqlink" CACHE STRING
+set(CMAKE_INSTALL_PREFIX "$ENV{HOME}/.cudaq_realtime" CACHE STRING
     "Install path prefix, prepended onto install directories")
 
 # Project setup
 # ==============================================================================
 
-# Check if core is built as a standalone project.
-project(cudaq-nvqlink)
-set(CUDAQ_NVQLINK_STANDALONE_BUILD TRUE)
+# Check if built as standalone (not as subdirectory of cudaqx).
+project(cudaq-realtime)
+if(NOT DEFINED CUDAQ_REALTIME_STANDALONE_BUILD)
+  set(CUDAQ_REALTIME_STANDALONE_BUILD TRUE)
+endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -34,8 +36,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 
-set(CUDAQ_NVQLINK_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR})
-set(CUDAQ_NVQLINK_INCLUDE_DIR ${CUDAQ_NVQLINK_SOURCE_DIR}/include)
+set(CUDAQ_REALTIME_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR})
+set(CUDAQ_REALTIME_INCLUDE_DIR ${CUDAQ_REALTIME_SOURCE_DIR}/include)
 
 # Add cmake directory to module path for custom Find modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -43,26 +45,13 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Options
 # ==============================================================================
 
-option(NVQLINK_BUILD_TESTS
-       "Generate build targets for the NVQLINK unit tests" ON)
-option(NVQLINK_BUILD_EXAMPLES
-       "Generate build targets for the NVQLINK example programs" ON)
-option(NVQLINK_ENABLE_ROCE
-       "Enable RoCE backend using libibverbs" OFF)
-option(NVQLINK_ENABLE_DOCA
-       "Enable DOCA GPUNetIO backend for GPU-controlled RDMA" OFF)
-
-# Profiler backend selection
-set(NVQLINK_PROFILER_BACKEND "NONE" CACHE STRING "Profiler backend (NONE, NVTX, TRACY)")
-set_property(CACHE NVQLINK_PROFILER_BACKEND PROPERTY STRINGS NONE NVTX TRACY)
-
-# Logging backend selection
-set(NVQLINK_LOGGING_BACKEND "NONE" CACHE STRING "Logging backend (NONE, QUILL)")
-set_property(CACHE NVQLINK_LOGGING_BACKEND PROPERTY STRINGS NONE QUILL)
-
-# Compile-time log level filtering (lower levels become no-ops)
-set(NVQLINK_LOGGING_LEVEL "INFO" CACHE STRING "Minimum log level (TRACE, DEBUG, INFO, WARNING, ERROR)")
-set_property(CACHE NVQLINK_LOGGING_LEVEL PROPERTY STRINGS TRACE DEBUG INFO WARNING ERROR)
+option(CUDAQ_REALTIME_BUILD_TESTS
+       "Generate build targets for the CUDAQ real-time unit tests" ON)
+option(CUDAQ_REALTIME_BUILD_EXAMPLES
+       "Generate build targets for the CUDAQ real-time example programs" ON)
+option(CUDAQ_REALTIME_ENABLE_HOLOLINK_TOOLS
+       "Build Hololink bridge/emulator/playback tools (requires hololink)."
+       OFF)
 
 # Check for CUDA Support (ref: cuda-quantum/CMakeLists.txt)
 # ==============================================================================
@@ -89,8 +78,8 @@ endfunction()
 
 if(CMAKE_CUDA_COMPILER)
   if (NOT CUDA_TARGET_ARCHS)
-    # Ampere, Ada Lovelace, Hopper
-    set(CUDA_TARGET_ARCHS  "80;89;90")
+    # Ampere, Hopper
+    set(CUDA_TARGET_ARCHS  "80;90")
   endif()
   CUDA_get_gencode_args(CUDA_gencode_flags ${CUDA_TARGET_ARCHS})
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -shared -std=c++17 ${CUDA_gencode_flags} --compiler-options -fPIC")
@@ -110,19 +99,19 @@ find_package(Threads REQUIRED)
 
 add_subdirectory(lib)
 
-if (NVQLINK_BUILD_EXAMPLES)
+if (CUDAQ_REALTIME_BUILD_EXAMPLES)
   message(STATUS "RoCE/DOCA examples removed for RPC dispatch workflow.")
 endif()
 
-if (NVQLINK_BUILD_TESTS)
-  add_custom_target(NVQLINKUnitTests)
+if (CUDAQ_REALTIME_BUILD_TESTS AND CUDAQ_REALTIME_STANDALONE_BUILD)
+  add_custom_target(CudaqRealtimeUnitTests)
   include(CTest)
 
   add_custom_target(run_tests
     COMMAND ${CMAKE_COMMAND} -E env 
             PYTHONPATH="${CUDAQ_INSTALL_DIR}:${CMAKE_BINARY_DIR}/python"
             ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS NVQLINKUnitTests
+    DEPENDS CudaqRealtimeUnitTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   add_subdirectory(unittests)

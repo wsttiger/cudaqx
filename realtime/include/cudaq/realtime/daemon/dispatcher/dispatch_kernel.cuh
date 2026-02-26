@@ -1,5 +1,5 @@
 /****************************************************************-*- C++ -*-****
- * Copyright (c) 2025 - Present NVIDIA Corporation & Affiliates.               *
+ * Copyright (c) 2025 - 2026 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
@@ -15,15 +15,15 @@
 /// (dispatch_kernel.cu) and is linked into libcudaq-realtime.so. This header
 /// provides declarations and inline wrappers for the launch functions.
 
-#include "cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h"
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
-#include "cudaq/nvqlink/daemon/dispatcher/kernel_types.h"
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_modes.h"
+#include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
+#include "cudaq/realtime/daemon/dispatcher/kernel_types.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_modes.h"
 
 #include <cuda_runtime.h>
 #include <cstdint>
 
-namespace cudaq::nvqlink {
+namespace cudaq::realtime {
 
 //==============================================================================
 // Kernel Launch Function Declarations (with schema-driven function table)
@@ -35,6 +35,10 @@ namespace cudaq::nvqlink {
 inline void launch_dispatch_kernel_regular_inline(
     volatile std::uint64_t* rx_flags,
     volatile std::uint64_t* tx_flags,
+    std::uint8_t* rx_data,
+    std::uint8_t* tx_data,
+    std::size_t rx_stride_sz,
+    std::size_t tx_stride_sz,
     cudaq_function_entry_t* function_table,
     std::size_t func_count,
     volatile int* shutdown_flag,
@@ -44,7 +48,9 @@ inline void launch_dispatch_kernel_regular_inline(
     std::uint32_t threads_per_block,
     cudaStream_t stream) {
   cudaq_launch_dispatch_kernel_regular(
-      rx_flags, tx_flags, function_table, func_count,
+      rx_flags, tx_flags, rx_data, tx_data,
+      rx_stride_sz, tx_stride_sz,
+      function_table, func_count,
       shutdown_flag, stats, num_slots,
       num_blocks, threads_per_block, stream);
 }
@@ -53,6 +59,10 @@ inline void launch_dispatch_kernel_regular_inline(
 inline void launch_dispatch_kernel_cooperative_inline(
     volatile std::uint64_t* rx_flags,
     volatile std::uint64_t* tx_flags,
+    std::uint8_t* rx_data,
+    std::uint8_t* tx_data,
+    std::size_t rx_stride_sz,
+    std::size_t tx_stride_sz,
     cudaq_function_entry_t* function_table,
     std::size_t func_count,
     volatile int* shutdown_flag,
@@ -62,9 +72,11 @@ inline void launch_dispatch_kernel_cooperative_inline(
     std::uint32_t threads_per_block,
     cudaStream_t stream) {
   cudaq_launch_dispatch_kernel_cooperative(
-      rx_flags, tx_flags, function_table, func_count,
+      rx_flags, tx_flags, rx_data, tx_data,
+      rx_stride_sz, tx_stride_sz,
+      function_table, func_count,
       shutdown_flag, stats, num_slots,
       num_blocks, threads_per_block, stream);
 }
 
-} // namespace cudaq::nvqlink
+} // namespace cudaq::realtime
