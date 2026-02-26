@@ -163,7 +163,7 @@ namespace realtime_ns = cudaq::realtime;
              /*num_rounds=*/13,
              /*meas_qubits=*/252,
              /*residual_detectors=*/2184,
-             "model1_d13_r13_unified_Z_batch1.onnx",
+             "predecoder_memory_d13_T13_X.onnx",
              /*slot_size=*/16384,
              /*num_predecoders=*/16,
              /*num_workers=*/16

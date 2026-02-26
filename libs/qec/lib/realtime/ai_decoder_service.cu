@@ -161,6 +161,33 @@ void AIDecoderService::build_engine_from_onnx(const std::string& onnx_path,
         throw std::runtime_error("Failed to parse ONNX file: " + onnx_path);
     }
 
+    bool has_dynamic = false;
+    for (int i = 0; i < network->getNbInputs(); ++i) {
+        auto* input = network->getInput(i);
+        auto dims = input->getDimensions();
+        for (int d = 0; d < dims.nbDims; ++d) {
+            if (dims.d[d] <= 0) { has_dynamic = true; break; }
+        }
+        if (has_dynamic) break;
+    }
+
+    if (has_dynamic) {
+        auto* profile = builder->createOptimizationProfile();
+        for (int i = 0; i < network->getNbInputs(); ++i) {
+            auto* input = network->getInput(i);
+            auto dims = input->getDimensions();
+            nvinfer1::Dims fixed = dims;
+            for (int d = 0; d < fixed.nbDims; ++d) {
+                if (fixed.d[d] <= 0) fixed.d[d] = 1;
+            }
+            profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMIN, fixed);
+            profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kOPT, fixed);
+            profile->setDimensions(input->getName(), nvinfer1::OptProfileSelector::kMAX, fixed);
+            std::printf("[TensorRT] Set dynamic input \"%s\" to batch=1\n", input->getName());
+        }
+        config->addOptimizationProfile(profile);
+    }
+
     auto plan = std::unique_ptr<nvinfer1::IHostMemory>(
         builder->buildSerializedNetwork(*network, *config));
     if (!plan) throw std::runtime_error("Failed to build TRT engine from ONNX");
