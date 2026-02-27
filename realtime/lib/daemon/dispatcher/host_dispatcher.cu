@@ -99,6 +99,8 @@ static void launch_graph_worker(const HostDispatcherConfig& config,
   __sync_synchronize();
 
   const size_t w = static_cast<size_t>(worker_id);
+  if (config.workers[w].pre_launch_fn)
+    config.workers[w].pre_launch_fn(config.workers[w].pre_launch_data, data_dev, config.workers[w].stream);
   cudaError_t err = cudaGraphLaunch(config.workers[w].graph_exec, config.workers[w].stream);
 
   if (err != cudaSuccess) {
@@ -138,6 +140,7 @@ void host_dispatcher_loop(const HostDispatcherConfig& config) {
     uint32_t function_id = 0;
     const cudaq_function_entry_t* entry = nullptr;
 
+    // TODO: Remove non-function-table path; RPC framing is always required.
     if (use_function_table) {
       ParsedSlot parsed = parse_slot_with_function_table(slot_host, config);
       if (parsed.drop) {

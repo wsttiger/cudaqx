@@ -44,6 +44,8 @@ public:
     /// @brief Size of the primary output tensor in bytes (forwarded to CPU)
     size_t get_output_size() const { return output_size_; }
 
+    void* get_trt_input_ptr() const { return d_trt_input_; }
+
 protected:
     void load_engine(const std::string& path);
     void build_engine_from_onnx(const std::string& onnx_path,

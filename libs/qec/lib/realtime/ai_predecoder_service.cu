@@ -134,11 +134,6 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
     cudaGraph_t graph;
     SERVICE_CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
-    predecoder_input_kernel<<<1, 256, 0, stream>>>(
-        device_mailbox_slot_,
-        static_cast<atomic_int_sys*>(d_ready_flags_),
-        d_ring_ptrs_, d_trt_input_, get_input_size());
-
     if (skip_trt) {
         passthrough_copy_kernel<<<1, 256, 0, stream>>>(
             d_trt_output_, d_trt_input_, get_input_size());

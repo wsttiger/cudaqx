@@ -156,19 +156,33 @@ namespace realtime_ns = cudaq::realtime;
          };
      }
 
-     static PipelineConfig d13_r13() {
-         return {
-             "d13_r13_Z",
-             /*distance=*/13,
-             /*num_rounds=*/13,
-             /*meas_qubits=*/252,
-             /*residual_detectors=*/2184,
-             "predecoder_memory_d13_T13_X.onnx",
-             /*slot_size=*/16384,
-             /*num_predecoders=*/16,
-             /*num_workers=*/16
-         };
-     }
+    static PipelineConfig d13_r13() {
+        return {
+            "d13_r13_Z",
+            /*distance=*/13,
+            /*num_rounds=*/13,
+            /*meas_qubits=*/252,
+            /*residual_detectors=*/2184,
+            "predecoder_memory_d13_T13_X.onnx",
+            /*slot_size=*/16384,
+            /*num_predecoders=*/16,
+            /*num_workers=*/16
+        };
+    }
+
+    static PipelineConfig d13_r104() {
+        return {
+            "d13_r104_Z",
+            /*distance=*/13,
+            /*num_rounds=*/104,
+            /*meas_qubits=*/252,
+            /*residual_detectors=*/2184,
+            "predecoder_memory_d13_T104_X.onnx",
+            /*slot_size=*/32768,
+            /*num_predecoders=*/16,
+            /*num_workers=*/16
+        };
+    }
 
      static PipelineConfig d21_r21() {
          return {
@@ -346,6 +360,20 @@ namespace realtime_ns = cudaq::realtime;
      int duration_s = 5;    // how long to run
      int warmup_count = 20; // discard first N from latency stats
  };
+
+struct PreLaunchCopyCtx {
+    void* d_trt_input;
+    size_t input_size;
+    void** h_ring_ptrs;
+};
+
+static void pre_launch_input_copy(void* user_data, void* slot_dev, cudaStream_t stream) {
+    auto* ctx = static_cast<PreLaunchCopyCtx*>(user_data);
+    ctx->h_ring_ptrs[0] = slot_dev;
+    cudaMemcpyAsync(ctx->d_trt_input,
+                    static_cast<uint8_t*>(slot_dev) + CUDAQ_RPC_HEADER_SIZE,
+                    ctx->input_size, cudaMemcpyDeviceToDevice, stream);
+}
  
  void run_streaming_test(
      const PipelineConfig& config,
@@ -418,11 +446,20 @@ namespace realtime_ns = cudaq::realtime;
     disp_cfg.live_dispatched = &live_dispatched;
     disp_cfg.idle_mask = pool_ctx->idle_mask;
     disp_cfg.inflight_slot_tags = pool_ctx->inflight_slot_tags;
+    std::vector<PreLaunchCopyCtx> pre_launch_ctxs(num_workers);
+    for (int i = 0; i < num_workers; ++i) {
+        pre_launch_ctxs[i].d_trt_input = predecoders[i]->get_trt_input_ptr();
+        pre_launch_ctxs[i].input_size = predecoders[i]->get_input_size();
+        pre_launch_ctxs[i].h_ring_ptrs = predecoders[i]->get_host_ring_ptrs();
+    }
+
     disp_cfg.workers.resize(num_workers);
     for (int i = 0; i < num_workers; ++i) {
         disp_cfg.workers[i].graph_exec = predecoders[i]->get_executable_graph();
         disp_cfg.workers[i].stream = predecoder_streams[i];
         disp_cfg.workers[i].function_id = function_table[i].function_id;
+        disp_cfg.workers[i].pre_launch_fn = pre_launch_input_copy;
+        disp_cfg.workers[i].pre_launch_data = &pre_launch_ctxs[i];
     }
 
     std::thread dispatcher_thread([&disp_cfg]() {
@@ -809,18 +846,21 @@ namespace realtime_ns = cudaq::realtime;
      PipelineConfig config;
      if (config_name == "d7") {
          config = PipelineConfig::d7_r7();
-     } else if (config_name == "d13") {
-         config = PipelineConfig::d13_r13();
-     } else if (config_name == "d21") {
+    } else if (config_name == "d13") {
+        config = PipelineConfig::d13_r13();
+    } else if (config_name == "d13_r104") {
+        config = PipelineConfig::d13_r104();
+    } else if (config_name == "d21") {
          config = PipelineConfig::d21_r21();
      } else if (config_name == "d31") {
          config = PipelineConfig::d31_r31();
      } else {
-         std::cerr << "Usage: " << argv[0] << " [d7|d13|d21|d31] [rate_us] [duration_s]\n"
-                   << "  d7     - distance 7, 7 rounds (default)\n"
-                   << "  d13    - distance 13, 13 rounds\n"
-                   << "  d21    - distance 21, 21 rounds\n"
-                   << "  d31    - distance 31, 31 rounds\n"
+        std::cerr << "Usage: " << argv[0] << " [d7|d13|d13_r104|d21|d31] [rate_us] [duration_s]\n"
+                  << "  d7       - distance 7, 7 rounds (default)\n"
+                  << "  d13      - distance 13, 13 rounds\n"
+                  << "  d13_r104 - distance 13, 104 rounds\n"
+                  << "  d21      - distance 21, 21 rounds\n"
+                  << "  d31      - distance 31, 31 rounds\n"
                    << "  rate_us    - inter-arrival time in us (0 = open-loop, default)\n"
                    << "  duration_s - test duration in seconds (default: 5)\n"
                    << "\nExamples:\n"

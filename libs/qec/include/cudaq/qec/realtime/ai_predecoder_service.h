@@ -57,6 +57,8 @@ public:
     volatile int* get_host_queue_idx() const { return nullptr; }
     int get_queue_depth() const { return queue_depth_; }
 
+    void** get_host_ring_ptrs() const { return h_ring_ptrs_; }
+
 private:
     int queue_depth_;  // Always 1
 
