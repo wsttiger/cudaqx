@@ -286,6 +286,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
           cudaq-realtime
           cudaq-realtime-host-dispatch
           cudaq-realtime-dispatch
+          cudaq-realtime-pipeline
           cudaq-qec
           cudaq::cudaq
         )
