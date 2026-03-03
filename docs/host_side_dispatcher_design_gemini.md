@@ -7,7 +7,7 @@
 **Supersedes**: Device-side persistent kernel dispatcher (`dispatch_kernel_with_graph`) and Statically-mapped Host Dispatcher
 **Target Platforms**: NVIDIA Grace Hopper (GH200), Grace Blackwell (GB200)
 **Shared-Memory Model**: libcu++ `cuda::std::atomic` with `thread_scope_system`
-**Last Updated**: 2026-02-26
+**Last Updated**: 2026-03-03
 
 ---
 
@@ -155,11 +155,20 @@ The CUDA graph for each predecoder contains (in order):
 2. **Output DMA copy** (`cudaMemcpyAsync` D2D) -- copies TRT output to host-mapped output buffer.
 3. **Signal kernel** (`predecoder_signal_ready_kernel<<<1,1>>>`) -- a single-thread kernel that performs `d_ready_flags[0].store(1, release)` to notify the CPU worker.
 
-The graph is instantiated with `cudaGraphInstantiate(&graph_exec_, graph, 0)` for host-launch mode. The `predecoder_input_kernel` is no longer part of the graph; input data arrives via the pre-launch DMA copy.
+The graph is instantiated with `cudaGraphInstantiate(&graph_exec_, graph, 0)` for host-launch mode. Input data arrives exclusively via the pre-launch DMA copy callback; no input-copy kernel exists in the graph or codebase.
 
-### 5.3 Passthrough Copy Kernel (SKIP_TRT mode)
+### 5.3 Source Files
 
-When `SKIP_TRT` is set, a vectorized passthrough kernel (`uint4` 16-byte loads/stores, 256 threads) substitutes for TRT inference for benchmarking the infrastructure overhead.
+The `ai_predecoder_service.cu` implementation contains only two device kernels:
+
+- `predecoder_signal_ready_kernel` -- single-thread kernel that atomically stores `1` to the ready flag with system-scope release semantics.
+- `passthrough_copy_kernel` -- vectorized identity copy (`uint4` 16-byte loads/stores, 256 threads) used when `SKIP_TRT` is set, substituting for TRT inference.
+
+The legacy `predecoder_input_kernel` (which read from the mailbox and copied into `d_trt_input_`) has been removed. The `cudaq::nvqlink` header dependencies are no longer needed by this file.
+
+### 5.4 Passthrough Copy Kernel (SKIP_TRT mode)
+
+When `SKIP_TRT` is set, the `passthrough_copy_kernel` substitutes for TRT inference, providing a deterministic identity function for testing and benchmarking the infrastructure overhead. In SKIP_TRT mode, the `AIDecoderService` constructor sets `input_size_ = output_size_ = 1600 * sizeof(float)` (6400 bytes) without loading any model file.
 
 ---
 
@@ -261,7 +270,30 @@ This race caused exactly one request to get "stuck" indefinitely, eventually sta
 
 ---
 
-## 8. Step-by-Step Data Flow Trace
+## 8. RealtimePipeline Scaffolding
+
+The low-level dispatcher, consumer, and worker threads are wrapped by a higher-level `RealtimePipeline` class (`realtime/include/cudaq/realtime/pipeline.h`) that hides all ring buffer management, atomics, and thread lifecycle. Application code provides three callbacks:
+
+1. **GPU stage factory** (`GpuStageFactory`): Called once per worker during `start()`. Returns the `cudaGraphExec_t`, `cudaStream_t`, `pre_launch_fn`, `function_id`, and an opaque `user_context` for each worker.
+2. **CPU stage callback** (`CpuStageCallback`): Called by each worker thread when GPU inference completes. Receives `CpuStageContext` containing `inference_output`, `output_size`, `response_buffer`, and the `user_context`. Returns the number of bytes written.
+3. **Completion callback** (`CompletionCallback`): Called by the consumer thread for each completed (or errored) request with a `Completion` struct.
+
+```cpp
+RealtimePipeline pipeline(config);
+pipeline.set_gpu_stage([&](int worker_id) -> GpuWorkerResources { ... });
+pipeline.set_cpu_stage([&](const CpuStageContext& ctx) -> size_t { ... });
+pipeline.set_completion_handler([&](const Completion& c) { ... });
+pipeline.start();
+pipeline.submit(function_id, payload, payload_size, request_id);
+// ...
+pipeline.stop();
+```
+
+The `PipelineStageConfig` allows configuring `num_workers`, `num_slots`, `slot_size`, and optional `CorePinning` for dispatcher, consumer, and worker threads.
+
+---
+
+## 9. Step-by-Step Data Flow Trace
 
 1. **FPGA** writes INT32 measurements into `rx_data[5]`.
 2. **FPGA** sets `rx_flags[5] = host_ptr`.
@@ -275,7 +307,7 @@ This race caused exactly one request to get "stuck" indefinitely, eventually sta
 10. **Host Dispatcher** calls `cudaGraphLaunch(..., stream[2])`.
 11. **Host Dispatcher** sets `tx_flags[5] = 0xEEEE...` (IN_FLIGHT), then clears `rx_flags[5] = 0` and advances to `current_slot = 6`.
 12. **GPU DMA engine** copies input payload from ring buffer to TRT input buffer.
-13. **GPU** executes TRT inference.
+13. **GPU** executes TRT inference (or passthrough copy in SKIP_TRT mode).
 14. **GPU DMA engine** copies TRT output to host-mapped `h_outputs_`.
 15. **GPU signal kernel** sets `ready_flags[2] = 1` (system-scope atomic release).
 16. **CPU Poller** CAS(1, 2) on `ready_flags[2]`, wins, reads `h_ring_ptrs[0]` to get ring buffer address and `h_outputs_` to get inference data.
@@ -289,7 +321,7 @@ This race caused exactly one request to get "stuck" indefinitely, eventually sta
 
 ---
 
-## 9. Ring Buffer and IN_FLIGHT Sentinel
+## 10. Ring Buffer and IN_FLIGHT Sentinel
 
 Because `cudaGraphLaunch` is asynchronous, the dispatcher clears `rx_flags[slot]` immediately after launch. Without a hold, the **producer** (FPGA sim or test) would see `rx_flags[slot]==0` and `tx_flags[slot]==0` (response not written yet) and reuse the slot, overwriting data while the GPU is still reading.
 
@@ -303,13 +335,34 @@ Because `cudaGraphLaunch` is asynchronous, the dispatcher clears `rx_flags[slot]
 
 ---
 
-## 10. Dynamic Batch Handling for ONNX Models
+## 11. Dynamic Batch Handling for ONNX Models
 
 When building a TensorRT engine from an ONNX model with dynamic batch dimensions (dim 0 <= 0), `ai_decoder_service.cu` automatically creates an optimization profile that pins all dynamic dimensions to 1. This enables building engines from models like `predecoder_memory_d13_T13_X.onnx` which use a symbolic `batch` dimension.
 
 ---
 
-## 11. Shutdown and Grace Period
+## 12. Test Suite
+
+A GTest-based test suite (`libs/qec/unittests/test_realtime_pipeline.cu`) validates the pipeline using `SKIP_TRT` passthrough mode (no TensorRT dependency at runtime). The tests are organized into three categories:
+
+### 12.1 Unit Tests (8 tests)
+- **AIDecoderService**: Verify SKIP_TRT buffer sizes (1600 floats = 6400 bytes), allocation, and graph capture.
+- **AIPreDecoderService**: Verify mapped pinned memory allocation, `poll_next_job` / `release_job` state machine, and host-launchable graph.
+
+### 12.2 Correctness Tests (5 tests)
+Data-integrity tests that verify known payloads survive the full CUDA graph round-trip bitwise-identical (memcmp, not epsilon):
+- **Zeros, Known Pattern, Random Data, Extreme Float Values**: Single-request verification with different payload patterns (including `FLT_MAX`, `NaN`, `INFINITY`).
+- **Multiple Requests (5,000 iterations)**: Pushes 5,000 random 6.4 KB payloads through the pipeline and verifies bitwise identity on every one. Confirms no cross-contamination or data corruption over sustained use.
+
+### 12.3 Integration Tests (8 tests)
+- **Dispatcher lifecycle**: Shutdown semantics, stats counter accuracy, invalid RPC magic rejection, slot wraparound.
+- **Single Request Round-Trip**: Full dispatcher -> graph -> poll -> verify data path.
+- **Multi-Predecoder Concurrency**: 4 predecoders on 4 streams, simultaneous dispatch, per-predecoder data verification.
+- **Sustained Throughput (200 requests)**: Regression test for the 128-launch-limit fix. Proves indefinite stability of the host-side dispatcher.
+
+---
+
+## 13. Shutdown and Grace Period
 
 - **Grace period**: After the producer thread exits, the main thread waits up to 5 seconds for `total_completed >= total_submitted`.
 - **Consumer exit**: The consumer thread normally exits when `producer_done && total_completed >= total_submitted`. To avoid hanging forever if some in-flight requests never complete, set a **consumer_stop** flag after the grace period; the consumer loop checks this and exits so `consumer.join()` returns and the process can print the final report and exit cleanly.
@@ -318,7 +371,7 @@ When building a TensorRT engine from an ONNX model with dynamic batch dimensions
 
 ---
 
-## 12. Performance Results (d=13, 30 µs rate, 10s)
+## 14. Performance Results (d=13, 30 µs rate, 10s)
 
 Measured on Grace Blackwell (GB200) with `predecoder_memory_d13_T13_X.onnx` (FP16), 16 workers, 32 slots:
 
@@ -336,7 +389,7 @@ Measured on Grace Blackwell (GB200) with `predecoder_memory_d13_T13_X.onnx` (FP1
 
 ---
 
-## 13. LLM Implementation Directives (Constraints Checklist)
+## 15. LLM Implementation Directives (Constraints Checklist)
 
 When generating code from this specification, the LLM **MUST** strictly adhere to the following constraints:
 
@@ -349,4 +402,5 @@ When generating code from this specification, the LLM **MUST** strictly adhere t
 - [ ] **IN_FLIGHT SENTINEL**: After a successful `cudaGraphLaunch`, the dispatcher MUST write `tx_flags[current_slot] = 0xEEEEEEEEEEEEEEEEULL` before clearing `rx_flags[current_slot]`. Set `tx_data_host = nullptr` and `tx_data_dev = nullptr` to force the 0xEEEE path. The producer MUST wait for both rx and tx to be 0 before reusing a slot. The consumer MUST ignore 0xEEEE and only harvest real responses (or 0xDEAD errors).
 - [ ] **CONSUMER MEMORY ORDERING**: The consumer MUST set `slot_request[s] = -1` BEFORE calling `cudaq_host_ringbuffer_clear_slot`, with a `__sync_synchronize()` fence between them, to prevent the producer-consumer race on ARM.
 - [ ] **DMA DATA MOVEMENT**: Use `cudaMemcpyAsync` (DMA engine) for data copies. Input copy is issued via `pre_launch_fn` callback before graph launch. Output copy is captured inside the graph. Do not use SM-based byte-copy kernels for fixed-address transfers.
+- [ ] **NO INPUT KERNEL IN GRAPH**: The captured CUDA graph must NOT contain an input-copy kernel. All input data movement is handled by the `pre_launch_fn` DMA callback issued on the worker stream before `cudaGraphLaunch`.
 - [ ] **SHUTDOWN**: Use a `consumer_stop` (or equivalent) flag so the consumer thread can exit after a grace period even when `total_completed < total_submitted`; join the consumer after setting the flag so the process exits cleanly.

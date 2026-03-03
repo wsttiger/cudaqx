@@ -7,8 +7,6 @@
  ******************************************************************************/
 
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
-#include "cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h"
 #include <cuda/atomic>
 #include <cstdlib>
 #include <stdexcept>
@@ -30,37 +28,6 @@ using atomic_int_sys = cuda::atomic<int, cuda::thread_scope_system>;
 // =============================================================================
 // Kernels (single slot 0 only; queue removed for host-side dynamic pool)
 // =============================================================================
-
-__global__ void predecoder_input_kernel(
-    void** mailbox_slot_ptr,
-    atomic_int_sys* d_ready_flags,
-    void** d_ring_ptrs,
-    void* trt_input,
-    size_t input_size_bytes)
-{
-    __shared__ void* ring_ptr;
-
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        ring_ptr = *mailbox_slot_ptr;
-        d_ring_ptrs[0] = ring_ptr;
-    }
-    __syncthreads();
-
-    if (!ring_ptr) return;
-
-    // RPCHeader is 12 bytes (3 x uint32_t), so src is 4-byte aligned.
-    const uint32_t* src4 = (const uint32_t*)((const char*)ring_ptr + sizeof(cudaq::nvqlink::RPCHeader));
-    uint32_t* dst4 = (uint32_t*)trt_input;
-    size_t n4 = input_size_bytes / sizeof(uint32_t);
-    for (size_t i = threadIdx.x; i < n4; i += blockDim.x)
-        dst4[i] = src4[i];
-
-    size_t done = n4 * sizeof(uint32_t);
-    const char* src_tail = (const char*)src4 + done;
-    char* dst_tail = (char*)trt_input + done;
-    for (size_t i = done + threadIdx.x; i < input_size_bytes; i += blockDim.x)
-        dst_tail[i - done] = src_tail[i - done];
-}
 
 __global__ void predecoder_signal_ready_kernel(atomic_int_sys* d_ready_flags)
 {

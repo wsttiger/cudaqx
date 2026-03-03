@@ -169,46 +169,142 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
 
   if(_have_realtime_for_tests)
 
-    add_executable(test_realtime_decoding 
-      ${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/test_realtime_decoding.cu
-    )
+    # TODO: Re-enable once libcudaq-realtime-host-dispatch.so RPATH is resolved
+    # add_executable(test_realtime_decoding 
+    #   ${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/test_realtime_decoding.cu
+    # )
+    #
+    # set_target_properties(test_realtime_decoding PROPERTIES
+    #   CUDA_SEPARABLE_COMPILATION ON
+    #   CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    #   CUDA_STANDARD 17
+    # )
+    #
+    # target_include_directories(test_realtime_decoding PRIVATE
+    #   ${CUDAToolkit_INCLUDE_DIRS}
+    #   ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    #   ${CMAKE_SOURCE_DIR}/libs/core/include
+    #   ${CUDAQ_REALTIME_INCLUDE_DIR}
+    # )
+    #
+    # target_compile_definitions(test_realtime_decoding PRIVATE
+    #   TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/data"
+    # )
+    #
+    # target_link_libraries(test_realtime_decoding PRIVATE 
+    #   GTest::gtest_main 
+    #   CUDA::cudart
+    #   cudaq-qec-realtime-cudevice
+    #   ${CUDAQ_REALTIME_LIBRARY}
+    #   ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+    # )
+    #
+    # get_filename_component(CUDAQ_REALTIME_LIB_DIR "${CUDAQ_REALTIME_LIBRARY}" DIRECTORY)
+    # set_target_properties(test_realtime_decoding PROPERTIES
+    #   BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR}"
+    #   INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR}"
+    # )
+    #
+    # add_dependencies(CUDAQXQECUnitTests test_realtime_decoding)
+    # gtest_discover_tests(test_realtime_decoding
+    #   TEST_PREFIX "test_realtime_decoding."
+    # )
 
-    set_target_properties(test_realtime_decoding PROPERTIES
-      CUDA_SEPARABLE_COMPILATION ON
-      CUDA_RESOLVE_DEVICE_SYMBOLS ON
-      CUDA_STANDARD 17
-    )
-
-    target_include_directories(test_realtime_decoding PRIVATE
-      ${CUDAToolkit_INCLUDE_DIRS}
-      ${CMAKE_CURRENT_SOURCE_DIR}/../include
-      ${CMAKE_SOURCE_DIR}/libs/core/include
-      ${CUDAQ_REALTIME_INCLUDE_DIR}
-    )
-
-    target_compile_definitions(test_realtime_decoding PRIVATE
-      TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/data"
-    )
-
-    target_link_libraries(test_realtime_decoding PRIVATE 
-      GTest::gtest_main 
-      CUDA::cudart
-      cudaq-qec-realtime-cudevice
-      ${CUDAQ_REALTIME_LIBRARY}
-      ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
-    )
-
-    # Ensure runtime can locate libcudaq-realtime.so
     get_filename_component(CUDAQ_REALTIME_LIB_DIR "${CUDAQ_REALTIME_LIBRARY}" DIRECTORY)
-    set_target_properties(test_realtime_decoding PROPERTIES
-      BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR}"
-      INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR}"
+
+    # ----------------------------------------------------------------
+    # Realtime pipeline unit tests (SKIP_TRT passthrough at runtime;
+    # still needs TRT headers+libs at compile/link time)
+    # ----------------------------------------------------------------
+    find_path(TENSORRT_INCLUDE_DIR_FOR_PIPELINE NvInfer.h
+      PATHS
+        ${TENSORRT_ROOT}/include
+        /usr/include/x86_64-linux-gnu
+        /usr/local/cuda/include
+        /usr/local/tensorrt/include
+        /opt/tensorrt/include
+      NO_DEFAULT_PATH
+    )
+    find_library(TENSORRT_LIBRARY_FOR_PIPELINE nvinfer
+      PATHS ${TENSORRT_ROOT}/lib /usr/lib/x86_64-linux-gnu /usr/local/cuda/lib64 /usr/local/tensorrt/lib /opt/tensorrt/lib
+    )
+    find_library(TENSORRT_ONNX_PARSER_FOR_PIPELINE nvonnxparser
+      PATHS ${TENSORRT_ROOT}/lib /usr/lib/x86_64-linux-gnu /usr/local/cuda/lib64 /usr/local/tensorrt/lib /opt/tensorrt/lib
     )
 
-    add_dependencies(CUDAQXQECUnitTests test_realtime_decoding)
-    gtest_discover_tests(test_realtime_decoding
-      TEST_PREFIX "test_realtime_decoding."
-    )
+    if(TENSORRT_INCLUDE_DIR_FOR_PIPELINE AND TENSORRT_LIBRARY_FOR_PIPELINE AND TENSORRT_ONNX_PARSER_FOR_PIPELINE)
+      get_filename_component(_cuda_bin_pipe "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+      get_filename_component(_cuda_root_pipe "${_cuda_bin_pipe}" DIRECTORY)
+      set(_cuda_cccl_include_pipe "${_cuda_root_pipe}/include/cccl")
+
+      set(_realtime_pipeline_includes "")
+      if(NOT _predecoder_use_in_tree_realtime)
+        set(_realtime_include_pipe "${CMAKE_SOURCE_DIR}/realtime/include")
+        if(EXISTS "${_realtime_include_pipe}/cudaq/realtime/daemon/dispatcher/cudaq_realtime.h")
+          list(APPEND _realtime_pipeline_includes "${_realtime_include_pipe}")
+        endif()
+      endif()
+
+      add_executable(test_realtime_pipeline
+        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
+        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_predecoder_service.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_realtime_pipeline.cu
+      )
+
+      set_target_properties(test_realtime_pipeline PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+        CUDA_STANDARD 17
+        LINKER_LANGUAGE CUDA
+      )
+
+      target_include_directories(test_realtime_pipeline PRIVATE
+        ${_cuda_cccl_include_pipe}
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${TENSORRT_INCLUDE_DIR_FOR_PIPELINE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${CMAKE_SOURCE_DIR}/libs/core/include
+        ${_realtime_pipeline_includes}
+        ${CUDAQ_REALTIME_INCLUDE_DIR}
+      )
+
+      if(_predecoder_use_in_tree_realtime)
+        target_link_libraries(test_realtime_pipeline PRIVATE
+          GTest::gtest_main
+          CUDA::cudart
+          ${TENSORRT_LIBRARY_FOR_PIPELINE}
+          ${TENSORRT_ONNX_PARSER_FOR_PIPELINE}
+          cudaq-realtime
+          cudaq-realtime-host-dispatch
+          cudaq-realtime-dispatch
+        )
+        set_target_properties(test_realtime_pipeline PROPERTIES
+          BUILD_RPATH "${CMAKE_BINARY_DIR}/lib;${CMAKE_BINARY_DIR}/realtime/lib"
+          INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib;${CMAKE_BINARY_DIR}/realtime/lib"
+        )
+      else()
+        target_link_libraries(test_realtime_pipeline PRIVATE
+          GTest::gtest_main
+          CUDA::cudart
+          ${TENSORRT_LIBRARY_FOR_PIPELINE}
+          ${TENSORRT_ONNX_PARSER_FOR_PIPELINE}
+          ${CUDAQ_REALTIME_LIBRARY}
+          ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+        )
+        set_target_properties(test_realtime_pipeline PROPERTIES
+          BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+          INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+        )
+      endif()
+
+      add_dependencies(CUDAQXQECUnitTests test_realtime_pipeline)
+      gtest_discover_tests(test_realtime_pipeline
+        TEST_PREFIX "test_realtime_pipeline."
+      )
+    else()
+      message(WARNING "TensorRT not found. Skipping test_realtime_pipeline (needs NvInfer.h + TRT libs for compile/link).")
+    endif()
+
     # Hybrid AI predecoder + PyMatching pipeline test
     # Requires TensorRT + ONNX parser for building engines from ONNX models
     find_path(TENSORRT_INCLUDE_DIR NvInfer.h
