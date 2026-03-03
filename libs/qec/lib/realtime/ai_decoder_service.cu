@@ -99,8 +99,8 @@ AIDecoderService::AIDecoderService(const std::string& model_path, void** device_
     : device_mailbox_slot_(device_mailbox_slot) {
 
     if (std::getenv("SKIP_TRT")) {
-        input_size_ = 16 * sizeof(float);
-        output_size_ = 16 * sizeof(float);
+        input_size_ = 1600 * sizeof(float);
+        output_size_ = 1600 * sizeof(float);
         allocate_resources();
     } else {
         std::string ext = model_path.substr(model_path.find_last_of('.'));
