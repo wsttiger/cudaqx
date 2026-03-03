@@ -49,6 +49,46 @@ static void pin_thread(std::thread& t, int core) {
     pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
 }
 
+// ---------------------------------------------------------------------------
+// GPU-only mode: completion signaling via cudaLaunchHostFunc
+// ---------------------------------------------------------------------------
+
+struct GpuOnlyWorkerCtx {
+    atomic_uint64_sys* tx_flags;
+    atomic_uint64_sys* idle_mask;
+    int* inflight_slot_tags;
+    uint8_t* rx_data_host;
+    size_t slot_size;
+    int worker_id;
+    void (*user_post_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream);
+    void* user_post_launch_data;
+    int origin_slot;
+    uint64_t tx_value;
+};
+
+static void gpu_only_host_callback(void* user_data) {
+    auto* ctx = static_cast<GpuOnlyWorkerCtx*>(user_data);
+    ctx->tx_flags[ctx->origin_slot].store(
+        ctx->tx_value, cuda::std::memory_order_release);
+    ctx->idle_mask->fetch_or(
+        1ULL << ctx->worker_id, cuda::std::memory_order_release);
+}
+
+static void gpu_only_post_launch(void* user_data, void* slot_dev,
+                                 cudaStream_t stream) {
+    auto* ctx = static_cast<GpuOnlyWorkerCtx*>(user_data);
+
+    if (ctx->user_post_launch_fn)
+        ctx->user_post_launch_fn(ctx->user_post_launch_data, slot_dev, stream);
+
+    ctx->origin_slot = ctx->inflight_slot_tags[ctx->worker_id];
+    uint8_t* slot_host = ctx->rx_data_host +
+        static_cast<size_t>(ctx->origin_slot) * ctx->slot_size;
+    ctx->tx_value = reinterpret_cast<uint64_t>(slot_host);
+
+    cudaLaunchHostFunc(stream, gpu_only_host_callback, ctx);
+}
+
 
 // ---------------------------------------------------------------------------
 // RingBufferManager
@@ -177,6 +217,10 @@ struct RealtimePipeline::Impl {
     // Per-worker GPU resources (from factory)
     std::vector<GpuWorkerResources> worker_resources;
 
+    // GPU-only mode state
+    bool gpu_only = false;
+    std::vector<GpuOnlyWorkerCtx> gpu_only_ctxs;
+
     // Slot-to-request mapping (consumer-owned)
     std::vector<int64_t> slot_request;
 
@@ -222,6 +266,7 @@ struct RealtimePipeline::Impl {
 
     void start_threads() {
         const int nw = config.num_workers;
+        gpu_only = !cpu_stage;
 
         // Build GPU resources via user factory
         worker_resources.resize(nw);
@@ -232,6 +277,25 @@ struct RealtimePipeline::Impl {
             function_table[i].dispatch_mode = CUDAQ_DISPATCH_GRAPH_LAUNCH;
             function_table[i].handler.graph_exec = worker_resources[i].graph_exec;
             std::memset(&function_table[i].schema, 0, sizeof(function_table[i].schema));
+        }
+
+        // In GPU-only mode, set up per-worker contexts for cudaLaunchHostFunc
+        // completion signaling (chains user's post_launch_fn if provided).
+        if (gpu_only) {
+            gpu_only_ctxs.resize(nw);
+            for (int i = 0; i < nw; ++i) {
+                auto& c = gpu_only_ctxs[i];
+                c.tx_flags              = ring->tx_flags();
+                c.idle_mask             = &idle_mask;
+                c.inflight_slot_tags    = inflight_slot_tags.data();
+                c.rx_data_host          = ring->rx_data_host();
+                c.slot_size             = config.slot_size;
+                c.worker_id             = i;
+                c.user_post_launch_fn   = worker_resources[i].post_launch_fn;
+                c.user_post_launch_data = worker_resources[i].post_launch_data;
+                c.origin_slot           = 0;
+                c.tx_value              = 0;
+            }
         }
 
         // Initialize idle_mask with all workers free
@@ -265,6 +329,14 @@ struct RealtimePipeline::Impl {
             disp_cfg.workers[i].function_id      = worker_resources[i].function_id;
             disp_cfg.workers[i].pre_launch_fn    = worker_resources[i].pre_launch_fn;
             disp_cfg.workers[i].pre_launch_data  = worker_resources[i].pre_launch_data;
+
+            if (gpu_only) {
+                disp_cfg.workers[i].post_launch_fn   = gpu_only_post_launch;
+                disp_cfg.workers[i].post_launch_data = &gpu_only_ctxs[i];
+            } else {
+                disp_cfg.workers[i].post_launch_fn   = worker_resources[i].post_launch_fn;
+                disp_cfg.workers[i].post_launch_data = worker_resources[i].post_launch_data;
+            }
         }
 
         // --- Dispatcher thread ---
@@ -273,13 +345,15 @@ struct RealtimePipeline::Impl {
         });
         pin_thread(dispatcher_thread, config.cores.dispatcher);
 
-        // --- Worker threads ---
-        worker_threads.resize(nw);
-        for (int i = 0; i < nw; ++i) {
-            worker_threads[i] = std::thread([this, i]() { worker_loop(i); });
-            int core = (config.cores.worker_base >= 0)
-                           ? config.cores.worker_base + i : -1;
-            pin_thread(worker_threads[i], core);
+        // --- Worker threads (skipped in GPU-only mode) ---
+        if (!gpu_only) {
+            worker_threads.resize(nw);
+            for (int i = 0; i < nw; ++i) {
+                worker_threads[i] = std::thread([this, i]() { worker_loop(i); });
+                int core = (config.cores.worker_base >= 0)
+                               ? config.cores.worker_base + i : -1;
+                pin_thread(worker_threads[i], core);
+            }
         }
 
         // --- Consumer thread ---
@@ -359,7 +433,7 @@ struct RealtimePipeline::Impl {
         auto* wr = &worker_resources[worker_id];
 
         // The cpu_stage callback is called in "poll mode"
-        // (inference_output == nullptr). It polls its own GPU-ready
+        // (gpu_output == nullptr). It polls its own GPU-ready
         // mechanism and, if a result is available, processes it and
         // writes the RPC response. Returns 0 when nothing was ready,
         // >0 when a job was completed. The pipeline then handles all
@@ -369,8 +443,8 @@ struct RealtimePipeline::Impl {
             CpuStageContext ctx;
             ctx.worker_id        = worker_id;
             ctx.origin_slot      = inflight_slot_tags[worker_id];
-            ctx.inference_output = nullptr;
-            ctx.output_size      = 0;
+            ctx.gpu_output       = nullptr;
+            ctx.gpu_output_size  = 0;
             ctx.response_buffer  = nullptr;
             ctx.max_response_size = 0;
             ctx.user_context     = wr->user_context;

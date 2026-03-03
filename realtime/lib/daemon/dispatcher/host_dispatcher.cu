@@ -108,6 +108,8 @@ static void launch_graph_worker(const HostDispatcherConfig& config,
     config.tx_flags[current_slot].store(error_val, cuda::std::memory_order_release);
     config.idle_mask->fetch_or(1ULL << worker_id, cuda::std::memory_order_release);
   } else {
+    if (config.workers[w].post_launch_fn)
+      config.workers[w].post_launch_fn(config.workers[w].post_launch_data, data_dev, config.workers[w].stream);
     uint64_t tx_slot_addr =
         (config.tx_data_host != nullptr && config.tx_data_dev != nullptr)
             ? reinterpret_cast<uint64_t>(config.tx_data_host +

@@ -64,11 +64,11 @@ private:
 
     cuda::atomic<int, cuda::thread_scope_system>* h_ready_flags_ = nullptr;
     void** h_ring_ptrs_ = nullptr;
-    void* h_outputs_ = nullptr;
+    void* h_predecoder_outputs_ = nullptr;
 
     cuda::atomic<int, cuda::thread_scope_system>* d_ready_flags_ = nullptr;
     void** d_ring_ptrs_ = nullptr;
-    void* d_outputs_ = nullptr;
+    void* d_predecoder_outputs_ = nullptr;
 };
 
 } // namespace cudaq::qec

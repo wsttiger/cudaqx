@@ -43,6 +43,8 @@ struct GpuWorkerResources {
     cudaStream_t    stream      = nullptr;
     void (*pre_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream) = nullptr;
     void* pre_launch_data = nullptr;
+    void (*post_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream) = nullptr;
+    void* post_launch_data = nullptr;
     uint32_t function_id  = 0;
     void*    user_context = nullptr;
 };
@@ -54,14 +56,14 @@ using GpuStageFactory = std::function<GpuWorkerResources(int worker_id)>;
 // CPU Stage Callback
 // ---------------------------------------------------------------------------
 
-/// Passed to the user's CPU stage callback on each completed GPU inference.
-/// The user reads inference_output, does post-processing, and writes the
+/// Passed to the user's CPU stage callback on each completed GPU workload.
+/// The user reads gpu_output, does post-processing, and writes the
 /// result into response_buffer. No atomics are exposed.
 struct CpuStageContext {
     int         worker_id;
     int         origin_slot;
-    const void* inference_output;
-    size_t      output_size;
+    const void* gpu_output;
+    size_t      gpu_output_size;
     void*       response_buffer;
     size_t      max_response_size;
     void*       user_context;

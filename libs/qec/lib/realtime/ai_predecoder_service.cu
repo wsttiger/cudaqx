@@ -96,11 +96,11 @@ AIPreDecoderService::AIPreDecoderService(const std::string& path, void** mailbox
     new (h_ready_flags_) atomic_int_sys(0);
 
     SERVICE_CUDA_CHECK(cudaHostAlloc(&h_ring_ptrs_, sizeof(void*), cudaHostAllocMapped));
-    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_outputs_, get_output_size(), cudaHostAllocMapped));
+    SERVICE_CUDA_CHECK(cudaHostAlloc(&h_predecoder_outputs_, get_output_size(), cudaHostAllocMapped));
 
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_ready_flags_, (void*)h_ready_flags_, 0));
     SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_ring_ptrs_, (void*)h_ring_ptrs_, 0));
-    SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_outputs_, (void*)h_outputs_, 0));
+    SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void**)&d_predecoder_outputs_, (void*)h_predecoder_outputs_, 0));
 }
 
 AIPreDecoderService::~AIPreDecoderService() {
@@ -114,9 +114,9 @@ AIPreDecoderService::~AIPreDecoderService() {
         cudaFreeHost(h_ring_ptrs_);
         h_ring_ptrs_ = nullptr;
     }
-    if (h_outputs_) {
-        cudaFreeHost(h_outputs_);
-        h_outputs_ = nullptr;
+    if (h_predecoder_outputs_) {
+        cudaFreeHost(h_predecoder_outputs_);
+        h_predecoder_outputs_ = nullptr;
     }
 }
 
@@ -142,7 +142,7 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
     }
 
     SERVICE_CUDA_CHECK(cudaMemcpyAsync(
-        d_outputs_, d_trt_output_, get_output_size(),
+        d_predecoder_outputs_, d_trt_output_, get_output_size(),
         cudaMemcpyDeviceToDevice, stream));
 
     predecoder_signal_ready_kernel<<<1, 1, 0, stream>>>(
@@ -183,7 +183,7 @@ bool AIPreDecoderService::poll_next_job(PreDecoderJob& out_job) {
             cuda::std::memory_order_acquire, cuda::std::memory_order_relaxed)) {
         out_job.slot_idx = 0;
         out_job.ring_buffer_ptr = h_ring_ptrs_[0];
-        out_job.inference_data = h_outputs_;
+        out_job.inference_data = h_predecoder_outputs_;
         return true;
     }
     return false;

@@ -38,6 +38,8 @@ struct HostDispatchWorker {
     uint32_t function_id;  // matches table entry; used to assign slot to this worker
     void (*pre_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream) = nullptr;
     void* pre_launch_data = nullptr;
+    void (*post_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream) = nullptr;
+    void* post_launch_data = nullptr;
 };
 
 struct HostDispatcherConfig {
