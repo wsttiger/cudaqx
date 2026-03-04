@@ -220,6 +220,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       PATHS
         ${TENSORRT_ROOT}/include
         /usr/include/x86_64-linux-gnu
+        /usr/include/aarch64-linux-gnu
         /usr/local/cuda/include
         /usr/local/tensorrt/include
         /opt/tensorrt/include
@@ -277,6 +278,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
           cudaq-realtime
           cudaq-realtime-host-dispatch
           cudaq-realtime-dispatch
+          cudaq-realtime-pipeline
         )
         set_target_properties(test_realtime_pipeline PROPERTIES
           BUILD_RPATH "${CMAKE_BINARY_DIR}/lib;${CMAKE_BINARY_DIR}/realtime/lib"
