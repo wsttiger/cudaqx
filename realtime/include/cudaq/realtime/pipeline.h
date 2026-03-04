@@ -8,9 +8,9 @@
 
 #pragma once
 
-#include <cuda_runtime.h>
 #include <cstddef>
 #include <cstdint>
+#include <cuda_runtime.h>
 #include <functional>
 #include <memory>
 #include <string>
@@ -22,16 +22,16 @@ namespace cudaq::realtime {
 // ---------------------------------------------------------------------------
 
 struct CorePinning {
-    int dispatcher  = -1;  // -1 = no pinning
-    int consumer    = -1;
-    int worker_base = -1;  // workers pin to base, base+1, ...
+  int dispatcher = -1; // -1 = no pinning
+  int consumer = -1;
+  int worker_base = -1; // workers pin to base, base+1, ...
 };
 
 struct PipelineStageConfig {
-    int    num_workers = 8;
-    int    num_slots   = 32;
-    size_t slot_size   = 16384;
-    CorePinning cores;
+  int num_workers = 8;
+  int num_slots = 32;
+  size_t slot_size = 16384;
+  CorePinning cores;
 };
 
 // ---------------------------------------------------------------------------
@@ -39,17 +39,20 @@ struct PipelineStageConfig {
 // ---------------------------------------------------------------------------
 
 struct GpuWorkerResources {
-    cudaGraphExec_t graph_exec  = nullptr;
-    cudaStream_t    stream      = nullptr;
-    void (*pre_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream) = nullptr;
-    void* pre_launch_data = nullptr;
-    void (*post_launch_fn)(void* user_data, void* slot_dev, cudaStream_t stream) = nullptr;
-    void* post_launch_data = nullptr;
-    uint32_t function_id  = 0;
-    void*    user_context = nullptr;
+  cudaGraphExec_t graph_exec = nullptr;
+  cudaStream_t stream = nullptr;
+  void (*pre_launch_fn)(void *user_data, void *slot_dev,
+                        cudaStream_t stream) = nullptr;
+  void *pre_launch_data = nullptr;
+  void (*post_launch_fn)(void *user_data, void *slot_dev,
+                         cudaStream_t stream) = nullptr;
+  void *post_launch_data = nullptr;
+  uint32_t function_id = 0;
+  void *user_context = nullptr;
 };
 
-/// Called once per worker during start(). Returns GPU resources for that worker.
+/// Called once per worker during start(). Returns GPU resources for that
+/// worker.
 using GpuStageFactory = std::function<GpuWorkerResources(int worker_id)>;
 
 // ---------------------------------------------------------------------------
@@ -60,31 +63,31 @@ using GpuStageFactory = std::function<GpuWorkerResources(int worker_id)>;
 /// The user reads gpu_output, does post-processing, and writes the
 /// result into response_buffer. No atomics are exposed.
 struct CpuStageContext {
-    int         worker_id;
-    int         origin_slot;
-    const void* gpu_output;
-    size_t      gpu_output_size;
-    void*       response_buffer;
-    size_t      max_response_size;
-    void*       user_context;
+  int worker_id;
+  int origin_slot;
+  const void *gpu_output;
+  size_t gpu_output_size;
+  void *response_buffer;
+  size_t max_response_size;
+  void *user_context;
 };
 
 /// Returns the number of bytes written into response_buffer.
-using CpuStageCallback = std::function<size_t(const CpuStageContext& ctx)>;
+using CpuStageCallback = std::function<size_t(const CpuStageContext &ctx)>;
 
 // ---------------------------------------------------------------------------
 // Completion Callback
 // ---------------------------------------------------------------------------
 
 struct Completion {
-    uint64_t request_id;
-    int      slot;
-    bool     success;
-    int      cuda_error;  // 0 on success
+  uint64_t request_id;
+  int slot;
+  bool success;
+  int cuda_error; // 0 on success
 };
 
 /// Called by the consumer thread for each completed (or errored) request.
-using CompletionCallback = std::function<void(const Completion& c)>;
+using CompletionCallback = std::function<void(const Completion &c)>;
 
 // ---------------------------------------------------------------------------
 // Ring Buffer Injector (software-only test/replay data source)
@@ -95,29 +98,29 @@ using CompletionCallback = std::function<void(const Completion& c)>;
 /// The parent RealtimePipeline must outlive the injector.
 class RingBufferInjector {
 public:
-    ~RingBufferInjector();
-    RingBufferInjector(RingBufferInjector&&) noexcept;
-    RingBufferInjector& operator=(RingBufferInjector&&) noexcept;
+  ~RingBufferInjector();
+  RingBufferInjector(RingBufferInjector &&) noexcept;
+  RingBufferInjector &operator=(RingBufferInjector &&) noexcept;
 
-    RingBufferInjector(const RingBufferInjector&) = delete;
-    RingBufferInjector& operator=(const RingBufferInjector&) = delete;
+  RingBufferInjector(const RingBufferInjector &) = delete;
+  RingBufferInjector &operator=(const RingBufferInjector &) = delete;
 
-    /// Try to submit a request. Returns true if accepted, false if
-    /// backpressure (all slots busy). Non-blocking. Thread-safe.
-    bool try_submit(uint32_t function_id, const void* payload,
-                    size_t payload_size, uint64_t request_id);
+  /// Try to submit a request. Returns true if accepted, false if
+  /// backpressure (all slots busy). Non-blocking. Thread-safe.
+  bool try_submit(uint32_t function_id, const void *payload,
+                  size_t payload_size, uint64_t request_id);
 
-    /// Blocking submit: spins until a slot becomes available.
-    void submit(uint32_t function_id, const void* payload,
-                size_t payload_size, uint64_t request_id);
+  /// Blocking submit: spins until a slot becomes available.
+  void submit(uint32_t function_id, const void *payload, size_t payload_size,
+              uint64_t request_id);
 
-    uint64_t backpressure_stalls() const;
+  uint64_t backpressure_stalls() const;
 
 private:
-    friend class RealtimePipeline;
-    struct State;
-    std::unique_ptr<State> state_;
-    explicit RingBufferInjector(std::unique_ptr<State> s);
+  friend class RealtimePipeline;
+  struct State;
+  std::unique_ptr<State> state_;
+  explicit RingBufferInjector(std::unique_ptr<State> s);
 };
 
 // ---------------------------------------------------------------------------
@@ -126,44 +129,44 @@ private:
 
 class RealtimePipeline {
 public:
-    explicit RealtimePipeline(const PipelineStageConfig& config);
-    ~RealtimePipeline();
+  explicit RealtimePipeline(const PipelineStageConfig &config);
+  ~RealtimePipeline();
 
-    RealtimePipeline(const RealtimePipeline&) = delete;
-    RealtimePipeline& operator=(const RealtimePipeline&) = delete;
+  RealtimePipeline(const RealtimePipeline &) = delete;
+  RealtimePipeline &operator=(const RealtimePipeline &) = delete;
 
-    /// Register the GPU stage factory (called before start).
-    void set_gpu_stage(GpuStageFactory factory);
+  /// Register the GPU stage factory (called before start).
+  void set_gpu_stage(GpuStageFactory factory);
 
-    /// Register the CPU worker callback (called before start).
-    void set_cpu_stage(CpuStageCallback callback);
+  /// Register the CPU worker callback (called before start).
+  void set_cpu_stage(CpuStageCallback callback);
 
-    /// Register the completion callback (called before start).
-    void set_completion_handler(CompletionCallback handler);
+  /// Register the completion callback (called before start).
+  void set_completion_handler(CompletionCallback handler);
 
-    /// Allocate resources, build dispatcher config, spawn all threads.
-    void start();
+  /// Allocate resources, build dispatcher config, spawn all threads.
+  void start();
 
-    /// Signal shutdown, join all threads, free resources.
-    void stop();
+  /// Signal shutdown, join all threads, free resources.
+  void stop();
 
-    /// Create a software injector for testing without FPGA hardware.
-    /// The pipeline must be constructed but need not be started yet.
-    RingBufferInjector create_injector();
+  /// Create a software injector for testing without FPGA hardware.
+  /// The pipeline must be constructed but need not be started yet.
+  RingBufferInjector create_injector();
 
-    struct Stats {
-        uint64_t submitted;
-        uint64_t completed;
-        uint64_t dispatched;
-        uint64_t backpressure_stalls;
-    };
+  struct Stats {
+    uint64_t submitted;
+    uint64_t completed;
+    uint64_t dispatched;
+    uint64_t backpressure_stalls;
+  };
 
-    /// Thread-safe, lock-free stats snapshot.
-    Stats stats() const;
+  /// Thread-safe, lock-free stats snapshot.
+  Stats stats() const;
 
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace cudaq::realtime
