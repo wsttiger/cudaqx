@@ -5,7 +5,7 @@
 ```mermaid
 classDiagram
     class RealtimePipeline {
-        -Impl* impl_
+        -impl_ : Impl~ptr~
         +set_gpu_stage(GpuStageFactory)
         +set_cpu_stage(CpuStageCallback)
         +set_completion_handler(CompletionCallback)
@@ -16,16 +16,16 @@ classDiagram
     }
 
     class RingBufferInjector {
-        -State* state_
+        -state_ : State~ptr~
         +try_submit(fid, payload, size, rid) bool
         +submit(fid, payload, size, rid)
         +backpressure_stalls() uint64_t
     }
 
     class RingBufferManager {
-        -rx_flags_ : atomic_uint64[N]
-        -tx_flags_ : atomic_uint64[N]
-        -rx_data_host_ : uint8_t*
+        -rx_flags_ : atomic_uint64~N~
+        -tx_flags_ : atomic_uint64~N~
+        -rx_data_host_ : uint8_t~ptr~
         +slot_available(slot) bool
         +write_and_signal(slot, fid, payload, len)
         +poll_tx(slot, err) cudaq_tx_status_t
@@ -33,19 +33,19 @@ classDiagram
     }
 
     class HostDispatcherConfig {
-        +rx_flags : atomic_uint64*
-        +tx_flags : atomic_uint64*
-        +idle_mask : atomic_uint64*
-        +inflight_slot_tags : int*
-        +h_mailbox_bank : void**
-        +workers : HostDispatchWorker[]
-        +function_table : cudaq_function_entry_t*
-        +shutdown_flag : atomic_int*
+        +rx_flags : atomic_uint64~ptr~
+        +tx_flags : atomic_uint64~ptr~
+        +idle_mask : atomic_uint64~ptr~
+        +inflight_slot_tags : int~ptr~
+        +h_mailbox_bank : void~ptrptr~
+        +workers : HostDispatchWorker~list~
+        +function_table : cudaq_function_entry_t~ptr~
+        +shutdown_flag : atomic_int~ptr~
     }
 
     class AIPreDecoderService {
-        -h_ready_flags_ : atomic_int*
-        -h_predecoder_outputs_ : void*
+        -h_ready_flags_ : atomic_int~ptr~
+        -h_predecoder_outputs_ : void~ptr~
         -graph_exec_ : cudaGraphExec_t
         +capture_graph(stream, device_launch)
         +poll_next_job(job) bool
@@ -84,22 +84,22 @@ flowchart LR
     end
 
     subgraph "GPU Streams"
-        G0["stream[0]: CUDA Graph"]
-        G1["stream[1]: CUDA Graph"]
-        Gn["stream[N-1]: CUDA Graph"]
+        G0["stream 0: CUDA Graph"]
+        G1["stream 1: CUDA Graph"]
+        Gn["stream N-1: CUDA Graph"]
     end
 
-    P -->|"rx_flags[slot]"| D
+    P -->|"rx_flags signal"| D
     D -->|"cudaGraphLaunch"| G0
     D -->|"cudaGraphLaunch"| G1
     D -->|"cudaGraphLaunch"| Gn
-    G0 -->|"ready_flags[0] = 1"| W0
-    G1 -->|"ready_flags[0] = 1"| W1
-    Gn -->|"ready_flags[0] = 1"| Wn
-    W0 -->|"tx_flags[slot]"| C
-    W1 -->|"tx_flags[slot]"| C
-    Wn -->|"tx_flags[slot]"| C
-    C -->|"clear_slot()"| P
+    G0 -->|"ready_flags = 1"| W0
+    G1 -->|"ready_flags = 1"| W1
+    Gn -->|"ready_flags = 1"| Wn
+    W0 -->|"tx_flags signal"| C
+    W1 -->|"tx_flags signal"| C
+    Wn -->|"tx_flags signal"| C
+    C -->|"clear_slot"| P
 ```
 
 ## 3. Sequence Diagram: Single Syndrome Through the Pipeline
@@ -109,66 +109,66 @@ atomic operation and the thread/device boundary crossings.
 
 ```mermaid
 sequenceDiagram
-    participant Prod as Producer<br/>(main thread)
-    participant RB as Ring Buffer<br/>(shared memory)
-    participant Disp as Dispatcher<br/>(dedicated thread)
-    participant GPU as GPU Stream[w]<br/>(CUDA Graph)
-    participant Work as Worker Thread[w]<br/>(CPU)
-    participant Cons as Consumer<br/>(dedicated thread)
-    participant App as Application<br/>(completion handler)
+    participant Prod as Producer<br>(main thread)
+    participant RB as Ring Buffer<br>(shared memory)
+    participant Disp as Dispatcher<br>(dedicated thread)
+    participant GPU as GPU Stream w<br>(CUDA Graph)
+    participant Work as Worker Thread w<br>(CPU)
+    participant Cons as Consumer<br>(dedicated thread)
+    participant App as Application<br>(completion handler)
 
     Note over Prod,App: === PHASE 1: Injection ===
 
-    Prod->>Prod: CAS next_slot (acq_rel)<br/>claim slot S
-    Prod->>RB: memcpy payload → rx_data[S]
-    Prod->>RB: write RPCHeader {magic, function_id}
-    Prod->>RB: rx_flags[S].store(host_ptr, release)
-    Prod->>Prod: slot_occupied[S] = 1<br/>slot_request[S] = request_id
-    Prod->>Prod: total_submitted.fetch_add(1, release)
+    Prod->>Prod: CAS next_slot acq_rel, claim slot S
+    Prod->>RB: memcpy payload to rx_data S
+    Prod->>RB: write RPCHeader magic+function_id
+    Prod->>RB: rx_flags S .store host_ptr, release
+    Prod->>Prod: slot_occupied S = 1, slot_request S = request_id
+    Prod->>Prod: total_submitted.fetch_add 1, release
 
     Note over Prod,App: === PHASE 2: Dispatch ===
 
-    Disp->>RB: rx_flags[S].load(acquire)<br/>sees non-zero → slot S ready
-    Disp->>Disp: parse RPCHeader → function_id
-    Disp->>Disp: idle_mask.load(acquire)<br/>find worker W via __builtin_ffsll
-    Disp->>Disp: idle_mask.fetch_and(~(1<<W), release)<br/>mark W busy
-    Disp->>Disp: inflight_slot_tags[W] = S
-    Disp->>RB: h_mailbox_bank[W] = dev_ptr
-    Disp->>Disp: __sync_synchronize()
+    Disp->>RB: rx_flags S .load acquire, sees non-zero slot S ready
+    Disp->>Disp: parse RPCHeader to function_id
+    Disp->>Disp: idle_mask.load acquire, find worker W via ffsll
+    Disp->>Disp: idle_mask.fetch_and ~1 shl W, release, mark W busy
+    Disp->>Disp: inflight_slot_tags W = S
+    Disp->>RB: h_mailbox_bank W = dev_ptr
+    Disp->>Disp: __sync_synchronize
 
     opt pre_launch_fn configured
-        Disp->>GPU: pre_launch_fn: cudaMemcpyAsync<br/>DMA syndrome → TRT input buffer
+        Disp->>GPU: pre_launch_fn cudaMemcpyAsync DMA syndrome to TRT input
     end
 
-    Disp->>GPU: cudaGraphLaunch(graph_exec[W], stream[W])
-    Disp->>RB: tx_flags[S].store(0xEEEE..., release)<br/>IN_FLIGHT sentinel
-    Disp->>RB: rx_flags[S].store(0, release)<br/>free rx slot, advance
+    Disp->>GPU: cudaGraphLaunch graph_exec W, stream W
+    Disp->>RB: tx_flags S .store 0xEEEE, release, IN_FLIGHT sentinel
+    Disp->>RB: rx_flags S .store 0, release, free rx slot
 
     Note over Prod,App: === PHASE 3: GPU Inference ===
 
-    GPU->>GPU: gateway_input_kernel:<br/>copy ring buffer → TRT input
-    GPU->>GPU: TRT enqueueV3:<br/>AI predecoder inference
-    GPU->>GPU: cudaMemcpyAsync:<br/>TRT output → h_predecoder_outputs
-    GPU->>GPU: predecoder_signal_ready_kernel:<br/>ready_flags[0].store(1, release)
+    GPU->>GPU: gateway_input_kernel: copy ring buffer to TRT input
+    GPU->>GPU: TRT enqueueV3: AI predecoder inference
+    GPU->>GPU: cudaMemcpyAsync: TRT output to h_predecoder_outputs
+    GPU->>GPU: predecoder_signal_ready_kernel: ready_flags.store 1, release
 
     Note over Prod,App: === PHASE 4: CPU Post-Processing ===
 
-    Work->>Work: poll_next_job():<br/>ready_flags[0].CAS(1→2, acquire)
-    Work->>Work: Read h_predecoder_outputs<br/>Run PyMatching MWPM decoder
+    Work->>Work: poll_next_job: ready_flags CAS 1 to 2, acquire
+    Work->>Work: Read h_predecoder_outputs, run PyMatching MWPM decoder
     Work->>Work: Write RPC response to ring buffer slot
-    Work->>Work: release_job():<br/>ready_flags[0].store(0, release)
-    Work->>RB: tx_flags[S].store(slot_host_addr, release)<br/>marks READY
-    Work->>Disp: idle_mask.fetch_or(1<<W, release)<br/>worker W free again
+    Work->>Work: release_job: ready_flags.store 0, release
+    Work->>RB: tx_flags S .store slot_host_addr, release, marks READY
+    Work->>Disp: idle_mask.fetch_or 1 shl W, release, worker W free
 
     Note over Prod,App: === PHASE 5: Completion ===
 
-    Cons->>RB: poll_tx(S): tx_flags[S].load(acquire)<br/>sees valid host addr → READY
-    Cons->>App: completion_handler({request_id, slot, success})
-    Cons->>Cons: total_completed.fetch_add(1, relaxed)
-    Cons->>Cons: slot_occupied[S] = 0
-    Cons->>Cons: __sync_synchronize()
-    Cons->>RB: clear_slot(S):<br/>rx_flags[S] = 0, tx_flags[S] = 0
-    Note over Prod: Slot S now available<br/>for next submission
+    Cons->>RB: poll_tx S: tx_flags S .load acquire, sees valid addr READY
+    Cons->>App: completion_handler request_id, slot, success
+    Cons->>Cons: total_completed.fetch_add 1, relaxed
+    Cons->>Cons: slot_occupied S = 0
+    Cons->>Cons: __sync_synchronize
+    Cons->>RB: clear_slot S: rx_flags = 0, tx_flags = 0
+    Note over Prod: Slot S now available for next submission
 ```
 
 ## 4. Atomic Variables Reference
@@ -223,18 +223,27 @@ stateDiagram-v2
     [*] --> FREE : initialization
 
     FREE --> RX_SIGNALED : Producer writes rx_flags[S] = host_ptr
-    note right of RX_SIGNALED : rx_flags ≠ 0, tx_flags = 0\nPayload + RPCHeader in rx_data[S]
+    note right of RX_SIGNALED
+        rx_flags != 0, tx_flags = 0
+        Payload + RPCHeader in rx_data
+    end note
 
-    RX_SIGNALED --> IN_FLIGHT : Dispatcher reads rx_flags,\nlaunches graph,\nwrites tx_flags = 0xEEEE...,\nclears rx_flags = 0
-    note right of IN_FLIGHT : rx_flags = 0, tx_flags = 0xEEEE...\nGPU processing in progress
+    RX_SIGNALED --> IN_FLIGHT : Dispatcher reads rx_flags, launches graph, sets tx_flags IN_FLIGHT, clears rx_flags
+    note right of IN_FLIGHT
+        rx_flags = 0, tx_flags = 0xEEEE
+        GPU processing in progress
+    end note
 
-    IN_FLIGHT --> TX_READY : Worker writes tx_flags[S] = slot_host_addr\n(after GPU done + PyMatching done)
-    note right of TX_READY : rx_flags = 0, tx_flags = valid addr\nResult available for consumer
+    IN_FLIGHT --> TX_READY : Worker writes tx_flags = slot_host_addr after GPU + PyMatching done
+    note right of TX_READY
+        rx_flags = 0, tx_flags = valid addr
+        Result available for consumer
+    end note
 
-    TX_READY --> FREE : Consumer reads result,\ncalls clear_slot():\nrx_flags = 0, tx_flags = 0
+    TX_READY --> FREE : Consumer reads result, calls clear_slot
 
-    IN_FLIGHT --> TX_ERROR : cudaGraphLaunch failed\ntx_flags = 0xDEAD... | err
-    TX_ERROR --> FREE : Consumer reads error,\ncalls clear_slot()
+    IN_FLIGHT --> TX_ERROR : cudaGraphLaunch failed, tx_flags = 0xDEAD | err
+    TX_ERROR --> FREE : Consumer reads error, calls clear_slot
 ```
 
 **`tx_flags` value encoding:**
@@ -254,26 +263,26 @@ The graph is instantiated once at startup and replayed for every syndrome.
 ```mermaid
 flowchart TD
     subgraph "CUDA Graph (AIPreDecoderService)"
-        A["TRT enqueueV3\n(AI predecoder inference)"] --> B["cudaMemcpyAsync\nTRT output → h_predecoder_outputs\n(host-mapped)"]
-        B --> C["predecoder_signal_ready_kernel\nready_flags[0].store(1, release)"]
+        A["TRT enqueueV3<br>(AI predecoder inference)"] --> B["cudaMemcpyAsync<br>TRT output to h_predecoder_outputs<br>(host-mapped)"]
+        B --> C["predecoder_signal_ready_kernel<br>ready_flags.store(1, release)"]
     end
 
     subgraph "Pre-Launch Callback (host-side, before graph)"
-        P["pre_launch_fn:\ncudaMemcpyAsync\nring buffer slot → TRT input\n(DMA copy engine)"]
+        P["pre_launch_fn:<br>cudaMemcpyAsync<br>ring buffer slot to TRT input<br>(DMA copy engine)"]
     end
 
     subgraph "Post-Graph (Worker Thread)"
-        D["poll_next_job():\nready_flags CAS 1→2"]
+        D["poll_next_job():<br>ready_flags CAS 1 to 2"]
         E["PyMatching MWPM decode"]
         F["Write RPC response"]
-        G["release_job():\nready_flags store 0"]
-        H["tx_flags[S].store(addr, release)"]
-        I["idle_mask.fetch_or(1<<W, release)"]
+        G["release_job():<br>ready_flags store 0"]
+        H["tx_flags.store(addr, release)"]
+        I["idle_mask.fetch_or(1 shl W, release)"]
         D --> E --> F --> G --> H --> I
     end
 
     P --> A
-    C -.->|"GPU signals\nready_flags = 1"| D
+    C -.->|"GPU signals ready_flags = 1"| D
 ```
 
 ## 7. Backpressure and Flow Control
@@ -284,17 +293,17 @@ The pipeline uses implicit backpressure through slot availability:
 flowchart TD
     subgraph "Flow Control"
         Submit["Injector::try_submit()"]
-        Check{"slot_available(S)?\nrx_flags=0 AND tx_flags=0"}
-        CAS{"CAS next_slot\ncur → cur+1"}
+        Check{"slot_available(S)?<br>rx_flags=0 AND tx_flags=0"}
+        CAS{"CAS next_slot<br>cur to cur+1"}
         Write["Write payload + signal"]
-        Stall["backpressure_stalls++\nQEC_CPU_RELAX()"]
+        Stall["backpressure_stalls++<br>QEC_CPU_RELAX()"]
         Retry["Retry"]
 
         Submit --> Check
         Check -->|yes| CAS
         Check -->|no| Stall
         CAS -->|success| Write
-        CAS -->|fail (contention)| Stall
+        CAS -->|"fail contention"| Stall
         Stall --> Retry --> Submit
     end
 ```
@@ -330,14 +339,14 @@ memory model. Key ordering guarantees:
 ```mermaid
 flowchart LR
     subgraph "Release/Acquire Pairs"
-        A["rx_flags store\n(release)"] -->|"paired with"| B["rx_flags load\n(acquire)"]
-        C["tx_flags store\n(release)"] -->|"paired with"| D["tx_flags load\n(acquire)"]
-        E["ready_flags store(1)\n(release, system scope)"] -->|"paired with"| F["ready_flags CAS\n(acquire)"]
-        G["idle_mask fetch_or\n(release)"] -->|"paired with"| H["idle_mask load\n(acquire)"]
+        A["rx_flags store<br>(release)"] -->|"paired with"| B["rx_flags load<br>(acquire)"]
+        C["tx_flags store<br>(release)"] -->|"paired with"| D["tx_flags load<br>(acquire)"]
+        E["ready_flags store(1)<br>(release, system scope)"] -->|"paired with"| F["ready_flags CAS<br>(acquire)"]
+        G["idle_mask fetch_or<br>(release)"] -->|"paired with"| H["idle_mask load<br>(acquire)"]
     end
 
     subgraph "Full Barriers"
-        I["__sync_synchronize()\nbetween slot_occupied=0\nand clear_slot()"]
-        J["__sync_synchronize()\nbetween mailbox_bank write\nand cudaGraphLaunch"]
+        I["__sync_synchronize()<br>between slot_occupied=0<br>and clear_slot()"]
+        J["__sync_synchronize()<br>between mailbox_bank write<br>and cudaGraphLaunch"]
     end
 ```
