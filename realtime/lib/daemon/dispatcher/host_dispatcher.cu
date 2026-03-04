@@ -110,12 +110,10 @@ static void launch_graph_worker(const HostDispatcherConfig& config,
   } else {
     if (config.workers[w].post_launch_fn)
       config.workers[w].post_launch_fn(config.workers[w].post_launch_data, data_dev, config.workers[w].stream);
-    uint64_t tx_slot_addr =
-        (config.tx_data_host != nullptr && config.tx_data_dev != nullptr)
-            ? reinterpret_cast<uint64_t>(config.tx_data_host +
-                                         current_slot * config.tx_stride_sz)
-            : 0xEEEEEEEEEEEEEEEEULL;
-    config.tx_flags[current_slot].store(tx_slot_addr, cuda::std::memory_order_release);
+    // Always write IN_FLIGHT sentinel. The actual READY value is written
+    // later by the CPU worker thread or the GPU-only cudaLaunchHostFunc
+    // callback, after the graph has completed.
+    config.tx_flags[current_slot].store(0xEEEEEEEEEEEEEEEEULL, cuda::std::memory_order_release);
   }
 }
 

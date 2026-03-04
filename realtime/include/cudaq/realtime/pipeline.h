@@ -87,6 +87,40 @@ struct Completion {
 using CompletionCallback = std::function<void(const Completion& c)>;
 
 // ---------------------------------------------------------------------------
+// Ring Buffer Injector (software-only test/replay data source)
+// ---------------------------------------------------------------------------
+
+/// Writes RPC-framed requests into the pipeline's ring buffer, simulating
+/// FPGA DMA deposits. Created via RealtimePipeline::create_injector().
+/// The parent RealtimePipeline must outlive the injector.
+class RingBufferInjector {
+public:
+    ~RingBufferInjector();
+    RingBufferInjector(RingBufferInjector&&) noexcept;
+    RingBufferInjector& operator=(RingBufferInjector&&) noexcept;
+
+    RingBufferInjector(const RingBufferInjector&) = delete;
+    RingBufferInjector& operator=(const RingBufferInjector&) = delete;
+
+    /// Try to submit a request. Returns true if accepted, false if
+    /// backpressure (all slots busy). Non-blocking. Thread-safe.
+    bool try_submit(uint32_t function_id, const void* payload,
+                    size_t payload_size, uint64_t request_id);
+
+    /// Blocking submit: spins until a slot becomes available.
+    void submit(uint32_t function_id, const void* payload,
+                size_t payload_size, uint64_t request_id);
+
+    uint64_t backpressure_stalls() const;
+
+private:
+    friend class RealtimePipeline;
+    struct State;
+    std::unique_ptr<State> state_;
+    explicit RingBufferInjector(std::unique_ptr<State> s);
+};
+
+// ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
 
@@ -113,14 +147,9 @@ public:
     /// Signal shutdown, join all threads, free resources.
     void stop();
 
-    /// Try to submit a request. Returns true if accepted, false if
-    /// backpressure (all slots busy). Non-blocking.
-    bool try_submit(uint32_t function_id, const void* payload,
-                    size_t payload_size, uint64_t request_id);
-
-    /// Blocking submit: spins until a slot becomes available.
-    void submit(uint32_t function_id, const void* payload,
-                size_t payload_size, uint64_t request_id);
+    /// Create a software injector for testing without FPGA hardware.
+    /// The pipeline must be constructed but need not be started yet.
+    RingBufferInjector create_injector();
 
     struct Stats {
         uint64_t submitted;

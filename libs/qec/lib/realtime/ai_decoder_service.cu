@@ -13,6 +13,16 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <stdexcept>
+#include <string>
+
+#define DECODER_CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            throw std::runtime_error(std::string("CUDA Error in AIDecoderService: ") + cudaGetErrorString(err)); \
+        } \
+    } while(0)
 
 namespace cudaq::qec {
 
@@ -51,6 +61,8 @@ __global__ void gateway_output_kernel(
         dst[i] = src[i];
     }
 
+    __syncthreads();
+
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         auto* response = (cudaq::nvqlink::RPCResponse*)ring_buffer_data;
         response->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
@@ -78,7 +90,8 @@ static size_t trt_dtype_size(nvinfer1::DataType dtype) {
 
 static size_t tensor_volume(const nvinfer1::Dims& d) {
     size_t v = 1;
-    for (int i = 0; i < d.nbDims; ++i) v *= d.d[i];
+    for (int i = 0; i < d.nbDims; ++i)
+        v *= (d.d[i] > 0) ? static_cast<size_t>(d.d[i]) : 1;
     return v;
 }
 
@@ -275,28 +288,36 @@ void AIDecoderService::allocate_resources() {
 }
 
 void AIDecoderService::capture_graph(cudaStream_t stream) {
-    // Bind all tensors to TRT context
     for (auto& b : all_bindings_) {
         context_->setTensorAddress(b.name.c_str(), b.d_buffer);
     }
 
-    context_->enqueueV3(stream);
-    cudaStreamSynchronize(stream);
+    if (!context_->enqueueV3(stream))
+        throw std::runtime_error("TRT enqueueV3 warmup failed in AIDecoderService");
+    DECODER_CUDA_CHECK(cudaStreamSynchronize(stream));
 
     cudaGraph_t graph;
-    cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+    DECODER_CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
     gateway_input_kernel<<<1, 128, 0, stream>>>(device_mailbox_slot_, d_trt_input_, input_size_);
-    context_->enqueueV3(stream);
+    if (!context_->enqueueV3(stream))
+        throw std::runtime_error("TRT enqueueV3 failed during graph capture in AIDecoderService");
     gateway_output_kernel<<<1, 128, 0, stream>>>(device_mailbox_slot_, d_trt_output_, output_size_);
 
-    cudaStreamEndCapture(stream, &graph);
+    DECODER_CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
 
-    cudaGraphInstantiateWithFlags(&graph_exec_, graph, cudaGraphInstantiateFlagDeviceLaunch);
+    cudaError_t inst_err = cudaGraphInstantiateWithFlags(
+        &graph_exec_, graph, cudaGraphInstantiateFlagDeviceLaunch);
+    if (inst_err != cudaSuccess) {
+        cudaGraphDestroy(graph);
+        throw std::runtime_error(
+            std::string("cudaGraphInstantiateWithFlags failed in AIDecoderService: ")
+            + cudaGetErrorString(inst_err));
+    }
 
-    cudaGraphUpload(graph_exec_, stream);
+    DECODER_CUDA_CHECK(cudaGraphUpload(graph_exec_, stream));
     cudaGraphDestroy(graph);
-    cudaStreamSynchronize(stream);
+    DECODER_CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
 } // namespace cudaq::qec

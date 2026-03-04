@@ -21,6 +21,8 @@
 #include <mutex>
 #include <pthread.h>
 #include <sched.h>
+#include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -99,8 +101,6 @@ public:
     RingBufferManager(size_t num_slots, size_t slot_size)
         : num_slots_(num_slots), slot_size_(slot_size)
     {
-        PIPELINE_CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceMapHost));
-
         PIPELINE_CUDA_CHECK(cudaHostAlloc(&buf_rx_,
             num_slots * sizeof(atomic_uint64_sys), cudaHostAllocMapped));
         rx_flags_ = static_cast<atomic_uint64_sys*>(buf_rx_);
@@ -222,7 +222,8 @@ struct RealtimePipeline::Impl {
     std::vector<GpuOnlyWorkerCtx> gpu_only_ctxs;
 
     // Slot-to-request mapping (consumer-owned)
-    std::vector<int64_t> slot_request;
+    std::vector<uint64_t> slot_request;
+    std::vector<uint8_t> slot_occupied;
 
     // Stats (atomic counters)
     std::atomic<uint64_t> total_submitted{0};
@@ -238,16 +239,19 @@ struct RealtimePipeline::Impl {
     std::thread consumer_thread;
     std::vector<std::thread> worker_threads;
 
-    // Producer slot cursor
-    std::atomic<uint32_t> next_slot{0};
-
-    bool started = false;
+    std::atomic<bool> started{false};
 
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
 
     void allocate(const PipelineStageConfig& cfg) {
+        if (cfg.num_workers > 64) {
+            throw std::invalid_argument(
+                "num_workers (" + std::to_string(cfg.num_workers) +
+                ") exceeds idle_mask capacity of 64");
+        }
+
         config = cfg;
 
         ring = std::make_unique<RingBufferManager>(
@@ -261,10 +265,16 @@ struct RealtimePipeline::Impl {
             reinterpret_cast<void**>(&d_mailbox_bank), h_mailbox_bank, 0));
 
         inflight_slot_tags.resize(cfg.num_workers, 0);
-        slot_request.resize(cfg.num_slots, -1);
+        slot_request.resize(cfg.num_slots, 0);
+        slot_occupied.resize(cfg.num_slots, 0);
     }
 
     void start_threads() {
+        if (!gpu_factory) {
+            throw std::logic_error(
+                "gpu_factory must be set before calling start()");
+        }
+
         const int nw = config.num_workers;
         gpu_only = !cpu_stage;
 
@@ -406,26 +416,6 @@ struct RealtimePipeline::Impl {
     }
 
     // -----------------------------------------------------------------------
-    // Submit
-    // -----------------------------------------------------------------------
-
-    bool try_submit_impl(uint32_t function_id, const void* payload,
-                         size_t payload_size, uint64_t request_id) {
-        uint32_t slot = next_slot.load(std::memory_order_relaxed) %
-                        static_cast<uint32_t>(config.num_slots);
-        if (!ring->slot_available(slot))
-            return false;
-
-        ring->write_and_signal(slot, function_id, payload,
-                               static_cast<uint32_t>(payload_size));
-
-        slot_request[slot] = static_cast<int64_t>(request_id);
-        next_slot.fetch_add(1, std::memory_order_relaxed);
-        total_submitted.fetch_add(1, std::memory_order_release);
-        return true;
-    }
-
-    // -----------------------------------------------------------------------
     // Worker loop (one per worker thread)
     // -----------------------------------------------------------------------
 
@@ -489,16 +479,15 @@ struct RealtimePipeline::Impl {
 
             bool found_any = false;
             for (uint32_t s = 0; s < ns; ++s) {
-                if (slot_request[s] < 0) continue;
+                if (!slot_occupied[s]) continue;
 
                 int cuda_error = 0;
                 cudaq_tx_status_t status = ring->poll_tx(s, &cuda_error);
 
                 if (status == CUDAQ_TX_READY) {
-                    int64_t rid = slot_request[s];
-                    if (rid >= 0 && completion_handler) {
+                    if (completion_handler) {
                         Completion c;
-                        c.request_id = static_cast<uint64_t>(rid);
+                        c.request_id = slot_request[s];
                         c.slot = static_cast<int>(s);
                         c.success = true;
                         c.cuda_error = 0;
@@ -506,25 +495,24 @@ struct RealtimePipeline::Impl {
                     }
                     total_completed.fetch_add(1, std::memory_order_relaxed);
 
-                    // ARM memory ordering: clear slot_request BEFORE
+                    // ARM memory ordering: clear occupancy BEFORE
                     // clearing ring buffer flags, with a fence between.
-                    slot_request[s] = -1;
+                    slot_occupied[s] = 0;
                     __sync_synchronize();
                     ring->clear_slot(s);
                     found_any = true;
 
                 } else if (status == CUDAQ_TX_ERROR) {
-                    int64_t rid = slot_request[s];
-                    if (rid >= 0 && completion_handler) {
+                    if (completion_handler) {
                         Completion c;
-                        c.request_id = static_cast<uint64_t>(rid);
+                        c.request_id = slot_request[s];
                         c.slot = static_cast<int>(s);
                         c.success = false;
                         c.cuda_error = cuda_error;
                         completion_handler(c);
                     }
                     total_completed.fetch_add(1, std::memory_order_relaxed);
-                    slot_request[s] = -1;
+                    slot_occupied[s] = 0;
                     __sync_synchronize();
                     ring->clear_slot(s);
                     found_any = true;
@@ -574,19 +562,6 @@ void RealtimePipeline::stop() {
     impl_->stop_all();
 }
 
-bool RealtimePipeline::try_submit(uint32_t function_id, const void* payload,
-                                   size_t payload_size, uint64_t request_id) {
-    return impl_->try_submit_impl(function_id, payload, payload_size, request_id);
-}
-
-void RealtimePipeline::submit(uint32_t function_id, const void* payload,
-                               size_t payload_size, uint64_t request_id) {
-    while (!try_submit(function_id, payload, payload_size, request_id)) {
-        impl_->backpressure_stalls.fetch_add(1, std::memory_order_relaxed);
-        QEC_CPU_RELAX();
-    }
-}
-
 RealtimePipeline::Stats RealtimePipeline::stats() const {
     return {
         impl_->total_submitted.load(std::memory_order_relaxed),
@@ -594,6 +569,76 @@ RealtimePipeline::Stats RealtimePipeline::stats() const {
         impl_->live_dispatched.load(cuda::std::memory_order_relaxed),
         impl_->backpressure_stalls.load(std::memory_order_relaxed)
     };
+}
+
+// ---------------------------------------------------------------------------
+// RingBufferInjector
+// ---------------------------------------------------------------------------
+
+struct RingBufferInjector::State {
+    RingBufferManager* ring = nullptr;
+    std::vector<uint64_t>* slot_request = nullptr;
+    std::vector<uint8_t>* slot_occupied = nullptr;
+    std::atomic<uint64_t>* total_submitted = nullptr;
+    std::atomic<uint64_t>* backpressure_stalls = nullptr;
+    std::atomic<bool>* producer_stop = nullptr;
+    int num_slots = 0;
+    std::atomic<uint32_t> next_slot{0};
+};
+
+RingBufferInjector RealtimePipeline::create_injector() {
+    auto s = std::make_unique<RingBufferInjector::State>();
+    s->ring              = impl_->ring.get();
+    s->slot_request      = &impl_->slot_request;
+    s->slot_occupied     = &impl_->slot_occupied;
+    s->total_submitted   = &impl_->total_submitted;
+    s->backpressure_stalls = &impl_->backpressure_stalls;
+    s->producer_stop     = &impl_->producer_stop;
+    s->num_slots         = impl_->config.num_slots;
+    return RingBufferInjector(std::move(s));
+}
+
+RingBufferInjector::RingBufferInjector(std::unique_ptr<State> s)
+    : state_(std::move(s)) {}
+
+RingBufferInjector::~RingBufferInjector() = default;
+RingBufferInjector::RingBufferInjector(RingBufferInjector&&) noexcept = default;
+RingBufferInjector& RingBufferInjector::operator=(RingBufferInjector&&) noexcept = default;
+
+bool RingBufferInjector::try_submit(uint32_t function_id, const void* payload,
+                                     size_t payload_size, uint64_t request_id) {
+    uint32_t cur = state_->next_slot.load(std::memory_order_relaxed);
+    uint32_t slot = cur % static_cast<uint32_t>(state_->num_slots);
+    if (!state_->ring->slot_available(slot))
+        return false;
+
+    if (!state_->next_slot.compare_exchange_weak(
+            cur, cur + 1,
+            std::memory_order_acq_rel, std::memory_order_relaxed))
+        return false;
+
+    state_->ring->write_and_signal(slot, function_id, payload,
+                                   static_cast<uint32_t>(payload_size));
+
+    (*state_->slot_request)[slot] = request_id;
+    (*state_->slot_occupied)[slot] = 1;
+    state_->total_submitted->fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+void RingBufferInjector::submit(uint32_t function_id, const void* payload,
+                                 size_t payload_size, uint64_t request_id) {
+    while (!try_submit(function_id, payload, payload_size, request_id)) {
+        if (state_->producer_stop &&
+            state_->producer_stop->load(std::memory_order_acquire))
+            return;
+        state_->backpressure_stalls->fetch_add(1, std::memory_order_relaxed);
+        QEC_CPU_RELAX();
+    }
+}
+
+uint64_t RingBufferInjector::backpressure_stalls() const {
+    return state_->backpressure_stalls->load(std::memory_order_relaxed);
 }
 
 } // namespace cudaq::realtime

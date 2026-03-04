@@ -353,6 +353,14 @@ int main(int argc, char* argv[]) {
         pre_launch_ctxs[i].h_ring_ptrs = predecoders[i]->get_host_ring_ptrs();
     }
 
+    if (config.num_workers != config.num_predecoders) {
+        throw std::invalid_argument(
+            "num_workers (" + std::to_string(config.num_workers) +
+            ") must equal num_predecoders (" +
+            std::to_string(config.num_predecoders) +
+            ") in the current benchmark");
+    }
+
     // Worker contexts (per-worker, application-specific)
     std::vector<WorkerCtx> worker_ctxs(config.num_workers);
     for (int i = 0; i < config.num_workers; ++i) {
@@ -458,7 +466,7 @@ int main(int argc, char* argv[]) {
     const int max_requests = 500000;
     std::vector<hrclock::time_point> submit_ts(max_requests);
     std::vector<hrclock::time_point> complete_ts(max_requests);
-    std::vector<bool> completed(max_requests, false);
+    std::vector<uint8_t> completed(max_requests, 0);
 
     pipeline.set_completion_handler([&](const realtime_ns::Completion& c) {
         if (c.request_id < static_cast<uint64_t>(max_requests)) {
@@ -472,6 +480,7 @@ int main(int argc, char* argv[]) {
     // =========================================================================
 
     std::cout << "[Setup] Starting pipeline...\n";
+    auto injector = pipeline.create_injector();
     pipeline.start();
 
     auto run_deadline = std::chrono::steady_clock::now()
@@ -508,7 +517,7 @@ int main(int argc, char* argv[]) {
         uint32_t fid = realtime_ns::fnv1a_hash(func.c_str());
 
         submit_ts[req_id] = hrclock::now();
-        pipeline.submit(fid, payload, static_cast<uint32_t>(payload_bytes),
+        injector.submit(fid, payload, static_cast<uint32_t>(payload_bytes),
                         static_cast<uint64_t>(req_id));
 
         target = (target + 1) % config.num_predecoders;

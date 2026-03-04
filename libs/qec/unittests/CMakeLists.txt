@@ -227,10 +227,10 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       NO_DEFAULT_PATH
     )
     find_library(TENSORRT_LIBRARY_FOR_PIPELINE nvinfer
-      PATHS ${TENSORRT_ROOT}/lib /usr/lib/x86_64-linux-gnu /usr/local/cuda/lib64 /usr/local/tensorrt/lib /opt/tensorrt/lib
+      PATHS ${TENSORRT_ROOT}/lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/local/cuda/lib64 /usr/local/tensorrt/lib /opt/tensorrt/lib
     )
     find_library(TENSORRT_ONNX_PARSER_FOR_PIPELINE nvonnxparser
-      PATHS ${TENSORRT_ROOT}/lib /usr/lib/x86_64-linux-gnu /usr/local/cuda/lib64 /usr/local/tensorrt/lib /opt/tensorrt/lib
+      PATHS ${TENSORRT_ROOT}/lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/local/cuda/lib64 /usr/local/tensorrt/lib /opt/tensorrt/lib
     )
 
     if(TENSORRT_INCLUDE_DIR_FOR_PIPELINE AND TENSORRT_LIBRARY_FOR_PIPELINE AND TENSORRT_ONNX_PARSER_FOR_PIPELINE)
@@ -313,6 +313,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       PATHS
         ${TENSORRT_ROOT}/include
         /usr/include/x86_64-linux-gnu
+        /usr/include/aarch64-linux-gnu
         /usr/local/cuda/include
         /usr/local/tensorrt/include
         /opt/tensorrt/include
@@ -322,6 +323,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       PATHS
         ${TENSORRT_ROOT}/lib
         /usr/lib/x86_64-linux-gnu
+        /usr/lib/aarch64-linux-gnu
         /usr/local/cuda/lib64
         /usr/local/tensorrt/lib
         /opt/tensorrt/lib
@@ -330,6 +332,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       PATHS
         ${TENSORRT_ROOT}/lib
         /usr/lib/x86_64-linux-gnu
+        /usr/lib/aarch64-linux-gnu
         /usr/local/cuda/lib64
         /usr/local/tensorrt/lib
         /opt/tensorrt/lib

@@ -94,7 +94,8 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
         for (auto& b : all_bindings_) {
             context_->setTensorAddress(b.name.c_str(), b.d_buffer);
         }
-        context_->enqueueV3(stream);
+        if (!context_->enqueueV3(stream))
+            throw std::runtime_error("TRT enqueueV3 warmup failed in AIPreDecoderService");
     }
     SERVICE_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -105,7 +106,8 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream, bool device_launch)
         passthrough_copy_kernel<<<1, 256, 0, stream>>>(
             d_trt_output_, d_trt_input_, get_input_size());
     } else {
-        context_->enqueueV3(stream);
+        if (!context_->enqueueV3(stream))
+            throw std::runtime_error("TRT enqueueV3 failed during graph capture in AIPreDecoderService");
     }
 
     SERVICE_CUDA_CHECK(cudaMemcpyAsync(
