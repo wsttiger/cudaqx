@@ -6,7 +6,7 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
 #include "cudaq/qec/realtime/ai_decoder_service.h"
 #include <NvOnnxParser.h>
 #include <algorithm>
@@ -40,7 +40,7 @@ __global__ void gateway_input_kernel(void **mailbox_slot_ptr,
     return;
 
   const char *src =
-      (const char *)ring_buffer_data + sizeof(cudaq::nvqlink::RPCHeader);
+      (const char *)ring_buffer_data + sizeof(cudaq::realtime::RPCHeader);
   char *dst = (char *)trt_fixed_input;
 
   for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < copy_size_bytes;
@@ -56,7 +56,7 @@ __global__ void gateway_output_kernel(void **mailbox_slot_ptr,
   if (ring_buffer_data == nullptr)
     return;
 
-  char *dst = (char *)ring_buffer_data + sizeof(cudaq::nvqlink::RPCHeader);
+  char *dst = (char *)ring_buffer_data + sizeof(cudaq::realtime::RPCHeader);
   const char *src = (const char *)trt_fixed_output;
 
   for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < result_size_bytes;
@@ -67,8 +67,8 @@ __global__ void gateway_output_kernel(void **mailbox_slot_ptr,
   __syncthreads();
 
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    auto *response = (cudaq::nvqlink::RPCResponse *)ring_buffer_data;
-    response->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
+    auto *response = (cudaq::realtime::RPCResponse *)ring_buffer_data;
+    response->magic = cudaq::realtime::RPC_MAGIC_RESPONSE;
     response->status = 0;
     response->result_len = static_cast<uint32_t>(result_size_bytes);
     __threadfence_system();

@@ -27,13 +27,13 @@
 #include <vector>
 
 // cuda-quantum host API
-#include "cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h"
+#include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
 
 // cuda-quantum RPC types/hash helper
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
 
 // cuda-quantum kernel types for graph-aware dispatch
-#include "cudaq/nvqlink/daemon/dispatcher/kernel_types.h"
+#include "cudaq/realtime/daemon/dispatcher/kernel_types.h"
 
 // cudaqx mock decoder
 #include "cudaq/qec/realtime/mock_decode_handler.cuh"
@@ -53,7 +53,7 @@ namespace {
 
 // The dispatch kernel uses function_id to find the handler
 constexpr std::uint32_t MOCK_DECODE_FUNCTION_ID =
-    cudaq::nvqlink::fnv1a_hash("mock_decode");
+    cudaq::realtime::fnv1a_hash("mock_decode");
 
 //==============================================================================
 // Hololink-Style Ring Buffer
@@ -378,7 +378,7 @@ protected:
     cudaq::qec::realtime::set_mock_decoder(d_decoder_);
 
     // Allocate ring buffers (with space for RPCHeader)
-    slot_size_ = sizeof(cudaq::nvqlink::RPCHeader) +
+    slot_size_ = sizeof(cudaq::realtime::RPCHeader) +
                  std::max(syndrome_size_, static_cast<std::size_t>(256));
     ASSERT_TRUE(allocate_ring_buffer(num_slots_, slot_size_, &rx_flags_host_,
                                      &rx_flags_, &rx_data_host_, &rx_data_));
@@ -560,14 +560,14 @@ protected:
         const_cast<uint8_t *>(rx_data_host_) + slot * slot_size_;
 
     // Write RPCHeader
-    cudaq::nvqlink::RPCHeader *header =
-        reinterpret_cast<cudaq::nvqlink::RPCHeader *>(slot_data);
-    header->magic = cudaq::nvqlink::RPC_MAGIC_REQUEST;
+    cudaq::realtime::RPCHeader *header =
+        reinterpret_cast<cudaq::realtime::RPCHeader *>(slot_data);
+    header->magic = cudaq::realtime::RPC_MAGIC_REQUEST;
     header->function_id = MOCK_DECODE_FUNCTION_ID;
     header->arg_len = static_cast<std::uint32_t>(measurements.size());
 
     // Write measurement data after header
-    memcpy(slot_data + sizeof(cudaq::nvqlink::RPCHeader), measurements.data(),
+    memcpy(slot_data + sizeof(cudaq::realtime::RPCHeader), measurements.data(),
            measurements.size());
   }
 
@@ -580,10 +580,10 @@ protected:
         const_cast<uint8_t *>(rx_data_host_) + slot * slot_size_;
 
     // Read RPCResponse
-    const cudaq::nvqlink::RPCResponse *response =
-        reinterpret_cast<const cudaq::nvqlink::RPCResponse *>(slot_data);
+    const cudaq::realtime::RPCResponse *response =
+        reinterpret_cast<const cudaq::realtime::RPCResponse *>(slot_data);
 
-    if (response->magic != cudaq::nvqlink::RPC_MAGIC_RESPONSE) {
+    if (response->magic != cudaq::realtime::RPC_MAGIC_RESPONSE) {
       return false;
     }
     if (status_out)
@@ -596,7 +596,7 @@ protected:
     }
 
     // Read correction data after response header
-    correction = *(slot_data + sizeof(cudaq::nvqlink::RPCResponse));
+    correction = *(slot_data + sizeof(cudaq::realtime::RPCResponse));
     return true;
   }
 

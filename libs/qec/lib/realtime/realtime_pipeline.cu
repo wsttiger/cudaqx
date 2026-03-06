@@ -8,7 +8,7 @@
 
 #include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
 #include "cudaq/realtime/daemon/dispatcher/host_dispatcher.h"
-#include "cudaq/realtime/pipeline.h"
+#include "cudaq/qec/realtime/pipeline.h"
 
 #include <cuda/std/atomic>
 #include <cuda_runtime.h>

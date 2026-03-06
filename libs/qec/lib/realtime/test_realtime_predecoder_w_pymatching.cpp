@@ -42,7 +42,7 @@
 #include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
 #include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
 #include "cudaq/realtime/daemon/dispatcher/host_dispatcher.h"
-#include "cudaq/realtime/pipeline.h"
+#include "cudaq/qec/realtime/pipeline.h"
 
 #include "cudaq/qec/code.h"
 #include "cudaq/qec/decoder.h"

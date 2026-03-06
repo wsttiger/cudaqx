@@ -6,7 +6,7 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "cudaq/nvqlink/daemon/dispatcher/dispatch_kernel_launch.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
 #include "cudaq/qec/realtime/mock_decode_handler.cuh"
 
 namespace cudaq::qec::realtime {
@@ -98,10 +98,10 @@ __global__ void mock_decode_graph_kernel(void **buffer_ptr) {
       return;
 
     // Parse RPC header
-    auto *header = static_cast<cudaq::nvqlink::RPCHeader *>(data_buffer);
+    auto *header = static_cast<cudaq::realtime::RPCHeader *>(data_buffer);
     void *arg_buffer = static_cast<void *>(header + 1);
 
-    auto *response = static_cast<cudaq::nvqlink::RPCResponse *>(data_buffer);
+    auto *response = static_cast<cudaq::realtime::RPCResponse *>(data_buffer);
 
     if (g_mock_decoder != nullptr) {
       uint8_t *measurements = static_cast<uint8_t *>(arg_buffer);
@@ -112,12 +112,12 @@ __global__ void mock_decode_graph_kernel(void **buffer_ptr) {
                              ctx.num_observables);
 
       // Write response
-      response->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
+      response->magic = cudaq::realtime::RPC_MAGIC_RESPONSE;
       response->status = 0;
       response->result_len = static_cast<std::uint32_t>(ctx.num_observables);
     } else {
       // Error: decoder not set
-      response->magic = cudaq::nvqlink::RPC_MAGIC_RESPONSE;
+      response->magic = cudaq::realtime::RPC_MAGIC_RESPONSE;
       response->status = -1;
       response->result_len = 0;
     }
