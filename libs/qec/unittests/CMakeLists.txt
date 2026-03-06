@@ -348,13 +348,14 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         ${TENSORRT_ONNX_PARSER_LIBRARY}
         ${CUDAQ_REALTIME_LIBRARY}
         ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+        ${CUDAQ_REALTIME_HOST_DISPATCH_LIBRARY}
         cudaq-realtime-pipeline
         cudaq-qec
         cudaq::cudaq
       )
       set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
-        BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
-        INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+        BUILD_RPATH "${CMAKE_BINARY_DIR}/lib;${CUDAQ_REALTIME_LIB_DIR}"
+        INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib;${CUDAQ_REALTIME_LIB_DIR}"
       )
 
       add_dependencies(CUDAQXQECUnitTests test_realtime_predecoder_w_pymatching)
