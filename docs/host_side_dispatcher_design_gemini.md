@@ -65,14 +65,14 @@ All shared state must use **libcu++ system-scope atomics** allocated in mapped p
 
 ## 4. Host Dispatcher Thread (Producer)
 
-The dispatcher loop is a tight spin-polling loop running on a dedicated CPU core. It is implemented in `realtime/lib/daemon/dispatcher/host_dispatcher.cu` as `host_dispatcher_loop()`.
+The dispatcher loop is a tight spin-polling loop running on a dedicated CPU core. It is implemented in `realtime/lib/daemon/dispatcher/host_dispatcher.cu` as `cudaq_host_dispatcher_loop()`.
 
-### 4.1 HostDispatchWorker Structure
+### 4.1 cudaq_host_dispatch_worker_t Structure
 
 Each worker in the pool has the following fields:
 
 ```cpp
-struct HostDispatchWorker {
+typedef struct {
     cudaGraphExec_t graph_exec;
     cudaStream_t stream;
     uint32_t function_id;
@@ -85,7 +85,7 @@ The `pre_launch_fn` callback enables the dispatcher to issue a `cudaMemcpyAsync`
 
 ### 4.2 Dispatcher Logic (Pseudocode)
 ```cpp
-void host_dispatcher_loop(const HostDispatcherConfig& config) {
+void cudaq_host_dispatcher_loop(const cudaq_host_dispatcher_config_t *config) {
     size_t current_slot = 0;
 
     while (config.shutdown_flag->load(acquire) == 0) {

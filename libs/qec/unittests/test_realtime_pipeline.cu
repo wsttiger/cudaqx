@@ -37,6 +37,9 @@ namespace {
 using namespace cudaq::qec;
 namespace rt = cudaq::realtime;
 
+using atomic_uint64_sys = cuda::std::atomic<uint64_t>;
+using atomic_int_sys = cuda::std::atomic<int>;
+
 static constexpr size_t kSkipTrtFloats = 1600;
 static constexpr size_t kSkipTrtBytes = kSkipTrtFloats * sizeof(float);
 static constexpr size_t kSlotSize = 8192;
@@ -154,7 +157,7 @@ protected:
                           const void *payload, size_t payload_len) {
     uint8_t *slot_host = rx_data_host_ + slot * kSlotSize;
     write_rpc_slot(slot_host, function_id, payload, payload_len);
-    auto *flags = reinterpret_cast<rt::atomic_uint64_sys *>(rx_flags_host_);
+    auto *flags = reinterpret_cast<atomic_uint64_sys *>(rx_flags_host_);
     flags[slot].store(reinterpret_cast<uint64_t>(slot_host),
                       cuda::std::memory_order_release);
   }
@@ -385,10 +388,10 @@ class HostDispatcherTest : public RealtimePipelineTest {
 protected:
   void SetUp() override {
     RealtimePipelineTest::SetUp();
-    idle_mask_ = new rt::atomic_uint64_sys(0);
-    live_dispatched_ = new rt::atomic_uint64_sys(0);
+    idle_mask_ = new atomic_uint64_sys(0);
+    live_dispatched_ = new atomic_uint64_sys(0);
     inflight_slot_tags_ = new int[kMaxWorkers]();
-    shutdown_flag_ = new rt::atomic_int_sys(0);
+    shutdown_flag_ = new atomic_int_sys(0);
     stats_counter_ = 0;
     function_table_ = new cudaq_function_entry_t[kMaxWorkers];
     std::memset(function_table_, 0,
@@ -420,7 +423,7 @@ protected:
     ASSERT_EQ(cudaStreamCreate(&s), cudaSuccess);
     worker_streams_.push_back(s);
 
-    rt::HostDispatchWorker w;
+    cudaq_host_dispatch_worker_t w{};
     w.graph_exec = exec;
     w.stream = s;
     w.function_id = function_id;
@@ -439,10 +442,9 @@ protected:
     idle_mask_->store((1ULL << workers_.size()) - 1,
                       cuda::std::memory_order_release);
 
-    config_.rx_flags =
-        reinterpret_cast<rt::atomic_uint64_sys *>(rx_flags_host_);
-    config_.tx_flags =
-        reinterpret_cast<rt::atomic_uint64_sys *>(tx_flags_host_);
+    std::memset(&config_, 0, sizeof(config_));
+    config_.rx_flags = rx_flags_host_;
+    config_.tx_flags = tx_flags_host_;
     config_.rx_data_host = rx_data_host_;
     config_.rx_data_dev = rx_data_dev_;
     config_.tx_data_host = tx_data_host_;
@@ -451,7 +453,8 @@ protected:
     config_.h_mailbox_bank = mailbox_bank_host_;
     config_.num_slots = kNumSlots;
     config_.slot_size = kSlotSize;
-    config_.workers = workers_;
+    config_.workers = workers_.data();
+    config_.num_workers = workers_.size();
     config_.function_table = function_table_;
     config_.function_table_count = ft_count_;
     config_.shutdown_flag = shutdown_flag_;
@@ -460,7 +463,9 @@ protected:
     config_.idle_mask = idle_mask_;
     config_.inflight_slot_tags = inflight_slot_tags_;
 
-    loop_thread_ = std::thread(rt::host_dispatcher_loop, config_);
+    loop_thread_ = std::thread([this]() {
+      cudaq_host_dispatcher_loop(&config_);
+    });
   }
 
   void stop_loop() {
@@ -476,7 +481,7 @@ protected:
   }
 
   bool poll_tx_flag(size_t slot, int timeout_ms = 2000) {
-    auto *flags = reinterpret_cast<rt::atomic_uint64_sys *>(tx_flags_host_);
+    auto *flags = reinterpret_cast<atomic_uint64_sys *>(tx_flags_host_);
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -489,22 +494,22 @@ protected:
   }
 
   void clear_tx_flag(size_t slot) {
-    auto *flags = reinterpret_cast<rt::atomic_uint64_sys *>(tx_flags_host_);
+    auto *flags = reinterpret_cast<atomic_uint64_sys *>(tx_flags_host_);
     flags[slot].store(0, cuda::std::memory_order_release);
   }
 
-  rt::atomic_uint64_sys *idle_mask_ = nullptr;
-  rt::atomic_uint64_sys *live_dispatched_ = nullptr;
+  atomic_uint64_sys *idle_mask_ = nullptr;
+  atomic_uint64_sys *live_dispatched_ = nullptr;
   int *inflight_slot_tags_ = nullptr;
-  rt::atomic_int_sys *shutdown_flag_ = nullptr;
+  atomic_int_sys *shutdown_flag_ = nullptr;
   uint64_t stats_counter_ = 0;
   bool loop_stopped_ = false;
 
   cudaq_function_entry_t *function_table_ = nullptr;
   size_t ft_count_ = 0;
-  std::vector<rt::HostDispatchWorker> workers_;
+  std::vector<cudaq_host_dispatch_worker_t> workers_;
   std::vector<cudaStream_t> worker_streams_;
-  rt::HostDispatcherConfig config_{};
+  cudaq_host_dispatcher_config_t config_;
   std::thread loop_thread_;
 };
 
@@ -576,7 +581,7 @@ TEST_F(HostDispatcherTest, InvalidMagicDropped) {
   bad_hdr.arg_len = 4;
   std::memcpy(slot_host, &bad_hdr, sizeof(bad_hdr));
 
-  auto *flags = reinterpret_cast<rt::atomic_uint64_sys *>(rx_flags_host_);
+  auto *flags = reinterpret_cast<atomic_uint64_sys *>(rx_flags_host_);
   flags[0].store(reinterpret_cast<uint64_t>(slot_host),
                  cuda::std::memory_order_release);
 
@@ -603,7 +608,7 @@ TEST_F(HostDispatcherTest, SlotWraparound) {
   for (int i = 0; i < kTotal; ++i) {
     size_t slot = static_cast<size_t>(i % kNumSlots);
 
-    auto *rx = reinterpret_cast<rt::atomic_uint64_sys *>(rx_flags_host_);
+    auto *rx = reinterpret_cast<atomic_uint64_sys *>(rx_flags_host_);
     while (rx[slot].load(cuda::std::memory_order_acquire) != 0)
       usleep(100);
     clear_tx_flag(slot);
@@ -739,7 +744,7 @@ TEST_F(HostDispatcherTest, SustainedThroughput_200Requests) {
     int pd_idx = r % kNPd;
     size_t slot = static_cast<size_t>(r % kNumSlots);
 
-    auto *rx = reinterpret_cast<rt::atomic_uint64_sys *>(rx_flags_host_);
+    auto *rx = reinterpret_cast<atomic_uint64_sys *>(rx_flags_host_);
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (rx[slot].load(cuda::std::memory_order_acquire) != 0) {
       if (std::chrono::steady_clock::now() > deadline)

@@ -32,13 +32,14 @@ classDiagram
         +clear_slot(slot)
     }
 
-    class HostDispatcherConfig {
+    class cudaq_host_dispatcher_config_t {
         +rx_flags : atomic_uint64~ptr~
         +tx_flags : atomic_uint64~ptr~
         +idle_mask : atomic_uint64~ptr~
         +inflight_slot_tags : int~ptr~
         +h_mailbox_bank : void~ptrptr~
-        +workers : HostDispatchWorker~list~
+        +workers : cudaq_host_dispatch_worker_t*
+        +num_workers : size_t
         +function_table : cudaq_function_entry_t~ptr~
         +shutdown_flag : atomic_int~ptr~
     }
@@ -53,10 +54,10 @@ classDiagram
     }
 
     RealtimePipeline *-- RingBufferManager : owns
-    RealtimePipeline *-- HostDispatcherConfig : builds
+    RealtimePipeline *-- cudaq_host_dispatcher_config_t : builds
     RealtimePipeline --> RingBufferInjector : creates
     RingBufferInjector --> RingBufferManager : writes to
-    HostDispatcherConfig --> AIPreDecoderService : launches graph
+    cudaq_host_dispatcher_config_t --> AIPreDecoderService : launches graph
 ```
 
 ## 2. Thread Model
@@ -70,7 +71,7 @@ flowchart LR
     end
 
     subgraph "Dispatcher Thread (core 2)"
-        D["host_dispatcher_loop()"]
+        D["cudaq_host_dispatcher_loop()"]
     end
 
     subgraph "Worker Threads (cores 4..4+N)"

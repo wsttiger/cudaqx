@@ -126,13 +126,21 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
   # Header layout: include/cudaq/realtime/daemon/dispatcher/cudaq_realtime.h
   find_path(CUDAQ_REALTIME_INCLUDE_DIR
     NAMES cudaq/realtime/daemon/dispatcher/cudaq_realtime.h
-    PATHS ${_cudaq_realtime_prefixes}
+    HINTS ${_cudaq_realtime_prefixes}
     PATH_SUFFIXES include
+    NO_DEFAULT_PATH
   )
   if(NOT CUDAQ_REALTIME_INCLUDE_DIR)
     find_path(CUDAQ_REALTIME_INCLUDE_DIR
-      NAMES cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h
+      NAMES cudaq/realtime/daemon/dispatcher/cudaq_realtime.h
       PATHS ${_cudaq_realtime_prefixes}
+      PATH_SUFFIXES include
+    )
+  endif()
+  if(NOT CUDAQ_REALTIME_INCLUDE_DIR)
+    find_path(CUDAQ_REALTIME_INCLUDE_DIR
+      NAMES cudaq/nvqlink/daemon/dispatcher/cudaq_realtime.h
+      HINTS ${_cudaq_realtime_prefixes}
       PATH_SUFFIXES include ../include
     )
   endif()

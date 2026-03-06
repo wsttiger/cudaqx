@@ -28,6 +28,9 @@
 
 namespace cudaq::realtime {
 
+using atomic_uint64_sys = cuda::std::atomic<uint64_t>;
+using atomic_int_sys = cuda::std::atomic<int>;
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -311,10 +314,29 @@ struct RealtimePipeline::Impl {
     uint64_t initial_idle = (nw >= 64) ? ~0ULL : ((1ULL << nw) - 1);
     idle_mask.store(initial_idle, cuda::std::memory_order_release);
 
-    // Build HostDispatcherConfig
-    HostDispatcherConfig disp_cfg;
-    disp_cfg.rx_flags = ring->rx_flags();
-    disp_cfg.tx_flags = ring->tx_flags();
+    // Build cudaq_host_dispatcher_config_t
+    std::vector<cudaq_host_dispatch_worker_t> disp_workers(nw);
+    for (int i = 0; i < nw; ++i) {
+      disp_workers[i].graph_exec = worker_resources[i].graph_exec;
+      disp_workers[i].stream = worker_resources[i].stream;
+      disp_workers[i].function_id = worker_resources[i].function_id;
+      disp_workers[i].pre_launch_fn = worker_resources[i].pre_launch_fn;
+      disp_workers[i].pre_launch_data = worker_resources[i].pre_launch_data;
+
+      if (gpu_only) {
+        disp_workers[i].post_launch_fn = gpu_only_post_launch;
+        disp_workers[i].post_launch_data = &gpu_only_ctxs[i];
+      } else {
+        disp_workers[i].post_launch_fn = worker_resources[i].post_launch_fn;
+        disp_workers[i].post_launch_data =
+            worker_resources[i].post_launch_data;
+      }
+    }
+
+    cudaq_host_dispatcher_config_t disp_cfg;
+    std::memset(&disp_cfg, 0, sizeof(disp_cfg));
+    disp_cfg.rx_flags = static_cast<void *>(ring->rx_flags());
+    disp_cfg.tx_flags = static_cast<void *>(ring->tx_flags());
     disp_cfg.rx_data_host = ring->rx_data_host();
     disp_cfg.rx_data_dev = ring->rx_data_dev();
     disp_cfg.tx_data_host = nullptr;
@@ -323,35 +345,23 @@ struct RealtimePipeline::Impl {
     disp_cfg.h_mailbox_bank = h_mailbox_bank;
     disp_cfg.num_slots = static_cast<size_t>(config.num_slots);
     disp_cfg.slot_size = config.slot_size;
+    disp_cfg.workers = disp_workers.data();
+    disp_cfg.num_workers = static_cast<size_t>(nw);
     disp_cfg.function_table = function_table.data();
     disp_cfg.function_table_count = static_cast<size_t>(nw);
-    disp_cfg.shutdown_flag = &shutdown_flag;
+    disp_cfg.shutdown_flag = static_cast<void *>(&shutdown_flag);
     disp_cfg.stats_counter = &dispatcher_stats;
-    disp_cfg.live_dispatched = &live_dispatched;
-    disp_cfg.idle_mask = &idle_mask;
+    disp_cfg.live_dispatched = static_cast<void *>(&live_dispatched);
+    disp_cfg.idle_mask = static_cast<void *>(&idle_mask);
     disp_cfg.inflight_slot_tags = inflight_slot_tags.data();
 
-    disp_cfg.workers.resize(nw);
-    for (int i = 0; i < nw; ++i) {
-      disp_cfg.workers[i].graph_exec = worker_resources[i].graph_exec;
-      disp_cfg.workers[i].stream = worker_resources[i].stream;
-      disp_cfg.workers[i].function_id = worker_resources[i].function_id;
-      disp_cfg.workers[i].pre_launch_fn = worker_resources[i].pre_launch_fn;
-      disp_cfg.workers[i].pre_launch_data = worker_resources[i].pre_launch_data;
-
-      if (gpu_only) {
-        disp_cfg.workers[i].post_launch_fn = gpu_only_post_launch;
-        disp_cfg.workers[i].post_launch_data = &gpu_only_ctxs[i];
-      } else {
-        disp_cfg.workers[i].post_launch_fn = worker_resources[i].post_launch_fn;
-        disp_cfg.workers[i].post_launch_data =
-            worker_resources[i].post_launch_data;
-      }
-    }
-
     // --- Dispatcher thread ---
+    // Copy workers vector into the lambda so it outlives this scope.
     dispatcher_thread = std::thread(
-        [cfg = std::move(disp_cfg)]() { host_dispatcher_loop(cfg); });
+        [cfg = disp_cfg, workers = std::move(disp_workers)]() mutable {
+          cfg.workers = workers.data();
+          cudaq_host_dispatcher_loop(&cfg);
+        });
     pin_thread(dispatcher_thread, config.cores.dispatcher);
 
     // --- Worker threads (skipped in GPU-only mode) ---
