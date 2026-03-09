@@ -69,7 +69,10 @@ if(CUDAQ_QEC_BUILD_TRT_DECODER AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64)|(AMD
       ${TENSORRT_INCLUDE_DIR}
   )
 
-  target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq)
+  target_link_libraries(test_trt_decoder PRIVATE GTest::gtest_main cudaq-qec cudaq-qec-trt-decoder cudaq::cudaq CUDA::cudart)
+  # Path to ONNX test asset at repo root (absolute so test finds it regardless of CWD)
+  target_compile_definitions(test_trt_decoder PRIVATE
+    TRT_TEST_ONNX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../assets/tests/surface_code_decoder.onnx")
   add_dependencies(CUDAQXQECUnitTests test_trt_decoder)
   gtest_discover_tests(test_trt_decoder)
 endif()
@@ -174,17 +177,22 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
   endif()
 
   if(_have_realtime_for_tests)
+    add_executable(test_realtime_decoding 
+      ${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/test_realtime_decoding.cu
+      ${CMAKE_CURRENT_SOURCE_DIR}/realtime/mock_decode_handler.cu
+      ${CMAKE_CURRENT_SOURCE_DIR}/realtime/mock_decoder_launch_params.cpp
+    )
 
     # TODO: Re-enable once libcudaq-realtime-host-dispatch.so RPATH is resolved
     # add_executable(test_realtime_decoding 
     #   ${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/test_realtime_decoding.cu
     # )
     #
-    # set_target_properties(test_realtime_decoding PROPERTIES
-    #   CUDA_SEPARABLE_COMPILATION ON
-    #   CUDA_RESOLVE_DEVICE_SYMBOLS ON
-    #   CUDA_STANDARD 17
-    # )
+    set_target_properties(test_realtime_decoding PROPERTIES
+      CUDA_SEPARABLE_COMPILATION ON
+      CUDA_RESOLVE_DEVICE_SYMBOLS ON
+      CUDA_STANDARD 17
+    )
     #
     # target_include_directories(test_realtime_decoding PRIVATE
     #   ${CUDAToolkit_INCLUDE_DIRS}
@@ -216,6 +224,27 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
     #   TEST_PREFIX "test_realtime_decoding."
     # )
 
+    target_include_directories(test_realtime_decoding PRIVATE
+      ${CUDAToolkit_INCLUDE_DIRS}
+      ${CMAKE_CURRENT_SOURCE_DIR}/../include
+      ${CMAKE_CURRENT_SOURCE_DIR}/realtime
+      ${CMAKE_SOURCE_DIR}/libs/core/include
+      ${CUDAQ_REALTIME_INCLUDE_DIR}
+    )
+
+    target_compile_definitions(test_realtime_decoding PRIVATE
+      TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/decoders/realtime/data"
+    )
+
+    target_link_libraries(test_realtime_decoding PRIVATE 
+      GTest::gtest_main 
+      CUDA::cudart
+      cudaq-qec-realtime-cudevice
+      ${CUDAQ_REALTIME_LIBRARY}
+      ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+    )
+
+    # Ensure runtime can locate libcudaq-realtime.so
     get_filename_component(CUDAQ_REALTIME_LIB_DIR "${CUDAQ_REALTIME_LIBRARY}" DIRECTORY)
 
     # ----------------------------------------------------------------
