@@ -80,7 +80,7 @@ namespace realtime_ns = cudaq::realtime;
 // Pipeline Configuration (application-level, no atomics)
 // =============================================================================
 
-constexpr size_t NUM_SLOTS = 32;
+constexpr size_t NUM_SLOTS = 16;
 
 struct PipelineConfig {
   std::string label;
@@ -121,7 +121,7 @@ struct PipelineConfig {
   static PipelineConfig d13_r104() {
     return {"d13_r104_Z", 13,   104,
             252,          2184, "predecoder_memory_d13_T104_X.onnx",
-            131072,       16,   16};
+            131072,       4,    4};
   }
 
   static PipelineConfig d21_r21() {

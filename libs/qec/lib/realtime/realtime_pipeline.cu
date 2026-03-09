@@ -153,9 +153,12 @@ public:
   }
 
   void write_and_signal(uint32_t slot, uint32_t function_id,
-                        const void *payload, uint32_t payload_len) {
+                        const void *payload, uint32_t payload_len,
+                        uint32_t request_id = 0,
+                        uint64_t ptp_timestamp = 0) {
     cudaq_host_ringbuffer_write_rpc_request(&rb_, slot, function_id, payload,
-                                            payload_len);
+                                            payload_len, request_id,
+                                            ptp_timestamp);
     cudaq_host_ringbuffer_signal_slot(&rb_, slot);
   }
 
@@ -626,7 +629,8 @@ bool RingBufferInjector::try_submit(uint32_t function_id, const void *payload,
     return false;
 
   state_->ring->write_and_signal(slot, function_id, payload,
-                                 static_cast<uint32_t>(payload_size));
+                                 static_cast<uint32_t>(payload_size),
+                                 static_cast<uint32_t>(request_id));
 
   (*state_->slot_request)[slot] = request_id;
   (*state_->slot_occupied)[slot] = 1;

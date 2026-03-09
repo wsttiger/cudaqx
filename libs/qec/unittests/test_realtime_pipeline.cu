@@ -96,7 +96,7 @@ static void free_mapped_buffer(uint8_t *host_ptr) {
 
 static void write_rpc_slot(uint8_t *slot_host, uint32_t function_id,
                            const void *payload, size_t payload_len) {
-  rt::RPCHeader hdr;
+  rt::RPCHeader hdr{};
   hdr.magic = rt::RPC_MAGIC_REQUEST;
   hdr.function_id = function_id;
   hdr.arg_len = static_cast<uint32_t>(payload_len);
