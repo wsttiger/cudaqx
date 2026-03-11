@@ -87,6 +87,8 @@ static size_t trt_dtype_size(nvinfer1::DataType dtype) {
     return 2;
   case nvinfer1::DataType::kINT8:
     return 1;
+  case nvinfer1::DataType::kUINT8:
+    return 1;
   case nvinfer1::DataType::kINT32:
     return 4;
   case nvinfer1::DataType::kINT64:
@@ -271,8 +273,11 @@ void AIDecoderService::setup_bindings() {
 
     bool is_input = (mode == nvinfer1::TensorIOMode::kINPUT);
 
-    std::printf("[TensorRT] Binding %d: \"%s\" %s, %zu bytes\n", i, name,
-                is_input ? "INPUT" : "OUTPUT", size_bytes);
+    std::printf("[TensorRT] Binding %d: \"%s\" %s, dtype=%d, elem_size=%zu, "
+                "volume=%zu, %zu bytes\n",
+                i, name, is_input ? "INPUT" : "OUTPUT",
+                static_cast<int>(dtype), trt_dtype_size(dtype),
+                tensor_volume(dims), size_bytes);
 
     TensorBinding binding{name, nullptr, size_bytes, is_input};
 

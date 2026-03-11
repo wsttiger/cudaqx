@@ -80,21 +80,15 @@ namespace realtime_ns = cudaq::realtime;
 // Pipeline Configuration (application-level, no atomics)
 // =============================================================================
 
-constexpr size_t NUM_SLOTS = 16;
+constexpr size_t NUM_SLOTS = 32;
 
 struct PipelineConfig {
   std::string label;
   int distance;
   int num_rounds;
-  int meas_qubits;
-  int residual_detectors;
   std::string onnx_filename;
-  size_t slot_size;
   int num_predecoders;
   int num_workers;
-
-  int input_elements() const { return meas_qubits * num_rounds; }
-  size_t input_bytes() const { return input_elements() * sizeof(int32_t); }
 
   std::string onnx_path() const {
     return std::string(ONNX_MODEL_DIR) + "/" + onnx_filename;
@@ -109,33 +103,38 @@ struct PipelineConfig {
   }
 
   static PipelineConfig d7_r7() {
-    return {"d7_r7_Z", 7,  7, 72, 336, "model1_d7_r7_unified_Z_batch1.onnx",
-            4096,      16, 16};
+    return {"d7_r7_Z", 7, 7, "model1_d7_r7_unified_Z_batch1.onnx", 16, 16};
   }
 
   static PipelineConfig d13_r13() {
-    return {"d13_r13_Z", 13, 13, 252, 2184, "predecoder_memory_d13_T13_X.onnx",
-            16384,       16, 16};
+    return {"d13_r13_Z", 13, 13, "predecoder_memory_d13_T13_X.onnx", 16, 16};
   }
 
   static PipelineConfig d13_r104() {
-    return {"d13_r104_Z", 13,   104,
-            252,          2184, "predecoder_memory_d13_T104_X.onnx",
-            131072,       4,    4};
+    return {"d13_r104_Z", 13, 104, "predecoder_memory_d13_T104_X.onnx", 8, 8};
   }
 
   static PipelineConfig d21_r21() {
-    return {"d21_r21_Z", 21,   21,
-            660,         9240, "model1_d21_r21_unified_X_batch1.onnx",
-            65536,       16,   16};
+    return {"d21_r21_Z", 21, 21, "model1_d21_r21_unified_X_batch1.onnx", 16,
+            16};
   }
 
   static PipelineConfig d31_r31() {
-    return {"d31_r31_Z", 31,    31,
-            1440,        29760, "model1_d31_r31_unified_Z_batch1.onnx",
-            262144,      16,    16};
+    return {"d31_r31_Z", 31, 31, "model1_d31_r31_unified_Z_batch1.onnx", 16,
+            16};
   }
 };
+
+static size_t round_up_pow2(size_t v) {
+  v--;
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+  v |= v >> 32;
+  return v + 1;
+}
 
 // =============================================================================
 // Decoder Context (application-level)
@@ -146,6 +145,8 @@ struct DecoderContext {
   std::atomic<int> next_decoder_idx{0};
   int z_stabilizers = 0;
   int spatial_slices = 0;
+  int num_residual_detectors = 0;
+  bool use_full_H = false;
 
   cudaq::qec::decoder *acquire_decoder() {
     thread_local int my_idx =
@@ -184,6 +185,11 @@ static void pre_launch_input_copy(void *user_data, void *slot_dev,
 struct WorkerCtx {
   AIPreDecoderService *predecoder;
   DecoderContext *decoder_ctx;
+  int32_t *decode_corrections = nullptr;
+  int32_t *decode_logical_pred = nullptr;
+  int max_requests = 0;
+  const uint8_t *obs_row = nullptr;
+  size_t obs_row_size = 0;
 };
 
 struct __attribute__((packed)) DecodeResponse {
@@ -192,15 +198,149 @@ struct __attribute__((packed)) DecodeResponse {
 };
 
 // =============================================================================
-// Data generation
+// Test data (pre-generated from Stim, or random)
 // =============================================================================
 
-void fill_measurement_payload(int32_t *payload, int input_elements,
-                              std::mt19937 &rng, double error_rate = 0.01) {
-  std::bernoulli_distribution err_dist(error_rate);
-  for (int i = 0; i < input_elements; ++i) {
-    payload[i] = err_dist(rng) ? 1 : 0;
+struct TestData {
+  std::vector<int32_t> detectors; // (num_samples × num_detectors) row-major
+  std::vector<int32_t> observables; // (num_samples × num_observables) row-major
+  uint32_t num_samples = 0;
+  uint32_t num_detectors = 0;
+  uint32_t num_observables = 0;
+
+  bool loaded() const { return num_samples > 0 && num_detectors > 0; }
+
+  const int32_t *sample(int idx) const {
+    return detectors.data() +
+           (static_cast<size_t>(idx % num_samples) * num_detectors);
   }
+
+  int32_t observable(int idx, int obs = 0) const {
+    return observables[static_cast<size_t>(idx % num_samples) *
+                           num_observables +
+                       obs];
+  }
+};
+
+static bool load_binary_file(const std::string &path, uint32_t &out_rows,
+                             uint32_t &out_cols, std::vector<int32_t> &data) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f.good())
+    return false;
+  f.read(reinterpret_cast<char *>(&out_rows), sizeof(uint32_t));
+  f.read(reinterpret_cast<char *>(&out_cols), sizeof(uint32_t));
+  size_t count = static_cast<size_t>(out_rows) * out_cols;
+  data.resize(count);
+  f.read(reinterpret_cast<char *>(data.data()), count * sizeof(int32_t));
+  return f.good();
+}
+
+static TestData load_test_data(const std::string &data_dir) {
+  TestData td;
+  std::string det_path = data_dir + "/detectors.bin";
+  std::string obs_path = data_dir + "/observables.bin";
+
+  if (!load_binary_file(det_path, td.num_samples, td.num_detectors,
+                        td.detectors)) {
+    std::cerr << "ERROR: Failed to load " << det_path << "\n";
+    return td;
+  }
+  uint32_t obs_samples = 0;
+  if (!load_binary_file(obs_path, obs_samples, td.num_observables,
+                        td.observables)) {
+    std::cerr << "ERROR: Failed to load " << obs_path << "\n";
+    td.num_samples = 0;
+    return td;
+  }
+  if (obs_samples != td.num_samples) {
+    std::cerr << "ERROR: sample count mismatch: detectors=" << td.num_samples
+              << " observables=" << obs_samples << "\n";
+    td.num_samples = 0;
+    return td;
+  }
+  std::cout << "[Data] Loaded " << td.num_samples << " samples, "
+            << td.num_detectors << " detectors, " << td.num_observables
+            << " observables from " << data_dir << "\n";
+  return td;
+}
+
+// =============================================================================
+// Stim-derived parity check matrix loader (CSR sparse → dense tensor)
+// =============================================================================
+
+struct SparseCSR {
+  uint32_t nrows = 0, ncols = 0, nnz = 0;
+  std::vector<int32_t> indptr;
+  std::vector<int32_t> indices;
+
+  bool loaded() const { return nrows > 0 && ncols > 0; }
+
+  cudaqx::tensor<uint8_t> to_dense() const {
+    cudaqx::tensor<uint8_t> T;
+    std::vector<uint8_t> data(static_cast<size_t>(nrows) * ncols, 0);
+    for (uint32_t r = 0; r < nrows; ++r)
+      for (int32_t j = indptr[r]; j < indptr[r + 1]; ++j)
+        data[static_cast<size_t>(r) * ncols + indices[j]] = 1;
+    T.copy(data.data(),
+           {static_cast<size_t>(nrows), static_cast<size_t>(ncols)});
+    return T;
+  }
+
+  std::vector<uint8_t> row_dense(uint32_t r) const {
+    std::vector<uint8_t> row(ncols, 0);
+    for (int32_t j = indptr[r]; j < indptr[r + 1]; ++j)
+      row[indices[j]] = 1;
+    return row;
+  }
+};
+
+struct StimData {
+  SparseCSR H;
+  SparseCSR O;
+  std::vector<double> priors;
+};
+
+static bool load_csr(const std::string &path, SparseCSR &out) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f.good())
+    return false;
+  f.read(reinterpret_cast<char *>(&out.nrows), sizeof(uint32_t));
+  f.read(reinterpret_cast<char *>(&out.ncols), sizeof(uint32_t));
+  f.read(reinterpret_cast<char *>(&out.nnz), sizeof(uint32_t));
+  out.indptr.resize(out.nrows + 1);
+  out.indices.resize(out.nnz);
+  f.read(reinterpret_cast<char *>(out.indptr.data()),
+         (out.nrows + 1) * sizeof(int32_t));
+  f.read(reinterpret_cast<char *>(out.indices.data()),
+         out.nnz * sizeof(int32_t));
+  return f.good();
+}
+
+static StimData load_stim_data(const std::string &data_dir) {
+  StimData sd;
+
+  if (!load_csr(data_dir + "/H_csr.bin", sd.H)) {
+    std::cerr << "[Data] No H_csr.bin found in " << data_dir << "\n";
+    return sd;
+  }
+  std::cout << "[Data] Loaded H_csr " << sd.H.nrows << "x" << sd.H.ncols
+            << " (" << sd.H.nnz << " nnz)\n";
+
+  if (load_csr(data_dir + "/O_csr.bin", sd.O))
+    std::cout << "[Data] Loaded O_csr " << sd.O.nrows << "x" << sd.O.ncols
+              << " (" << sd.O.nnz << " nnz)\n";
+
+  std::string priors_path = data_dir + "/priors.bin";
+  std::ifstream pf(priors_path, std::ios::binary);
+  if (pf.good()) {
+    uint32_t nedges = 0;
+    pf.read(reinterpret_cast<char *>(&nedges), sizeof(uint32_t));
+    sd.priors.resize(nedges);
+    pf.read(reinterpret_cast<char *>(sd.priors.data()),
+            nedges * sizeof(double));
+    std::cout << "[Data] Loaded " << sd.priors.size() << " priors\n";
+  }
+  return sd;
 }
 
 // =============================================================================
@@ -211,6 +351,7 @@ struct StreamingConfig {
   int rate_us = 0;
   int duration_s = 5;
   int warmup_count = 20;
+  std::string data_dir;
 };
 
 // =============================================================================
@@ -224,7 +365,15 @@ int main(int argc, char *argv[]) {
   std::string config_name = "d7";
   StreamingConfig scfg;
 
-  if (argc > 1)
+  // Scan for --data-dir first (can appear anywhere)
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--data-dir" && i + 1 < argc) {
+      scfg.data_dir = argv[i + 1];
+      break;
+    }
+  }
+  // Positional: config_name [rate_us] [duration_s]
+  if (argc > 1 && std::string(argv[1]).substr(0, 2) != "--")
     config_name = argv[1];
   if (argc > 2 && std::isdigit(argv[2][0]))
     scfg.rate_us = std::stoi(argv[2]);
@@ -257,12 +406,6 @@ int main(int argc, char *argv[]) {
 
   std::cout << "--- Initializing Hybrid AI Realtime Pipeline (" << config.label
             << ") ---\n";
-  std::cout << "[Config] distance=" << config.distance
-            << " rounds=" << config.num_rounds
-            << " meas_qubits=" << config.meas_qubits
-            << " residual_detectors=" << config.residual_detectors
-            << " input_bytes=" << config.input_bytes()
-            << " slot_size=" << config.slot_size << "\n";
 
   CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceMapHost));
 
@@ -281,31 +424,6 @@ int main(int argc, char *argv[]) {
     std::cout << "[Setup] Building TRT engines from ONNX: " << onnx_file
               << "\n";
   }
-
-  // --- Create PyMatching decoders ---
-  std::cout << "[Setup] Creating PyMatching decoder (d=" << config.distance
-            << " surface code, Z stabilizers)...\n";
-  auto surface_code =
-      cudaq::qec::get_code("surface_code", {{"distance", config.distance}});
-  auto H_z = surface_code->get_parity_z();
-
-  DecoderContext decoder_ctx;
-  decoder_ctx.z_stabilizers = static_cast<int>(H_z.shape()[0]);
-  decoder_ctx.spatial_slices =
-      config.residual_detectors / decoder_ctx.z_stabilizers;
-  std::cout << "[Setup] H_z shape: [" << H_z.shape()[0] << " x "
-            << H_z.shape()[1] << "]"
-            << "  z_stabilizers=" << decoder_ctx.z_stabilizers
-            << "  spatial_slices=" << decoder_ctx.spatial_slices << "\n";
-
-  cudaqx::heterogeneous_map pm_params;
-  pm_params.insert("merge_strategy", std::string("smallest_weight"));
-  std::cout << "[Setup] Pre-allocating " << config.num_workers
-            << " PyMatching decoders...\n";
-  for (int i = 0; i < config.num_workers; ++i)
-    decoder_ctx.decoders.push_back(
-        cudaq::qec::decoder::get("pymatching", H_z, pm_params));
-  std::cout << "[Setup] PyMatching decoder pool ready.\n";
 
   // --- Create GPU resources (predecoders, streams, mailbox) ---
   void **h_mailbox_bank = nullptr;
@@ -335,12 +453,119 @@ int main(int argc, char *argv[]) {
     std::string save_path = (need_save && i == 0) ? engine_file : "";
     auto pd = std::make_unique<AIPreDecoderService>(
         model_path, d_mailbox_bank + i, 1, save_path);
-    std::cout << "[Setup] Decoder " << i
+    std::cout << "[Setup] Predecoder " << i
               << ": input_size=" << pd->get_input_size()
               << " output_size=" << pd->get_output_size() << "\n";
     pd->capture_graph(capture_stream, false);
     predecoders.push_back(std::move(pd));
   }
+
+  // --- Derive dimensions from TRT model bindings ---
+  const size_t model_input_bytes = predecoders[0]->get_input_size();
+  const size_t model_output_bytes = predecoders[0]->get_output_size();
+  const size_t slot_size =
+      round_up_pow2(CUDAQ_RPC_HEADER_SIZE + model_input_bytes);
+
+  // Model I/O element count: for uint8 models, 1 byte per element;
+  // for int32, 4 bytes per element. Detect by comparing against expected
+  // detector count from the ONNX model shape.
+  const size_t model_input_elements = model_input_bytes;
+  const size_t model_output_elements_total = model_output_bytes;
+  // If model_input_bytes equals num_detectors (uint8), elem_size is 1.
+  // If model_input_bytes equals num_detectors*4 (int32), elem_size is 4.
+  // We detect this by checking if model_output_bytes == model_input_bytes + 1
+  // (uint8: one extra L element) vs model_input_bytes + 4 (int32).
+  const size_t model_elem_size =
+      (model_output_bytes == model_input_bytes + 1) ? 1 : sizeof(int32_t);
+  const size_t num_input_detectors = model_input_bytes / model_elem_size;
+  const size_t num_output_elements = model_output_bytes / model_elem_size;
+
+  std::cout << "[Setup] Model I/O element size: " << model_elem_size
+            << " bytes (" << (model_elem_size == 1 ? "uint8" : "int32") << ")\n";
+  std::cout << "[Setup] Input detectors: " << num_input_detectors
+            << ", Output elements: " << num_output_elements << "\n";
+
+  const int residual_detectors = static_cast<int>(num_output_elements) - 1;
+
+  std::cout << "[Config] distance=" << config.distance
+            << " rounds=" << config.num_rounds
+            << " residual_detectors=" << residual_detectors
+            << " model_input=" << model_input_bytes
+            << " model_output=" << model_output_bytes
+            << " slot_size=" << slot_size << "\n";
+
+  // --- Load test data (optional) ---
+  TestData test_data;
+  StimData stim;
+  if (!scfg.data_dir.empty()) {
+    test_data = load_test_data(scfg.data_dir);
+    if (!test_data.loaded()) {
+      std::cerr << "ERROR: Failed to load test data from " << scfg.data_dir
+                << "\n";
+      return 1;
+    }
+    if (test_data.num_detectors != num_input_detectors) {
+      std::cerr << "ERROR: detector count mismatch: data has "
+                << test_data.num_detectors << " but model expects "
+                << num_input_detectors << "\n";
+      return 1;
+    }
+    stim = load_stim_data(scfg.data_dir);
+  }
+
+  // --- Build PyMatching decoder ---
+  DecoderContext decoder_ctx;
+  decoder_ctx.num_residual_detectors = residual_detectors;
+  cudaqx::heterogeneous_map pm_params;
+  pm_params.insert("merge_strategy", std::string("smallest_weight"));
+
+  // Observable row from O matrix (for projecting edge corrections → logical)
+  std::vector<uint8_t> obs_row;
+
+  if (stim.H.loaded() &&
+      static_cast<int>(stim.H.nrows) == residual_detectors) {
+    decoder_ctx.use_full_H = true;
+    std::cout << "[Setup] Converting sparse H (" << stim.H.nrows << "x"
+              << stim.H.ncols << ") to dense tensor...\n";
+    auto H_full = stim.H.to_dense();
+    std::cout << "[Setup] H tensor: [" << H_full.shape()[0] << " x "
+              << H_full.shape()[1] << "]\n";
+
+    if (!stim.priors.empty() && stim.priors.size() == stim.H.ncols)
+      pm_params.insert("error_rate_vec", stim.priors);
+
+    if (stim.O.loaded())
+      obs_row = stim.O.row_dense(0);
+
+    std::cout << "[Setup] Creating " << config.num_workers
+              << " PyMatching decoders (full H)...\n";
+    for (int i = 0; i < config.num_workers; ++i)
+      decoder_ctx.decoders.push_back(
+          cudaq::qec::decoder::get("pymatching", H_full, pm_params));
+  } else {
+    // Fallback: per-slice decode with CUDA-Q surface code H_z
+    std::cout << "[Setup] Creating PyMatching decoder (d=" << config.distance
+              << " surface code, Z stabilizers)...\n";
+    auto surface_code =
+        cudaq::qec::get_code("surface_code", {{"distance", config.distance}});
+    auto H_z = surface_code->get_parity_z();
+
+    const int z_stabilizers = static_cast<int>(H_z.shape()[0]);
+    if (residual_detectors > 0 && residual_detectors % z_stabilizers == 0)
+      decoder_ctx.spatial_slices = residual_detectors / z_stabilizers;
+    decoder_ctx.z_stabilizers = z_stabilizers;
+
+    std::cout << "[Setup] H_z shape: [" << H_z.shape()[0] << " x "
+              << H_z.shape()[1] << "], spatial_slices="
+              << decoder_ctx.spatial_slices << "\n";
+
+    std::cout << "[Setup] Creating " << config.num_workers
+              << " PyMatching decoders (per-slice)...\n";
+    for (int i = 0; i < config.num_workers; ++i)
+      decoder_ctx.decoders.push_back(
+          cudaq::qec::decoder::get("pymatching", H_z, pm_params));
+  }
+  std::cout << "[Setup] PyMatching decoder pool ready.\n";
 
   // Pre-launch DMA contexts
   std::vector<PreLaunchCopyCtx> pre_launch_ctxs(config.num_predecoders);
@@ -378,7 +603,7 @@ int main(int argc, char *argv[]) {
   realtime_ns::PipelineStageConfig stage_cfg;
   stage_cfg.num_workers = config.num_workers;
   stage_cfg.num_slots = NUM_SLOTS;
-  stage_cfg.slot_size = config.slot_size;
+  stage_cfg.slot_size = slot_size;
   stage_cfg.cores = {.dispatcher = 2, .consumer = 4, .worker_base = 10};
 
   realtime_ns::RealtimePipeline pipeline(stage_cfg);
@@ -410,28 +635,55 @@ int main(int argc, char *argv[]) {
 
     int total_corrections = 0;
     bool all_converged = true;
+    const uint8_t *output_u8 =
+        static_cast<const uint8_t *>(job.inference_data);
+    const int32_t logical_pred = output_u8[0];
 
     auto decode_start = hrclock::now();
 #if !defined(DISABLE_PYMATCHING)
-    const int32_t *residual = static_cast<const int32_t *>(job.inference_data);
+    const uint8_t *residual_u8 = output_u8 + 1;
     auto *my_decoder = dctx->acquire_decoder();
 
-    cudaqx::tensor<uint8_t> syndrome_tensor({(size_t)dctx->z_stabilizers});
-    uint8_t *syn_data = syndrome_tensor.data();
-
-    for (int s = 0; s < dctx->spatial_slices; ++s) {
-      const int32_t *slice = residual + s * dctx->z_stabilizers;
-      for (int i = 0; i < dctx->z_stabilizers; ++i)
-        syn_data[i] = static_cast<uint8_t>(slice[i]);
-
+    if (dctx->use_full_H) {
+      thread_local cudaqx::tensor<uint8_t> syndrome_tensor(
+          {(size_t)dctx->num_residual_detectors});
+      std::memcpy(syndrome_tensor.data(), residual_u8,
+                  dctx->num_residual_detectors);
       auto result = my_decoder->decode(syndrome_tensor);
-      all_converged &= result.converged;
-      for (auto v : result.result)
-        if (v > 0.5)
-          total_corrections++;
+      all_converged = result.converged;
+      if (wctx->obs_row && wctx->obs_row_size == result.result.size()) {
+        int obs_parity = 0;
+        for (size_t e = 0; e < result.result.size(); ++e)
+          if (result.result[e] > 0.5 && wctx->obs_row[e])
+            obs_parity ^= 1;
+        total_corrections += obs_parity;
+      } else {
+        for (auto v : result.result)
+          if (v > 0.5)
+            total_corrections++;
+      }
+    } else {
+      thread_local cudaqx::tensor<uint8_t> syndrome_tensor(
+          {(size_t)dctx->z_stabilizers});
+      uint8_t *syn_data = syndrome_tensor.data();
+      for (int s = 0; s < dctx->spatial_slices; ++s) {
+        const uint8_t *slice = residual_u8 + s * dctx->z_stabilizers;
+        std::memcpy(syn_data, slice, dctx->z_stabilizers);
+        auto result = my_decoder->decode(syndrome_tensor);
+        all_converged &= result.converged;
+        for (auto v : result.result)
+          if (v > 0.5)
+            total_corrections++;
+      }
     }
+    total_corrections += logical_pred;
 #endif
     auto decode_end = hrclock::now();
+
+    // Capture request_id before we overwrite the slot with the response
+    auto *rpc_hdr =
+        static_cast<const realtime_ns::RPCHeader *>(job.ring_buffer_ptr);
+    uint32_t rid = rpc_hdr->request_id;
 
     // Write RPC response into ring buffer slot
     DecodeResponse resp{total_corrections, all_converged ? 1 : 0};
@@ -457,6 +709,11 @@ int main(int argc, char *argv[]) {
     dctx->total_worker_us.fetch_add(worker_us, std::memory_order_relaxed);
     dctx->decode_count.fetch_add(1, std::memory_order_relaxed);
 
+    if (wctx->decode_corrections && rid < (uint32_t)wctx->max_requests) {
+      wctx->decode_corrections[rid] = total_corrections;
+      wctx->decode_logical_pred[rid] = logical_pred;
+    }
+
     return 1;
   });
 
@@ -465,6 +722,8 @@ int main(int argc, char *argv[]) {
   std::vector<hrclock::time_point> submit_ts(max_requests);
   std::vector<hrclock::time_point> complete_ts(max_requests);
   std::vector<uint8_t> completed(max_requests, 0);
+  std::vector<int32_t> decode_corrections(max_requests, -1);
+  std::vector<int32_t> decode_logical_pred(max_requests, -1);
 
   pipeline.set_completion_handler([&](const realtime_ns::Completion &c) {
     if (c.request_id < static_cast<uint64_t>(max_requests)) {
@@ -476,6 +735,16 @@ int main(int argc, char *argv[]) {
   // =========================================================================
   // Start pipeline and run producer
   // =========================================================================
+
+  for (int i = 0; i < config.num_workers; ++i) {
+    worker_ctxs[i].decode_corrections = decode_corrections.data();
+    worker_ctxs[i].decode_logical_pred = decode_logical_pred.data();
+    worker_ctxs[i].max_requests = max_requests;
+    if (!obs_row.empty()) {
+      worker_ctxs[i].obs_row = obs_row.data();
+      worker_ctxs[i].obs_row_size = obs_row.size();
+    }
+  }
 
   std::cout << "[Setup] Starting pipeline...\n";
   auto injector = pipeline.create_injector();
@@ -499,19 +768,32 @@ int main(int argc, char *argv[]) {
   // --- Producer loop (runs on main thread) ---
   std::mt19937 rng(42);
   const size_t payload_bytes =
-      std::min(config.input_bytes(),
-               config.slot_size - static_cast<size_t>(CUDAQ_RPC_HEADER_SIZE));
+      std::min(model_input_bytes,
+               slot_size - static_cast<size_t>(CUDAQ_RPC_HEADER_SIZE));
   std::vector<uint8_t> payload_buf(CUDAQ_RPC_HEADER_SIZE + payload_bytes);
   int req_id = 0;
   int target = 0;
 
+  auto next_submit_time = hrclock::now();
+
   while (std::chrono::steady_clock::now() < run_deadline &&
          req_id < max_requests) {
 
-    int32_t *payload =
-        reinterpret_cast<int32_t *>(payload_buf.data() + CUDAQ_RPC_HEADER_SIZE);
-    int fill_elems = static_cast<int>(payload_bytes / sizeof(int32_t));
-    fill_measurement_payload(payload, fill_elems, rng, 0.01);
+    if (scfg.rate_us > 0) {
+      while (hrclock::now() < next_submit_time)
+        QEC_CPU_RELAX();
+    }
+
+    uint8_t *payload = payload_buf.data() + CUDAQ_RPC_HEADER_SIZE;
+    if (test_data.loaded()) {
+      const int32_t *src = test_data.sample(req_id);
+      for (size_t d = 0; d < num_input_detectors; ++d)
+        payload[d] = static_cast<uint8_t>(src[d]);
+    } else {
+      std::bernoulli_distribution err_dist(0.01);
+      for (size_t d = 0; d < num_input_detectors; ++d)
+        payload[d] = err_dist(rng) ? 1 : 0;
+    }
 
     std::string func = "predecode_target_" + std::to_string(target);
     uint32_t fid = realtime_ns::fnv1a_hash(func.c_str());
@@ -523,12 +805,8 @@ int main(int argc, char *argv[]) {
     target = (target + 1) % config.num_predecoders;
     req_id++;
 
-    if (scfg.rate_us > 0) {
-      auto target_time =
-          submit_ts[req_id - 1] + std::chrono::microseconds(scfg.rate_us);
-      while (hrclock::now() < target_time)
-        QEC_CPU_RELAX();
-    }
+    if (scfg.rate_us > 0)
+      next_submit_time += std::chrono::microseconds(scfg.rate_us);
   }
 
   // --- Shutdown ---
@@ -649,6 +927,67 @@ int main(int argc, char *argv[]) {
             << " packets.\n";
   std::cout
       << "================================================================\n";
+
+  // --- Correctness verification (when using real data) ---
+  if (test_data.loaded()) {
+    int verified = 0, mismatches = 0, missing = 0;
+    int pred_only_mismatches = 0;
+    int64_t sum_total_corr = 0, sum_logical_pred = 0;
+    int nonzero_logical = 0, nonzero_pymatch = 0;
+    for (int i = 0; i < nsub; ++i) {
+      if (decode_corrections[i] < 0) {
+        missing++;
+        continue;
+      }
+      int32_t total_corr = decode_corrections[i];
+      int32_t lpred = decode_logical_pred[i];
+      int32_t pymatch_corr = total_corr - lpred;
+      int32_t pipeline_parity = total_corr % 2;
+      int32_t ground_truth = test_data.observable(i, 0);
+
+      if (pipeline_parity != ground_truth)
+        mismatches++;
+      if ((lpred % 2) != ground_truth)
+        pred_only_mismatches++;
+
+      sum_total_corr += total_corr;
+      sum_logical_pred += lpred;
+      if (lpred != 0)
+        nonzero_logical++;
+      if (pymatch_corr != 0)
+        nonzero_pymatch++;
+      verified++;
+    }
+    double ler =
+        (verified > 0) ? static_cast<double>(mismatches) / verified : 0;
+    double pred_ler =
+        (verified > 0) ? static_cast<double>(pred_only_mismatches) / verified
+                       : 0;
+    std::cout << "\n[Correctness] Verified " << verified << "/" << nsub
+              << " requests (" << missing << " missing)\n";
+    std::cout << "[Correctness] Pipeline (pred+pymatch) mismatches: "
+              << mismatches << "  LER: " << std::setprecision(4) << ler
+              << "\n";
+    std::cout << "[Correctness] Predecoder-only mismatches:         "
+              << pred_only_mismatches
+              << "  LER: " << std::setprecision(4) << pred_ler << "\n";
+    std::cout << "[Correctness] Avg logical_pred: " << std::setprecision(3)
+              << (verified > 0 ? (double)sum_logical_pred / verified : 0)
+              << "  nonzero: " << nonzero_logical << "/" << verified << "\n";
+    std::cout << "[Correctness] Avg pymatch_corr: " << std::setprecision(3)
+              << (verified > 0
+                      ? (double)(sum_total_corr - sum_logical_pred) / verified
+                      : 0)
+              << "  nonzero: " << nonzero_pymatch << "/" << verified << "\n";
+    std::cout << "[Correctness] Ground truth ones: ";
+    int gt_ones = 0;
+    int gt_count = static_cast<int>(
+        std::min(nsub, static_cast<uint64_t>(test_data.num_samples)));
+    for (int i = 0; i < gt_count; ++i)
+      if (test_data.observable(i, 0))
+        gt_ones++;
+    std::cout << gt_ones << "/" << gt_count << "\n";
+  }
 
   // --- Cleanup ---
   std::cout << "[Teardown] Shutting down...\n";

@@ -12,14 +12,16 @@
 #include <atomic>
 #include <cuda/atomic>
 
-// Portable CPU Yield Macro for busy-polling
+// Portable CPU Yield Macro for busy-polling (skip if already defined by realtime API)
+#ifndef QEC_CPU_RELAX
 #if defined(__x86_64__)
 #include <immintrin.h>
 #define QEC_CPU_RELAX() _mm_pause()
 #elif defined(__aarch64__)
-#define QEC_CPU_RELAX() asm volatile("yield" ::: "memory")
+#define QEC_CPU_RELAX() __asm__ volatile("yield" ::: "memory")
 #else
 #define QEC_CPU_RELAX() std::atomic_thread_fence(std::memory_order_seq_cst)
+#endif
 #endif
 
 namespace cudaq::qec {
