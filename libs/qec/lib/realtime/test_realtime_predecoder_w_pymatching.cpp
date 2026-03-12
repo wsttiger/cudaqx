@@ -107,11 +107,11 @@ struct PipelineConfig {
   }
 
   static PipelineConfig d13_r13() {
-    return {"d13_r13_Z", 13, 13, "predecoder_memory_d13_T13_X.onnx", 16, 16};
+    return {"d13_r13_X", 13, 13, "predecoder_memory_d13_T13_X.onnx", 16, 16};
   }
 
   static PipelineConfig d13_r104() {
-    return {"d13_r104_Z", 13, 104, "predecoder_memory_d13_T104_X.onnx", 8, 8};
+    return {"d13_r104_X", 13, 104, "predecoder_memory_d13_T104_X.onnx", 8, 8};
   }
 
   static PipelineConfig d21_r21() {
@@ -157,6 +157,10 @@ struct DecoderContext {
   std::atomic<int64_t> total_decode_us{0};
   std::atomic<int64_t> total_worker_us{0};
   std::atomic<int> decode_count{0};
+
+  int num_input_detectors = 0;
+  std::atomic<int64_t> total_input_nonzero{0};
+  std::atomic<int64_t> total_output_nonzero{0};
 };
 
 // =============================================================================
@@ -516,6 +520,7 @@ int main(int argc, char *argv[]) {
   // --- Build PyMatching decoder ---
   DecoderContext decoder_ctx;
   decoder_ctx.num_residual_detectors = residual_detectors;
+  decoder_ctx.num_input_detectors = static_cast<int>(num_input_detectors);
   cudaqx::heterogeneous_map pm_params;
   pm_params.insert("merge_strategy", std::string("smallest_weight"));
 
@@ -638,6 +643,18 @@ int main(int argc, char *argv[]) {
     const uint8_t *output_u8 =
         static_cast<const uint8_t *>(job.inference_data);
     const int32_t logical_pred = output_u8[0];
+
+    // Syndrome density: count nonzero in input and output residuals
+    const uint8_t *input_u8 =
+        static_cast<const uint8_t *>(job.ring_buffer_ptr) + CUDAQ_RPC_HEADER_SIZE;
+    int input_nz = 0;
+    for (int k = 0; k < dctx->num_input_detectors; ++k)
+      input_nz += (input_u8[k] != 0);
+    int output_nz = 0;
+    for (int k = 0; k < dctx->num_residual_detectors; ++k)
+      output_nz += (output_u8[1 + k] != 0);
+    dctx->total_input_nonzero.fetch_add(input_nz, std::memory_order_relaxed);
+    dctx->total_output_nonzero.fetch_add(output_nz, std::memory_order_relaxed);
 
     auto decode_start = hrclock::now();
 #if !defined(DISABLE_PYMATCHING)
@@ -919,6 +936,27 @@ int main(int argc, char *argv[]) {
               << " us\n";
     std::cout << "    Worker overhead:      " << std::setw(9) << avg_overhead
               << " us\n";
+  }
+  if (n_decoded > 0) {
+    double avg_in_nz =
+        (double)decoder_ctx.total_input_nonzero.load() / n_decoded;
+    double avg_out_nz =
+        (double)decoder_ctx.total_output_nonzero.load() / n_decoded;
+    double in_density = avg_in_nz / decoder_ctx.num_input_detectors;
+    double out_density = avg_out_nz / decoder_ctx.num_residual_detectors;
+    double reduction = (in_density > 0) ? (1.0 - out_density / in_density) : 0;
+    std::cout
+        << "  "
+           "---------------------------------------------------------------\n";
+    std::cout << "  Syndrome density (" << n_decoded << " samples):\n";
+    std::cout << "    Input:  " << std::fixed << std::setprecision(1)
+              << avg_in_nz << " / " << decoder_ctx.num_input_detectors
+              << "  (" << std::setprecision(4) << in_density << ")\n";
+    std::cout << "    Output: " << std::fixed << std::setprecision(1)
+              << avg_out_nz << " / " << decoder_ctx.num_residual_detectors
+              << "  (" << std::setprecision(4) << out_density << ")\n";
+    std::cout << "    Reduction: " << std::setprecision(1)
+              << (reduction * 100.0) << "%\n";
   }
 
   std::cout
