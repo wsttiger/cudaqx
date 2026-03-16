@@ -48,6 +48,7 @@
 #include "cudaq/qec/decoder.h"
 #include "cudaq/qec/realtime/ai_decoder_service.h"
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
+#include "cudaq/qec/realtime/nvtx_helpers.h"
 
 using namespace cudaq::qec;
 namespace realtime_ns = cudaq::realtime;
@@ -80,7 +81,7 @@ namespace realtime_ns = cudaq::realtime;
 // Pipeline Configuration (application-level, no atomics)
 // =============================================================================
 
-constexpr size_t NUM_SLOTS = 32;
+constexpr size_t NUM_SLOTS = 12;
 
 struct PipelineConfig {
   std::string label;
@@ -175,11 +176,13 @@ struct PreLaunchCopyCtx {
 
 static void pre_launch_input_copy(void *user_data, void *slot_dev,
                                   cudaStream_t stream) {
+  NVTX_PUSH("PreLaunchCopy");
   auto *ctx = static_cast<PreLaunchCopyCtx *>(user_data);
   ctx->h_ring_ptrs[0] = slot_dev;
   cudaMemcpyAsync(ctx->d_trt_input,
                   static_cast<uint8_t *>(slot_dev) + CUDAQ_RPC_HEADER_SIZE,
                   ctx->input_size, cudaMemcpyDeviceToDevice, stream);
+  NVTX_POP();
 }
 
 // =============================================================================
@@ -635,6 +638,7 @@ int main(int argc, char *argv[]) {
     if (!pd->poll_next_job(job))
       return 0; // GPU not done yet
 
+    NVTX_PUSH("CpuStageTotal");
     using hrclock = std::chrono::high_resolution_clock;
     auto worker_start = hrclock::now();
 
@@ -657,6 +661,7 @@ int main(int argc, char *argv[]) {
     dctx->total_output_nonzero.fetch_add(output_nz, std::memory_order_relaxed);
 
     auto decode_start = hrclock::now();
+    NVTX_PUSH("PyMatchDecode");
 #if !defined(DISABLE_PYMATCHING)
     const uint8_t *residual_u8 = output_u8 + 1;
     auto *my_decoder = dctx->acquire_decoder();
@@ -695,6 +700,7 @@ int main(int argc, char *argv[]) {
     }
     total_corrections += logical_pred;
 #endif
+    NVTX_POP(); // PyMatchDecode
     auto decode_end = hrclock::now();
 
     // Capture request_id before we overwrite the slot with the response
@@ -731,6 +737,7 @@ int main(int argc, char *argv[]) {
       wctx->decode_logical_pred[rid] = logical_pred;
     }
 
+    NVTX_POP(); // CpuStageTotal
     return 1;
   });
 
@@ -816,8 +823,10 @@ int main(int argc, char *argv[]) {
     uint32_t fid = realtime_ns::fnv1a_hash(func.c_str());
 
     submit_ts[req_id] = hrclock::now();
+    NVTX_PUSH("ProducerSubmit");
     injector.submit(fid, payload, static_cast<uint32_t>(payload_bytes),
                     static_cast<uint64_t>(req_id));
+    NVTX_POP();
 
     target = (target + 1) % config.num_predecoders;
     req_id++;

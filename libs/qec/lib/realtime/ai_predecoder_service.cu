@@ -7,6 +7,7 @@
  ******************************************************************************/
 
 #include "cudaq/qec/realtime/ai_predecoder_service.h"
+#include "cudaq/qec/realtime/nvtx_helpers.h"
 #include <cstdlib>
 #include <cuda/atomic>
 #include <stdexcept>
@@ -164,18 +165,22 @@ bool AIPreDecoderService::poll_next_job(PreDecoderJob &out_job) {
   if (sys_flags[0].compare_exchange_strong(expected, 2,
                                            cuda::std::memory_order_acquire,
                                            cuda::std::memory_order_relaxed)) {
+    NVTX_PUSH("PollJob");
     out_job.slot_idx = 0;
     out_job.ring_buffer_ptr = h_ring_ptrs_[0];
     out_job.inference_data = h_predecoder_outputs_;
+    NVTX_POP();
     return true;
   }
   return false;
 }
 
 void AIPreDecoderService::release_job(int /* slot_idx */) {
+  NVTX_PUSH("ReleaseJob");
   auto *sys_flags = static_cast<atomic_int_sys *>(h_ready_flags_);
   // PyMatching done: 2 (Processing) -> 0 (Idle)
   sys_flags[0].store(0, cuda::std::memory_order_release);
+  NVTX_POP();
 }
 
 } // namespace cudaq::qec

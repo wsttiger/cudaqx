@@ -310,6 +310,10 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
       )
 
+      if(ENABLE_NVTX)
+        target_compile_definitions(test_realtime_pipeline PRIVATE ENABLE_NVTX)
+      endif()
+
       add_dependencies(CUDAQXQECUnitTests test_realtime_pipeline)
       gtest_discover_tests(test_realtime_pipeline
         TEST_PREFIX "test_realtime_pipeline."
@@ -396,6 +400,11 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
         BUILD_RPATH "${CMAKE_BINARY_DIR}/lib;${CUDAQ_REALTIME_LIB_DIR}"
         INSTALL_RPATH "${CMAKE_BINARY_DIR}/lib;${CUDAQ_REALTIME_LIB_DIR}"
       )
+
+      if(ENABLE_NVTX)
+        target_compile_definitions(test_realtime_predecoder_w_pymatching PRIVATE ENABLE_NVTX)
+        message(STATUS "NVTX profiling enabled for test_realtime_predecoder_w_pymatching")
+      endif()
 
       add_dependencies(CUDAQXQECUnitTests test_realtime_predecoder_w_pymatching)
     else()

@@ -9,6 +9,7 @@
 #include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
 #include "cudaq/realtime/daemon/dispatcher/host_dispatcher.h"
 #include "cudaq/qec/realtime/pipeline.h"
+#include "cudaq/qec/realtime/nvtx_helpers.h"
 
 #include <cuda/std/atomic>
 #include <cuda_runtime.h>
@@ -82,6 +83,7 @@ static void gpu_only_host_callback(void *user_data) {
 
 static void gpu_only_post_launch(void *user_data, void *slot_dev,
                                  cudaStream_t stream) {
+  NVTX_PUSH("GPUPostLaunch");
   auto *ctx = static_cast<GpuOnlyWorkerCtx *>(user_data);
 
   if (ctx->user_post_launch_fn)
@@ -93,6 +95,7 @@ static void gpu_only_post_launch(void *user_data, void *slot_dev,
   ctx->tx_value = reinterpret_cast<uint64_t>(slot_host);
 
   cudaLaunchHostFunc(stream, gpu_only_host_callback, ctx);
+  NVTX_POP();
 }
 
 // ---------------------------------------------------------------------------
@@ -453,7 +456,9 @@ struct RealtimePipeline::Impl {
       ctx.max_response_size = 0;
       ctx.user_context = wr->user_context;
 
+      NVTX_PUSH("WorkerPoll");
       size_t written = cpu_stage(ctx);
+      NVTX_POP();
       if (written == 0) {
         QEC_CPU_RELAX();
         continue;
@@ -499,6 +504,7 @@ struct RealtimePipeline::Impl {
         cudaq_tx_status_t status = ring->poll_tx(s, &cuda_error);
 
         if (status == CUDAQ_TX_READY) {
+          NVTX_PUSH("ConsumerComplete");
           if (completion_handler) {
             Completion c;
             c.request_id = slot_request[s];
@@ -515,6 +521,7 @@ struct RealtimePipeline::Impl {
           __sync_synchronize();
           ring->clear_slot(s);
           found_any = true;
+          NVTX_POP();
 
         } else if (status == CUDAQ_TX_ERROR) {
           if (completion_handler) {
@@ -628,6 +635,7 @@ bool RingBufferInjector::try_submit(uint32_t function_id, const void *payload,
           cur, cur + 1, std::memory_order_acq_rel, std::memory_order_relaxed))
     return false;
 
+  NVTX_PUSH("Submit");
   state_->ring->write_and_signal(slot, function_id, payload,
                                  static_cast<uint32_t>(payload_size),
                                  static_cast<uint32_t>(request_id));
@@ -635,6 +643,7 @@ bool RingBufferInjector::try_submit(uint32_t function_id, const void *payload,
   (*state_->slot_request)[slot] = request_id;
   (*state_->slot_occupied)[slot] = 1;
   state_->total_submitted->fetch_add(1, std::memory_order_release);
+  NVTX_POP();
   return true;
 }
 
