@@ -73,7 +73,16 @@ struct CpuStageContext {
 };
 
 /// Returns the number of bytes written into response_buffer.
+/// Return 0 if no GPU result is ready yet (poll again).
+/// Return DEFERRED_COMPLETION to release the worker immediately while
+/// deferring slot completion to a later complete_deferred() call.
 using CpuStageCallback = std::function<size_t(const CpuStageContext &ctx)>;
+
+/// Sentinel return value from CpuStageCallback: release the worker
+/// (idle_mask) but do NOT signal slot completion (tx_flags). The caller
+/// is responsible for calling RealtimePipeline::complete_deferred(slot)
+/// once the deferred work (e.g. a separate decode thread) finishes.
+static constexpr size_t DEFERRED_COMPLETION = SIZE_MAX;
 
 // ---------------------------------------------------------------------------
 // Completion Callback
@@ -163,6 +172,12 @@ public:
 
   /// Thread-safe, lock-free stats snapshot.
   Stats stats() const;
+
+  /// Signal that deferred processing for a slot is complete.
+  /// Call this from any thread after the cpu_stage callback returned
+  /// DEFERRED_COMPLETION and the deferred work has finished writing the
+  /// response into the slot's ring buffer area.
+  void complete_deferred(int slot);
 
 private:
   struct Impl;

@@ -464,6 +464,11 @@ struct RealtimePipeline::Impl {
         continue;
       }
 
+      if (written == DEFERRED_COMPLETION) {
+        idle_mask.fetch_or(1ULL << worker_id, cuda::std::memory_order_release);
+        continue;
+      }
+
       int origin_slot = inflight_slot_tags[worker_id];
 
       uint8_t *slot_host = ring->rx_data_host() +
@@ -586,6 +591,14 @@ RealtimePipeline::Stats RealtimePipeline::stats() const {
           impl_->total_completed.load(std::memory_order_relaxed),
           impl_->live_dispatched.load(cuda::std::memory_order_relaxed),
           impl_->backpressure_stalls.load(std::memory_order_relaxed)};
+}
+
+void RealtimePipeline::complete_deferred(int slot) {
+  uint8_t *slot_host = impl_->ring->rx_data_host() +
+                       static_cast<size_t>(slot) * impl_->config.slot_size;
+  uint64_t rx_value = reinterpret_cast<uint64_t>(slot_host);
+  impl_->ring->tx_flags()[slot].store(rx_value,
+                                      cuda::std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------

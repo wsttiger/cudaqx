@@ -23,11 +23,14 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <random>
 #include <string>
 #include <unistd.h>
@@ -81,7 +84,7 @@ namespace realtime_ns = cudaq::realtime;
 // Pipeline Configuration (application-level, no atomics)
 // =============================================================================
 
-constexpr size_t NUM_SLOTS = 12;
+constexpr size_t NUM_SLOTS = 16;
 
 struct PipelineConfig {
   std::string label;
@@ -90,6 +93,7 @@ struct PipelineConfig {
   std::string onnx_filename;
   int num_predecoders;
   int num_workers;
+  int num_decode_workers;
 
   std::string onnx_path() const {
     return std::string(ONNX_MODEL_DIR) + "/" + onnx_filename;
@@ -104,25 +108,25 @@ struct PipelineConfig {
   }
 
   static PipelineConfig d7_r7() {
-    return {"d7_r7_Z", 7, 7, "model1_d7_r7_unified_Z_batch1.onnx", 16, 16};
+    return {"d7_r7_Z", 7, 7, "model1_d7_r7_unified_Z_batch1.onnx", 16, 16, 32};
   }
 
   static PipelineConfig d13_r13() {
-    return {"d13_r13_X", 13, 13, "predecoder_memory_d13_T13_X.onnx", 16, 16};
+    return {"d13_r13_X", 13, 13, "predecoder_memory_d13_T13_X.onnx", 16, 16, 32};
   }
 
   static PipelineConfig d13_r104() {
-    return {"d13_r104_X", 13, 104, "predecoder_memory_d13_T104_X.onnx", 8, 8};
+    return {"d13_r104_X", 13, 104, "predecoder_memory_d13_T104_X.onnx", 8, 8, 16};
   }
 
   static PipelineConfig d21_r21() {
     return {"d21_r21_Z", 21, 21, "model1_d21_r21_unified_X_batch1.onnx", 16,
-            16};
+            16, 32};
   }
 
   static PipelineConfig d31_r31() {
     return {"d31_r31_Z", 31, 31, "model1_d31_r31_unified_Z_batch1.onnx", 16,
-            16};
+            16, 32};
   }
 };
 
@@ -202,6 +206,51 @@ struct WorkerCtx {
 struct __attribute__((packed)) DecodeResponse {
   int32_t total_corrections;
   int32_t converged;
+};
+
+// =============================================================================
+// PyMatching work queue (decoupled from predecoder workers)
+// =============================================================================
+
+struct PyMatchJob {
+  int origin_slot;
+  uint64_t request_id;
+  void *ring_buffer_ptr;
+};
+
+class PyMatchQueue {
+public:
+  void push(PyMatchJob &&j) {
+    {
+      std::lock_guard<std::mutex> lk(mtx_);
+      jobs_.push(std::move(j));
+    }
+    cv_.notify_one();
+  }
+
+  bool pop(PyMatchJob &out) {
+    std::unique_lock<std::mutex> lk(mtx_);
+    cv_.wait(lk, [&] { return !jobs_.empty() || stop_; });
+    if (stop_ && jobs_.empty())
+      return false;
+    out = std::move(jobs_.front());
+    jobs_.pop();
+    return true;
+  }
+
+  void shutdown() {
+    {
+      std::lock_guard<std::mutex> lk(mtx_);
+      stop_ = true;
+    }
+    cv_.notify_all();
+  }
+
+private:
+  std::mutex mtx_;
+  std::condition_variable cv_;
+  std::queue<PyMatchJob> jobs_;
+  bool stop_ = false;
 };
 
 // =============================================================================
@@ -545,9 +594,9 @@ int main(int argc, char *argv[]) {
     if (stim.O.loaded())
       obs_row = stim.O.row_dense(0);
 
-    std::cout << "[Setup] Creating " << config.num_workers
+    std::cout << "[Setup] Creating " << config.num_decode_workers
               << " PyMatching decoders (full H)...\n";
-    for (int i = 0; i < config.num_workers; ++i)
+    for (int i = 0; i < config.num_decode_workers; ++i)
       decoder_ctx.decoders.push_back(
           cudaq::qec::decoder::get("pymatching", H_full, pm_params));
   } else {
@@ -567,9 +616,9 @@ int main(int argc, char *argv[]) {
               << H_z.shape()[1] << "], spatial_slices="
               << decoder_ctx.spatial_slices << "\n";
 
-    std::cout << "[Setup] Creating " << config.num_workers
+    std::cout << "[Setup] Creating " << config.num_decode_workers
               << " PyMatching decoders (per-slice)...\n";
-    for (int i = 0; i < config.num_workers; ++i)
+    for (int i = 0; i < config.num_decode_workers; ++i)
       decoder_ctx.decoders.push_back(
           cudaq::qec::decoder::get("pymatching", H_z, pm_params));
   }
@@ -584,10 +633,9 @@ int main(int argc, char *argv[]) {
   }
 
   if (config.num_workers != config.num_predecoders) {
-    throw std::invalid_argument(
-        "num_workers (" + std::to_string(config.num_workers) +
-        ") must equal num_predecoders (" +
-        std::to_string(config.num_predecoders) + ") in the current benchmark");
+    std::cerr << "[WARN] num_workers (" << config.num_workers
+              << ") != num_predecoders (" << config.num_predecoders
+              << "); pipeline workers should match predecoders for 1:1 poll\n";
   }
 
   // Worker contexts (per-worker, application-specific)
@@ -603,6 +651,15 @@ int main(int argc, char *argv[]) {
     std::string func = "predecode_target_" + std::to_string(i);
     function_ids[i] = realtime_ns::fnv1a_hash(func.c_str());
   }
+
+  // =========================================================================
+  // Per-slot output buffers (predecoder output copied here before release)
+  // =========================================================================
+
+  std::vector<std::vector<uint8_t>> deferred_outputs(
+      NUM_SLOTS, std::vector<uint8_t>(model_output_bytes));
+
+  PyMatchQueue pymatch_queue;
 
   // =========================================================================
   // Create pipeline (all atomics hidden inside)
@@ -626,120 +683,56 @@ int main(int argc, char *argv[]) {
             .user_context = &worker_ctxs[w]};
   });
 
-  // --- CPU stage callback (poll + PyMatching decode) ---
-  // Called repeatedly by the pipeline's worker thread.
-  // Returns 0 if GPU isn't ready, >0 when a job was processed.
-  pipeline.set_cpu_stage([](const realtime_ns::CpuStageContext &ctx) -> size_t {
-    auto *wctx = static_cast<WorkerCtx *>(ctx.user_context);
-    auto *pd = wctx->predecoder;
-    auto *dctx = wctx->decoder_ctx;
+  // --- CPU stage callback (poll GPU + copy + enqueue to PyMatch queue) ---
+  // Predecoder workers only poll GPU completion, copy the output to a
+  // per-slot buffer, release the predecoder, and enqueue a PyMatchJob.
+  // Returns DEFERRED_COMPLETION so the pipeline releases the worker
+  // (idle_mask) without signaling slot completion (tx_flags).
+  pipeline.set_cpu_stage(
+      [&deferred_outputs, &pymatch_queue,
+       out_sz = model_output_bytes](const realtime_ns::CpuStageContext &ctx) -> size_t {
+        auto *wctx = static_cast<WorkerCtx *>(ctx.user_context);
+        auto *pd = wctx->predecoder;
+        auto *dctx = wctx->decoder_ctx;
 
-    PreDecoderJob job;
-    if (!pd->poll_next_job(job))
-      return 0; // GPU not done yet
+        PreDecoderJob job;
+        if (!pd->poll_next_job(job))
+          return 0;
 
-    NVTX_PUSH("CpuStageTotal");
-    using hrclock = std::chrono::high_resolution_clock;
-    auto worker_start = hrclock::now();
+        NVTX_PUSH("PredecoderPoll");
 
-    int total_corrections = 0;
-    bool all_converged = true;
-    const uint8_t *output_u8 =
-        static_cast<const uint8_t *>(job.inference_data);
-    const int32_t logical_pred = output_u8[0];
+        int origin_slot = ctx.origin_slot;
 
-    // Syndrome density: count nonzero in input and output residuals
-    const uint8_t *input_u8 =
-        static_cast<const uint8_t *>(job.ring_buffer_ptr) + CUDAQ_RPC_HEADER_SIZE;
-    int input_nz = 0;
-    for (int k = 0; k < dctx->num_input_detectors; ++k)
-      input_nz += (input_u8[k] != 0);
-    int output_nz = 0;
-    for (int k = 0; k < dctx->num_residual_detectors; ++k)
-      output_nz += (output_u8[1 + k] != 0);
-    dctx->total_input_nonzero.fetch_add(input_nz, std::memory_order_relaxed);
-    dctx->total_output_nonzero.fetch_add(output_nz, std::memory_order_relaxed);
+        std::memcpy(deferred_outputs[origin_slot].data(), job.inference_data,
+                    out_sz);
 
-    auto decode_start = hrclock::now();
-    NVTX_PUSH("PyMatchDecode");
-#if !defined(DISABLE_PYMATCHING)
-    const uint8_t *residual_u8 = output_u8 + 1;
-    auto *my_decoder = dctx->acquire_decoder();
+        // Syndrome density: count nonzero in input and output residuals
+        const uint8_t *input_u8 =
+            static_cast<const uint8_t *>(job.ring_buffer_ptr) +
+            CUDAQ_RPC_HEADER_SIZE;
+        int input_nz = 0;
+        for (int k = 0; k < dctx->num_input_detectors; ++k)
+          input_nz += (input_u8[k] != 0);
+        const uint8_t *out_buf = deferred_outputs[origin_slot].data();
+        int output_nz = 0;
+        for (int k = 0; k < dctx->num_residual_detectors; ++k)
+          output_nz += (out_buf[1 + k] != 0);
+        dctx->total_input_nonzero.fetch_add(input_nz,
+                                            std::memory_order_relaxed);
+        dctx->total_output_nonzero.fetch_add(output_nz,
+                                             std::memory_order_relaxed);
 
-    if (dctx->use_full_H) {
-      thread_local cudaqx::tensor<uint8_t> syndrome_tensor(
-          {(size_t)dctx->num_residual_detectors});
-      std::memcpy(syndrome_tensor.data(), residual_u8,
-                  dctx->num_residual_detectors);
-      auto result = my_decoder->decode(syndrome_tensor);
-      all_converged = result.converged;
-      if (wctx->obs_row && wctx->obs_row_size == result.result.size()) {
-        int obs_parity = 0;
-        for (size_t e = 0; e < result.result.size(); ++e)
-          if (result.result[e] > 0.5 && wctx->obs_row[e])
-            obs_parity ^= 1;
-        total_corrections += obs_parity;
-      } else {
-        for (auto v : result.result)
-          if (v > 0.5)
-            total_corrections++;
-      }
-    } else {
-      thread_local cudaqx::tensor<uint8_t> syndrome_tensor(
-          {(size_t)dctx->z_stabilizers});
-      uint8_t *syn_data = syndrome_tensor.data();
-      for (int s = 0; s < dctx->spatial_slices; ++s) {
-        const uint8_t *slice = residual_u8 + s * dctx->z_stabilizers;
-        std::memcpy(syn_data, slice, dctx->z_stabilizers);
-        auto result = my_decoder->decode(syndrome_tensor);
-        all_converged &= result.converged;
-        for (auto v : result.result)
-          if (v > 0.5)
-            total_corrections++;
-      }
-    }
-    total_corrections += logical_pred;
-#endif
-    NVTX_POP(); // PyMatchDecode
-    auto decode_end = hrclock::now();
+        pd->release_job(job.slot_idx);
 
-    // Capture request_id before we overwrite the slot with the response
-    auto *rpc_hdr =
-        static_cast<const realtime_ns::RPCHeader *>(job.ring_buffer_ptr);
-    uint32_t rid = rpc_hdr->request_id;
+        auto *rpc_hdr =
+            static_cast<const realtime_ns::RPCHeader *>(job.ring_buffer_ptr);
+        uint32_t rid = rpc_hdr->request_id;
 
-    // Write RPC response into ring buffer slot
-    DecodeResponse resp{total_corrections, all_converged ? 1 : 0};
-    char *response_payload =
-        (char *)job.ring_buffer_ptr + sizeof(realtime_ns::RPCResponse);
-    std::memcpy(response_payload, &resp, sizeof(resp));
+        pymatch_queue.push({origin_slot, rid, job.ring_buffer_ptr});
 
-    auto *header = static_cast<realtime_ns::RPCResponse *>(job.ring_buffer_ptr);
-    header->magic = realtime_ns::RPC_MAGIC_RESPONSE;
-    header->status = 0;
-    header->result_len = sizeof(resp);
-
-    pd->release_job(job.slot_idx);
-
-    auto worker_end = hrclock::now();
-    auto decode_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                         decode_end - decode_start)
-                         .count();
-    auto worker_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                         worker_end - worker_start)
-                         .count();
-    dctx->total_decode_us.fetch_add(decode_us, std::memory_order_relaxed);
-    dctx->total_worker_us.fetch_add(worker_us, std::memory_order_relaxed);
-    dctx->decode_count.fetch_add(1, std::memory_order_relaxed);
-
-    if (wctx->decode_corrections && rid < (uint32_t)wctx->max_requests) {
-      wctx->decode_corrections[rid] = total_corrections;
-      wctx->decode_logical_pred[rid] = logical_pred;
-    }
-
-    NVTX_POP(); // CpuStageTotal
-    return 1;
-  });
+        NVTX_POP(); // PredecoderPoll
+        return realtime_ns::DEFERRED_COMPLETION;
+      });
 
   // --- Completion callback (record timestamps) ---
   const int max_requests = 500000;
@@ -770,6 +763,111 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // =========================================================================
+  // PyMatching thread pool (decoupled from predecoder workers)
+  // =========================================================================
+
+  std::vector<std::thread> pymatch_threads(config.num_decode_workers);
+  for (int t = 0; t < config.num_decode_workers; ++t) {
+    pymatch_threads[t] = std::thread(
+        [&pipeline, &pymatch_queue, &deferred_outputs, &decoder_ctx,
+         &decode_corrections, &decode_logical_pred, &obs_row,
+         max_requests]() {
+          PyMatchJob job;
+          while (pymatch_queue.pop(job)) {
+            NVTX_PUSH("PyMatchDecode");
+            using hrclock = std::chrono::high_resolution_clock;
+            auto decode_start = hrclock::now();
+
+            const uint8_t *output_u8 =
+                deferred_outputs[job.origin_slot].data();
+            const int32_t logical_pred = output_u8[0];
+            int total_corrections = 0;
+            bool all_converged = true;
+
+#if !defined(DISABLE_PYMATCHING)
+            const uint8_t *residual_u8 = output_u8 + 1;
+            auto *my_decoder = decoder_ctx.acquire_decoder();
+
+            if (decoder_ctx.use_full_H) {
+              thread_local cudaqx::tensor<uint8_t> syndrome_tensor(
+                  {(size_t)decoder_ctx.num_residual_detectors});
+              std::memcpy(syndrome_tensor.data(), residual_u8,
+                          decoder_ctx.num_residual_detectors);
+              auto result = my_decoder->decode(syndrome_tensor);
+              all_converged = result.converged;
+              if (!obs_row.empty() && obs_row.size() == result.result.size()) {
+                int obs_parity = 0;
+                for (size_t e = 0; e < result.result.size(); ++e)
+                  if (result.result[e] > 0.5 && obs_row[e])
+                    obs_parity ^= 1;
+                total_corrections += obs_parity;
+              } else {
+                for (auto v : result.result)
+                  if (v > 0.5)
+                    total_corrections++;
+              }
+            } else {
+              thread_local cudaqx::tensor<uint8_t> syndrome_tensor(
+                  {(size_t)decoder_ctx.z_stabilizers});
+              uint8_t *syn_data = syndrome_tensor.data();
+              for (int s = 0; s < decoder_ctx.spatial_slices; ++s) {
+                const uint8_t *slice =
+                    residual_u8 + s * decoder_ctx.z_stabilizers;
+                std::memcpy(syn_data, slice, decoder_ctx.z_stabilizers);
+                auto result = my_decoder->decode(syndrome_tensor);
+                all_converged &= result.converged;
+                for (auto v : result.result)
+                  if (v > 0.5)
+                    total_corrections++;
+              }
+            }
+            total_corrections += logical_pred;
+#endif
+
+            auto decode_end = hrclock::now();
+            NVTX_POP(); // PyMatchDecode
+
+            // Write RPC response into ring buffer slot
+            DecodeResponse resp{total_corrections, all_converged ? 1 : 0};
+            char *response_payload = (char *)job.ring_buffer_ptr +
+                                     sizeof(realtime_ns::RPCResponse);
+            std::memcpy(response_payload, &resp, sizeof(resp));
+
+            auto *header = static_cast<realtime_ns::RPCResponse *>(
+                job.ring_buffer_ptr);
+            header->magic = realtime_ns::RPC_MAGIC_RESPONSE;
+            header->status = 0;
+            header->result_len = sizeof(resp);
+
+            pipeline.complete_deferred(job.origin_slot);
+
+            auto worker_end = hrclock::now();
+            auto decode_us =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    decode_end - decode_start)
+                    .count();
+            auto worker_us =
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    worker_end - decode_start)
+                    .count();
+            decoder_ctx.total_decode_us.fetch_add(decode_us,
+                                                  std::memory_order_relaxed);
+            decoder_ctx.total_worker_us.fetch_add(worker_us,
+                                                  std::memory_order_relaxed);
+            decoder_ctx.decode_count.fetch_add(1, std::memory_order_relaxed);
+
+            uint32_t rid = static_cast<uint32_t>(job.request_id);
+            if (rid < static_cast<uint32_t>(max_requests)) {
+              decode_corrections[rid] = total_corrections;
+              decode_logical_pred[rid] = logical_pred;
+            }
+          }
+        });
+  }
+  std::cout << "[Setup] Started " << config.num_decode_workers
+            << " PyMatching decode workers.\n";
+
   std::cout << "[Setup] Starting pipeline...\n";
   auto injector = pipeline.create_injector();
   pipeline.start();
@@ -786,6 +884,7 @@ int main(int argc, char *argv[]) {
             << "  Warmup:     " << scfg.warmup_count << " requests\n"
             << "  Predecoders:" << config.num_predecoders
             << " (dedicated streams)\n"
+            << "  Decode workers:" << config.num_decode_workers << "\n"
             << "  Max reqs:   " << max_requests << "\n\n"
             << std::flush;
 
@@ -837,6 +936,11 @@ int main(int argc, char *argv[]) {
 
   // --- Shutdown ---
   pipeline.stop();
+
+  pymatch_queue.shutdown();
+  for (auto &t : pymatch_threads)
+    if (t.joinable())
+      t.join();
 
   // =========================================================================
   // Report
