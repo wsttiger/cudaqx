@@ -320,7 +320,7 @@ struct RealtimePipeline::Impl {
     uint64_t initial_idle = (nw >= 64) ? ~0ULL : ((1ULL << nw) - 1);
     idle_mask.store(initial_idle, cuda::std::memory_order_release);
 
-    // Build cudaq_host_dispatcher_config_t
+    // Build cudaq_host_dispatch_loop_ctx_t
     std::vector<cudaq_host_dispatch_worker_t> disp_workers(nw);
     for (int i = 0; i < nw; ++i) {
       disp_workers[i].graph_exec = worker_resources[i].graph_exec;
@@ -339,7 +339,7 @@ struct RealtimePipeline::Impl {
       }
     }
 
-    cudaq_host_dispatcher_config_t disp_cfg;
+    cudaq_host_dispatch_loop_ctx_t disp_cfg;
     std::memset(&disp_cfg, 0, sizeof(disp_cfg));
     disp_cfg.rx_flags = static_cast<void *>(ring->rx_flags());
     disp_cfg.tx_flags = static_cast<void *>(ring->tx_flags());
@@ -460,7 +460,7 @@ struct RealtimePipeline::Impl {
       size_t written = cpu_stage(ctx);
       NVTX_POP();
       if (written == 0) {
-        QEC_CPU_RELAX();
+        CUDAQ_REALTIME_CPU_RELAX();
         continue;
       }
 
@@ -546,7 +546,7 @@ struct RealtimePipeline::Impl {
       }
 
       if (!found_any)
-        QEC_CPU_RELAX();
+        CUDAQ_REALTIME_CPU_RELAX();
     }
   }
 };
@@ -667,7 +667,7 @@ void RingBufferInjector::submit(uint32_t function_id, const void *payload,
         state_->producer_stop->load(std::memory_order_acquire))
       return;
     state_->backpressure_stalls->fetch_add(1, std::memory_order_relaxed);
-    QEC_CPU_RELAX();
+    CUDAQ_REALTIME_CPU_RELAX();
   }
 }
 

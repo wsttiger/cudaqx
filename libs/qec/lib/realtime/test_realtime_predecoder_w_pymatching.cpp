@@ -57,14 +57,14 @@ using namespace cudaq::qec;
 namespace realtime_ns = cudaq::realtime;
 
 // Portable CPU Yield
-#ifndef QEC_CPU_RELAX
+#ifndef CUDAQ_REALTIME_CPU_RELAX
 #if defined(__x86_64__)
 #include <immintrin.h>
-#define QEC_CPU_RELAX() _mm_pause()
+#define CUDAQ_REALTIME_CPU_RELAX() _mm_pause()
 #elif defined(__aarch64__)
-#define QEC_CPU_RELAX() __asm__ volatile("yield" ::: "memory")
+#define CUDAQ_REALTIME_CPU_RELAX() __asm__ volatile("yield" ::: "memory")
 #else
-#define QEC_CPU_RELAX()                                                        \
+#define CUDAQ_REALTIME_CPU_RELAX()                                                        \
   do {                                                                         \
   } while (0)
 #endif
@@ -645,12 +645,10 @@ int main(int argc, char *argv[]) {
     worker_ctxs[i].decoder_ctx = &decoder_ctx;
   }
 
-  // Build function table for RPC dispatch
-  std::vector<uint32_t> function_ids(config.num_workers);
-  for (int i = 0; i < config.num_workers; ++i) {
-    std::string func = "predecode_target_" + std::to_string(i);
-    function_ids[i] = realtime_ns::fnv1a_hash(func.c_str());
-  }
+  // Build function table for RPC dispatch — all workers share a single
+  // function_id so the dispatcher can pick any idle worker (no HOL blocking).
+  const uint32_t shared_fid = realtime_ns::fnv1a_hash("predecode");
+  std::vector<uint32_t> function_ids(config.num_workers, shared_fid);
 
   // =========================================================================
   // Per-slot output buffers (predecoder output copied here before release)
@@ -904,7 +902,7 @@ int main(int argc, char *argv[]) {
 
     if (scfg.rate_us > 0) {
       while (hrclock::now() < next_submit_time)
-        QEC_CPU_RELAX();
+        CUDAQ_REALTIME_CPU_RELAX();
     }
 
     uint8_t *payload = payload_buf.data() + CUDAQ_RPC_HEADER_SIZE;
@@ -918,16 +916,11 @@ int main(int argc, char *argv[]) {
         payload[d] = err_dist(rng) ? 1 : 0;
     }
 
-    std::string func = "predecode_target_" + std::to_string(target);
-    uint32_t fid = realtime_ns::fnv1a_hash(func.c_str());
-
     submit_ts[req_id] = hrclock::now();
     NVTX_PUSH("ProducerSubmit");
-    injector.submit(fid, payload, static_cast<uint32_t>(payload_bytes),
+    injector.submit(shared_fid, payload, static_cast<uint32_t>(payload_bytes),
                     static_cast<uint64_t>(req_id));
     NVTX_POP();
-
-    target = (target + 1) % config.num_predecoders;
     req_id++;
 
     if (scfg.rate_us > 0)

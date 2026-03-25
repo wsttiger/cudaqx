@@ -509,7 +509,7 @@ protected:
   size_t ft_count_ = 0;
   std::vector<cudaq_host_dispatch_worker_t> workers_;
   std::vector<cudaStream_t> worker_streams_;
-  cudaq_host_dispatcher_config_t config_;
+  cudaq_host_dispatch_loop_ctx_t config_;
   std::thread loop_thread_;
 };
 
