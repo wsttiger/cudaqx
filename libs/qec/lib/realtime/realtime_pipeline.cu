@@ -341,20 +341,20 @@ struct RealtimePipeline::Impl {
 
     cudaq_host_dispatch_loop_ctx_t disp_cfg;
     std::memset(&disp_cfg, 0, sizeof(disp_cfg));
-    disp_cfg.rx_flags = static_cast<void *>(ring->rx_flags());
-    disp_cfg.tx_flags = static_cast<void *>(ring->tx_flags());
-    disp_cfg.rx_data_host = ring->rx_data_host();
-    disp_cfg.rx_data_dev = ring->rx_data_dev();
-    disp_cfg.tx_data_host = nullptr;
-    disp_cfg.tx_data_dev = nullptr;
-    disp_cfg.tx_stride_sz = config.slot_size;
-    disp_cfg.h_mailbox_bank = h_mailbox_bank;
-    disp_cfg.num_slots = static_cast<size_t>(config.num_slots);
-    disp_cfg.slot_size = config.slot_size;
+
+    disp_cfg.ringbuffer = ring->ringbuffer();
+
+    disp_cfg.config.num_slots = static_cast<uint32_t>(config.num_slots);
+    disp_cfg.config.slot_size = static_cast<uint32_t>(config.slot_size);
+    disp_cfg.config.dispatch_path = CUDAQ_DISPATCH_PATH_HOST;
+    disp_cfg.config.dispatch_mode = CUDAQ_DISPATCH_GRAPH_LAUNCH;
+
+    disp_cfg.function_table.entries = function_table.data();
+    disp_cfg.function_table.count = static_cast<uint32_t>(nw);
+
     disp_cfg.workers = disp_workers.data();
     disp_cfg.num_workers = static_cast<size_t>(nw);
-    disp_cfg.function_table = function_table.data();
-    disp_cfg.function_table_count = static_cast<size_t>(nw);
+    disp_cfg.h_mailbox_bank = h_mailbox_bank;
     disp_cfg.shutdown_flag = static_cast<void *>(&shutdown_flag);
     disp_cfg.stats_counter = &dispatcher_stats;
     disp_cfg.live_dispatched = static_cast<void *>(&live_dispatched);
