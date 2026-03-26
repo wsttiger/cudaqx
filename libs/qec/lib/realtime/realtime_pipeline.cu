@@ -360,7 +360,10 @@ struct RealtimePipeline::Impl {
     disp_cfg.inflight_slot_tags = inflight_slot_tags.data();
 
     // --- Dispatcher thread ---
-    // Copy workers vector into the lambda so it outlives this scope.
+    // The config is copied by value into the lambda; the workers vector is
+    // moved in so it outlives this scope.  Raw pointers inside cfg
+    // (ringbuffer, idle_mask, shutdown_flag, etc.) remain valid because they
+    // point to Impl-owned allocations that outlive the dispatcher thread.
     dispatcher_thread = std::thread(
         [cfg = disp_cfg, workers = std::move(disp_workers)]() mutable {
           cfg.workers = workers.data();

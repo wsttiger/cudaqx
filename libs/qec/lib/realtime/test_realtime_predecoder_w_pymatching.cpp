@@ -513,6 +513,14 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  int device_count = 0;
+  CUDA_CHECK(cudaGetDeviceCount(&device_count));
+  if (num_gpus < 1 || num_gpus > device_count) {
+    std::cerr << "ERROR: --num-gpus " << num_gpus
+              << " is out of range (1.." << device_count << ")\n";
+    return 1;
+  }
+
   std::cout << "--- Initializing Hybrid AI Realtime Pipeline (" << config.label
             << ") ---\n";
 
@@ -584,15 +592,8 @@ int main(int argc, char *argv[]) {
   const size_t slot_size =
       round_up_pow2(CUDAQ_RPC_HEADER_SIZE + model_input_bytes);
 
-  // Model I/O element count: for uint8 models, 1 byte per element;
-  // for int32, 4 bytes per element. Detect by comparing against expected
-  // detector count from the ONNX model shape.
-  const size_t model_input_elements = model_input_bytes;
-  const size_t model_output_elements_total = model_output_bytes;
-  // If model_input_bytes equals num_detectors (uint8), elem_size is 1.
-  // If model_input_bytes equals num_detectors*4 (int32), elem_size is 4.
-  // We detect this by checking if model_output_bytes == model_input_bytes + 1
-  // (uint8: one extra L element) vs model_input_bytes + 4 (int32).
+  // Detect element size: uint8 models have output = input + 1 byte (one
+  // extra logical prediction element); int32 models have output = input + 4.
   const size_t model_elem_size =
       (model_output_bytes == model_input_bytes + 1) ? 1 : sizeof(int32_t);
   const size_t num_input_detectors = model_input_bytes / model_elem_size;
@@ -715,6 +716,10 @@ int main(int argc, char *argv[]) {
   // =========================================================================
   // Per-slot output buffers (predecoder output copied here before release)
   // =========================================================================
+  // Predecoder workers copy GPU output into deferred_outputs[slot], then
+  // PyMatching workers read from it.  No lock is needed because the slot's
+  // tx_flags stays IN_FLIGHT until complete_deferred() is called after
+  // decoding, so the consumer cannot recycle the slot in between.
 
   std::vector<std::vector<uint8_t>> deferred_outputs(
       NUM_SLOTS, std::vector<uint8_t>(model_output_bytes));
@@ -960,7 +965,6 @@ int main(int argc, char *argv[]) {
                slot_size - static_cast<size_t>(CUDAQ_RPC_HEADER_SIZE));
   std::vector<uint8_t> payload_buf(CUDAQ_RPC_HEADER_SIZE + payload_bytes);
   int req_id = 0;
-  int target = 0;
 
   auto next_submit_time = hrclock::now();
 
