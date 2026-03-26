@@ -476,9 +476,8 @@ protected:
     config_.idle_mask = idle_mask_;
     config_.inflight_slot_tags = inflight_slot_tags_;
 
-    loop_thread_ = std::thread([this]() {
-      cudaq_host_dispatcher_loop(&config_);
-    });
+    loop_thread_ =
+        std::thread([this]() { cudaq_host_dispatcher_loop(&config_); });
   }
 
   void stop_loop() {

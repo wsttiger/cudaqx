@@ -12,7 +12,8 @@
 #include <atomic>
 #include <cuda/atomic>
 
-// Portable CPU Yield Macro for busy-polling (skip if already defined by realtime API)
+// Portable CPU Yield Macro for busy-polling (skip if already defined by
+// realtime API)
 #ifndef CUDAQ_REALTIME_CPU_RELAX
 #if defined(__x86_64__)
 #include <immintrin.h>
@@ -20,7 +21,8 @@
 #elif defined(__aarch64__)
 #define CUDAQ_REALTIME_CPU_RELAX() __asm__ volatile("yield" ::: "memory")
 #else
-#define CUDAQ_REALTIME_CPU_RELAX() std::atomic_thread_fence(std::memory_order_seq_cst)
+#define CUDAQ_REALTIME_CPU_RELAX()                                             \
+  std::atomic_thread_fence(std::memory_order_seq_cst)
 #endif
 #endif
 

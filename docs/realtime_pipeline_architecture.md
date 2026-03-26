@@ -13,6 +13,7 @@ classDiagram
         +stop()
         +create_injector() RingBufferInjector
         +complete_deferred(slot)
+        +ringbuffer_bases() RingBufferBases
         +stats() Stats
     }
 
@@ -33,15 +34,15 @@ classDiagram
         +clear_slot(slot)
     }
 
-    class cudaq_host_dispatcher_config_t {
-        +rx_flags : atomic_uint64~ptr~
-        +tx_flags : atomic_uint64~ptr~
-        +idle_mask : atomic_uint64~ptr~
-        +inflight_slot_tags : int~ptr~
-        +h_mailbox_bank : void~ptrptr~
+    class cudaq_host_dispatch_loop_ctx_t {
+        +ringbuffer : cudaq_ringbuffer_t
+        +config : cudaq_dispatcher_config_t
+        +function_table : cudaq_function_table_t
         +workers : cudaq_host_dispatch_worker_t*
         +num_workers : size_t
-        +function_table : cudaq_function_entry_t~ptr~
+        +h_mailbox_bank : void~ptrptr~
+        +idle_mask : atomic_uint64~ptr~
+        +inflight_slot_tags : int~ptr~
         +shutdown_flag : atomic_int~ptr~
     }
 
@@ -64,10 +65,10 @@ classDiagram
     }
 
     RealtimePipeline *-- RingBufferManager : owns
-    RealtimePipeline *-- cudaq_host_dispatcher_config_t : builds
+    RealtimePipeline *-- cudaq_host_dispatch_loop_ctx_t : builds
     RealtimePipeline --> RingBufferInjector : creates
     RingBufferInjector --> RingBufferManager : writes to
-    cudaq_host_dispatcher_config_t --> AIPreDecoderService : launches graph
+    cudaq_host_dispatch_loop_ctx_t --> AIPreDecoderService : launches graph
     RealtimePipeline --> PyMatchQueue : deferred jobs flow through
 ```
 
@@ -101,10 +102,10 @@ flowchart LR
         C["consumer_loop()"]
     end
 
-    subgraph "GPU Streams"
-        G0["stream 0: CUDA Graph"]
-        G1["stream 1: CUDA Graph"]
-        Gn["stream N-1: CUDA Graph"]
+    subgraph "GPU Streams (multi-GPU: round-robin across --num-gpus devices)"
+        G0["GPU 0: stream 0, stream 1"]
+        G1["GPU 1: stream 2, stream 3"]
+        Gn["GPU K: stream N-2, stream N-1"]
     end
 
     P -->|"rx_flags signal"| D
@@ -169,7 +170,7 @@ sequenceDiagram
     Disp->>Disp: __sync_synchronize
 
     opt pre_launch_fn configured
-        Disp->>GPU: pre_launch_fn cudaMemcpyAsync DMA syndrome to TRT input (offset 24)
+        Disp->>GPU: pre_launch_fn cudaMemcpyAsync H2D syndrome to TRT input (offset 24)
     end
 
     Disp->>GPU: cudaGraphLaunch graph_exec W, stream W
@@ -294,8 +295,8 @@ stateDiagram-v2
 | Value | Meaning |
 |-------|---------|
 | `0` | Slot is free (no pending result) |
-| `0xEEEEEEEEEEEEEEEE` | IN_FLIGHT — graph launched, result not yet ready |
-| `0xDEAD____XXXXXXXX` | ERROR — upper 16 bits = `0xDEAD`, lower 32 = cudaError_t |
+| `CUDAQ_TX_FLAG_IN_FLIGHT` (`0xEEEEEEEEEEEEEEEE`) | IN_FLIGHT — graph launched, result not yet ready |
+| `CUDAQ_TX_FLAG_ERROR_TAG<<48 \| err` (`0xDEAD____XXXXXXXX`) | ERROR — upper 16 bits = `0xDEAD`, lower 32 = cudaError_t |
 | Any other non-zero | READY — value is host pointer to slot data containing result |
 
 ## 6. CUDA Graph Structure (per Worker)
@@ -311,7 +312,7 @@ flowchart TD
     end
 
     subgraph "Pre-Launch Callback (host-side, before graph)"
-        P["pre_launch_fn:<br>cudaMemcpyAsync D2D<br>ring buffer slot+24 → TRT input<br>(DMA copy engine)"]
+        P["pre_launch_fn:<br>cudaMemcpyAsync H2D<br>ring buffer host ptr+24 → TRT input<br>(DMA copy engine, any GPU)"]
     end
 
     subgraph "Predecoder Worker (fast path, ~10 µs)"
@@ -348,7 +349,7 @@ flowchart TD
         Check{"slot_available(S)?<br>rx_flags=0 AND tx_flags=0"}
         CAS{"CAS next_slot<br>cur to cur+1"}
         Write["Write RPCHeader + payload + signal"]
-        Stall["backpressure_stalls++<br>QEC_CPU_RELAX()"]
+        Stall["backpressure_stalls++<br>CUDAQ_REALTIME_CPU_RELAX()"]
         Retry["Retry"]
 
         Submit --> Check
@@ -368,7 +369,7 @@ slot.
 
 **Round-robin limitation:** The injector uses strict round-robin slot selection. If slot N
 is busy but slot N+1 is free, the producer still stalls on slot N. This preserves FIFO
-ordering but contributes to the ~6.2M backpressure stalls observed at 104 µs injection rate.
+ordering but contributes to backpressure stalls (~4.8M single-GPU, ~2.9M with 4 GPUs at 104 µs injection rate).
 
 ## 8. ARM Memory Ordering Considerations
 

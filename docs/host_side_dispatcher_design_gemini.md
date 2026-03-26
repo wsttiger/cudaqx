@@ -7,7 +7,7 @@
 **Supersedes**: Device-side persistent kernel dispatcher (`dispatch_kernel_with_graph`) and Statically-mapped Host Dispatcher
 **Target Platforms**: NVIDIA Grace Hopper (GH200), Grace Blackwell (GB200)
 **Shared-Memory Model**: libcu++ `cuda::std::atomic` with `thread_scope_system`
-**Last Updated**: 2026-03-17
+**Last Updated**: 2026-03-26
 
 ---
 
@@ -90,35 +90,62 @@ typedef struct {
 
 The `pre_launch_fn` callback enables the dispatcher to issue a `cudaMemcpyAsync` (using the DMA copy engine) for the input payload before each graph launch, without baking application-specific logic into the generic dispatcher. The `post_launch_fn` callback is used in GPU-only mode to enqueue a `cudaLaunchHostFunc` that signals slot completion without CPU worker threads.
 
-### 4.2 Dispatcher Logic (Pseudocode)
+### 4.2 Dispatcher Config Structure
+
+The dispatcher loop takes a `cudaq_host_dispatch_loop_ctx_t` that composes three public API structs plus runtime state:
+
 ```cpp
-void cudaq_host_dispatcher_loop(const cudaq_host_dispatcher_config_t *config) {
+typedef struct {
+    cudaq_ringbuffer_t ringbuffer;         // ring buffer pointers & strides
+    cudaq_dispatcher_config_t config;      // num_slots, slot_size, dispatch_path
+    cudaq_function_table_t function_table; // entries pointer + count
+
+    cudaq_host_dispatch_worker_t *workers;
+    size_t num_workers;
+    void **h_mailbox_bank;
+    void *shutdown_flag;       // opaque cuda::std::atomic<int>*
+    uint64_t *stats_counter;
+    void *live_dispatched;     // opaque cuda::std::atomic<uint64_t>*
+    void *idle_mask;           // opaque cuda::std::atomic<uint64_t>*, 1=free 0=busy
+    int *inflight_slot_tags;   // worker_id -> origin FPGA slot
+    void *io_ctxs_host;       // NULL for legacy mode
+    void *io_ctxs_dev;        // NULL for legacy mode
+} cudaq_host_dispatch_loop_ctx_t;
+```
+
+### 4.3 Function-Aware Worker Selection
+
+When a function table is present, the dispatcher routes each request to a worker whose `function_id` matches the RPC header's `function_id`. This is correct for mixed function tables (e.g., different model types). For pools of interchangeable workers running the same model, all workers **must** share a single `function_id` to avoid head-of-line blocking — otherwise the dispatcher waits for the one specific worker that matches even when other workers are idle.
+
+### 4.4 Dispatcher Logic (Pseudocode)
+```cpp
+void cudaq_host_dispatcher_loop(const cudaq_host_dispatch_loop_ctx_t *ctx) {
     size_t current_slot = 0;
 
-    while (config.shutdown_flag->load(acquire) == 0) {
-        uint64_t rx_value = config.rx_flags[current_slot].load(acquire);
-        if (rx_value == 0) { QEC_CPU_RELAX(); continue; }
+    while (ctx->shutdown_flag->load(acquire) == 0) {
+        uint64_t rx_value = ctx->ringbuffer.rx_flags_host[current_slot].load(acquire);
+        if (rx_value == 0) { CUDAQ_REALTIME_CPU_RELAX(); continue; }
 
         void* slot_host = reinterpret_cast<void*>(rx_value);
 
-        // Optional: parse RPC header and lookup function table
+        // Parse RPC header and lookup function table
         if (use_function_table) {
-            ParsedSlot parsed = parse_slot_with_function_table(slot_host, config);
+            ParsedSlot parsed = parse_slot_with_function_table(slot_host, ctx);
             if (parsed.drop) { clear_and_advance(); continue; }
         }
 
-        // Wait for an available worker (spin if all busy)
-        int worker_id = acquire_graph_worker(config, ...);
-        if (worker_id < 0) { QEC_CPU_RELAX(); continue; }
+        // Wait for an available worker with matching function_id
+        int worker_id = acquire_graph_worker(ctx, ...);
+        if (worker_id < 0) { CUDAQ_REALTIME_CPU_RELAX(); continue; }
 
         // Mark worker busy, tag with origin slot
-        config.idle_mask->fetch_and(~(1ULL << worker_id), release);
-        config.inflight_slot_tags[worker_id] = current_slot;
+        ctx->idle_mask->fetch_and(~(1ULL << worker_id), release);
+        ctx->inflight_slot_tags[worker_id] = current_slot;
 
         // Translate host ptr to device ptr, write to mailbox
-        ptrdiff_t offset = (uint8_t*)slot_host - config.rx_data_host;
-        void* data_dev = config.rx_data_dev + offset;
-        config.h_mailbox_bank[worker_id] = data_dev;
+        ptrdiff_t offset = (uint8_t*)slot_host - ctx->ringbuffer.rx_data_host;
+        void* data_dev = ctx->ringbuffer.rx_data + offset;
+        ctx->h_mailbox_bank[worker_id] = data_dev;
         __sync_synchronize();
 
         // Pre-launch callback: DMA copy input to TRT buffer
@@ -128,21 +155,19 @@ void cudaq_host_dispatcher_loop(const cudaq_host_dispatcher_config_t *config) {
         // Launch graph
         cudaError_t err = cudaGraphLaunch(worker.graph_exec, worker.stream);
         if (err != cudaSuccess) {
-            tx_flags[current_slot].store(0xDEAD|err, release);
+            tx_flags_host[current_slot].store(CUDAQ_TX_FLAG_ERROR_TAG<<48|err, release);
             idle_mask->fetch_or(1ULL << worker_id, release);
         } else {
-            tx_flags[current_slot].store(0xEEEEEEEEEEEEEEEEULL, release);
+            if (worker.post_launch_fn)
+                worker.post_launch_fn(worker.post_launch_data, data_dev, worker.stream);
+            tx_flags_host[current_slot].store(CUDAQ_TX_FLAG_IN_FLIGHT, release);
         }
 
-        // Post-launch callback (GPU-only mode: enqueue cudaLaunchHostFunc)
-        if (worker.post_launch_fn)
-            worker.post_launch_fn(worker.post_launch_data, data_dev, worker.stream);
-
         // Consume slot and advance
-        rx_flags[current_slot].store(0, release);
+        rx_flags_host[current_slot].store(0, release);
         current_slot = (current_slot + 1) % num_slots;
     }
-    for (auto& w : config.workers) cudaStreamSynchronize(w.stream);
+    for (auto& w : ctx->workers) cudaStreamSynchronize(w.stream);
 }
 ```
 
@@ -154,7 +179,7 @@ void cudaq_host_dispatcher_loop(const cudaq_host_dispatcher_config_t *config) {
 
 Data copies between the ring buffer and TRT inference buffers use the GPU's DMA copy engine rather than SM-based kernels, freeing compute resources for inference.
 
-**Input copy (ring buffer -> TRT input)**: Issued by the host dispatcher via `pre_launch_fn` callback as a `cudaMemcpyAsync(DeviceToDevice)` on the worker's stream *before* `cudaGraphLaunch`. The source address is dynamic (determined at dispatch time from the ring buffer slot at offset `CUDAQ_RPC_HEADER_SIZE` = 24 bytes), so it cannot be baked into the captured graph.
+**Input copy (ring buffer -> TRT input)**: Issued by the host dispatcher via `pre_launch_fn` callback as a `cudaMemcpyAsync(HostToDevice)` on the worker's stream *before* `cudaGraphLaunch`. The dispatcher passes a device pointer (`slot_dev`) derived from the ring buffer's mapped memory; the callback converts it back to a host pointer using offset arithmetic and issues an H2D copy. Using the host pointer (rather than the mapped device pointer with D2D) enables **multi-GPU support**: pinned host memory is DMA-accessible from any GPU, so predecoders on different devices can all pull input from the same ring buffer. The source address is dynamic (determined at dispatch time from the ring buffer slot at offset `CUDAQ_RPC_HEADER_SIZE` = 24 bytes), so it cannot be baked into the captured graph.
 
 **Output copy (TRT output -> host-mapped outputs)**: Captured inside the CUDA graph as a `cudaMemcpyAsync(DeviceToDevice)`. Both source (`d_trt_output_`) and destination (`d_predecoder_outputs_`) are fixed addresses, so this is captured at graph instantiation time.
 
@@ -296,7 +321,7 @@ while (!consumer_stop) {
             found_any = true;
         }
     }
-    if (!found_any) QEC_CPU_RELAX();
+    if (!found_any) CUDAQ_REALTIME_CPU_RELAX();
 }
 ```
 
@@ -369,7 +394,7 @@ The `PipelineStageConfig` allows configuring `num_workers`, `num_slots`, `slot_s
 8. **Host Dispatcher** marks bit 2 busy in `idle_mask`.
 9. **Host Dispatcher** saves `inflight_slot_tags[2] = slot`.
 10. **Host Dispatcher** translates `host_ptr` to `dev_ptr`, writes to `mailbox_bank[2]`.
-11. **Host Dispatcher** calls `pre_launch_fn`: writes `h_ring_ptrs[0] = dev_ptr`, issues `cudaMemcpyAsync(d_trt_input, dev_ptr + 24, input_size, D2D, stream[2])`.
+11. **Host Dispatcher** calls `pre_launch_fn`: writes `h_ring_ptrs[0] = dev_ptr`, derives host pointer via offset arithmetic, issues `cudaMemcpyAsync(d_trt_input, host_ptr + 24, input_size, H2D, stream[2])`.
 12. **Host Dispatcher** calls `cudaGraphLaunch(..., stream[2])`.
 13. **Host Dispatcher** sets `tx_flags[slot] = 0xEEEE...` (IN_FLIGHT), then clears `rx_flags[slot] = 0` and advances to next slot.
 14. **GPU DMA engine** copies input payload from ring buffer to TRT input buffer.
@@ -415,7 +440,7 @@ Because `cudaGraphLaunch` is asynchronous, the dispatcher clears `rx_flags[slot]
 
 **Fix: IN_FLIGHT tag**
 
-1. **Dispatcher**: On successful launch, write `tx_flags[current_slot].store(0xEEEEEEEEEEEEEEEEULL, release)` **before** clearing `rx_flags[current_slot]`. On launch failure, write the 0xDEAD|err value and restore the worker bit; do not write 0xEEEE. Setting `tx_data_host = nullptr` and `tx_data_dev = nullptr` in the config forces the dispatcher to use the `0xEEEE` sentinel rather than a real data address.
+1. **Dispatcher**: On successful launch, write `tx_flags[current_slot].store(CUDAQ_TX_FLAG_IN_FLIGHT, release)` **before** clearing `rx_flags[current_slot]`. On launch failure, write the `CUDAQ_TX_FLAG_ERROR_TAG<<48 | err` value and restore the worker bit; do not write IN_FLIGHT. When `io_ctxs_host == nullptr` (legacy mode), the dispatcher writes the sentinel from the host after launch.
 2. **Producer**: Reuse a slot only when **both** `rx_flags[slot]==0` **and** `tx_flags[slot]==0`. Thus the producer blocks until the consumer has harvested (tx cleared).
 3. **Consumer**: When harvesting, treat only real responses: `tx_flags[slot] != 0` **and** `tx_flags[slot] != 0xEEEEEEEEEEEEEEEEULL`. Ignore 0xEEEE (in-flight). On harvest, clear `tx_flags[slot] = 0`.
 
@@ -453,6 +478,7 @@ Data-integrity tests that verify known payloads survive the full CUDA graph roun
 - Loads Stim-generated test data (detectors, observables, parity check matrix, priors).
 - Streams syndrome data at configurable rate with correctness verification (LER).
 - Reports latency percentiles, throughput, backpressure stalls, syndrome density reduction.
+- `--num-gpus N` distributes predecoders round-robin across N GPUs.
 
 ---
 
@@ -467,26 +493,47 @@ Data-integrity tests that verify known payloads survive the full CUDA graph roun
 
 ## 14. Performance Results (d=13, T=104, 104 µs rate, 20s)
 
-### 14.1 Decoupled Architecture (current)
+### 14.1 Single-GPU (current, shared function_id + H2D copy)
 
-Measured on Grace Blackwell (GB200) with `predecoder_memory_d13_T104_X.onnx` (FP16), 8 predecoders, 16 PyMatching workers, 16 slots:
+Measured on Grace Blackwell (GB200) with `predecoder_memory_d13_T104_X.onnx` (FP16), 8 predecoders on 1 GPU, 16 PyMatching workers, 16 slots:
 
 | Metric | Value |
 | :--- | :--- |
 | Throughput | 9,610 req/s |
 | Submitted / Completed | 192,309 / 192,309 |
-| Backpressure stalls | 6,193,418 |
-| p50 latency | 352.3 µs |
-| Mean latency | 393.4 µs |
-| p90 latency | 514.7 µs |
-| p95 latency | 606.3 µs |
-| p99 latency | 1,248.8 µs |
-| Max latency | 3,930.0 µs |
-| PyMatching decode (avg) | 224.4 µs |
+| Backpressure stalls | 4,821,740 |
+| p50 latency | 334.9 µs |
+| Mean latency | 373.8 µs |
+| p90 latency | 492.8 µs |
+| p95 latency | 572.8 µs |
+| p99 latency | 1,213.2 µs |
+| Max latency | 3,757.4 µs |
+| PyMatching decode (avg) | 221.3 µs |
 | Syndrome density reduction | 98.3% |
 | Pipeline LER | 0.0020 |
 
-### 14.2 Raw TRT Baseline (trtexec)
+### 14.2 Multi-GPU (4x GB200, 2 predecoders per GPU)
+
+Same configuration with `--num-gpus 4` (round-robin: predecoder `i` on GPU `i % 4`):
+
+| Metric | Value |
+| :--- | :--- |
+| Throughput | 9,610 req/s |
+| Submitted / Completed | 192,309 / 192,309 |
+| Backpressure stalls | 2,858,486 |
+| p50 latency | 334.0 µs |
+| Mean latency | 354.4 µs |
+| p90 latency | 482.0 µs |
+| p95 latency | 524.8 µs |
+| p99 latency | 652.2 µs |
+| Max latency | 5,259.6 µs |
+| PyMatching decode (avg) | 222.8 µs |
+| Syndrome density reduction | 98.3% |
+| Pipeline LER | 0.0020 |
+
+Key improvements vs single-GPU: p99 down 46% (1,213 → 652 µs), backpressure stalls down 40%, stddev down 37%. The median is rate-limited so p50 is unchanged.
+
+### 14.3 Raw TRT Baseline (trtexec)
 
 | Mode | GPU Compute | Total Host Latency |
 | :--- | :--- | :--- |
@@ -496,19 +543,36 @@ Measured on Grace Blackwell (GB200) with `predecoder_memory_d13_T104_X.onnx` (FP
 
 ---
 
-## 15. LLM Implementation Directives (Constraints Checklist)
+## 15. Multi-GPU Support
+
+The benchmark supports distributing predecoders across multiple GPUs via `--num-gpus N`. Predecoder `i` is assigned to GPU `i % N` using round-robin placement.
+
+### 15.1 How It Works
+
+1. **Per-GPU initialization**: Before creating each predecoder, `cudaSetDevice(gpu)` is called. The TRT engine, `cudaMalloc` buffers, `cudaStreamCreate`, and `cudaGraphInstantiate` all bind to that device.
+2. **Ring buffer stays on GPU 0**: The pipeline's `RingBufferManager` allocates pinned mapped memory under whatever device is current at construction (GPU 0 after restoring). The dispatcher computes `slot_dev` from the GPU 0 device pointer.
+3. **H2D cross-device copy**: The `pre_launch_fn` converts `slot_dev` back to a host pointer using `pipeline.ringbuffer_bases()` and issues `cudaMemcpyAsync(..., cudaMemcpyHostToDevice, worker_stream)`. Pinned host memory is DMA-accessible from any GPU, so no per-device ring buffer pointers are needed.
+4. **Graph launch**: `cudaGraphLaunch(worker.graph_exec, worker.stream)` routes to the correct GPU because the graph and stream were both created on the same device.
+
+### 15.2 Performance Impact (4x GB200)
+
+At the 104 µs injection rate, throughput is rate-limited so p50 is unchanged. The benefit is in the tail: p99 drops 46% (1,213 → 652 µs) and backpressure stalls drop 40% due to reduced contention on any single GPU's execution engine.
+
+---
+
+## 16. LLM Implementation Directives (Constraints Checklist)
 
 When generating code from this specification, the LLM **MUST** strictly adhere to the following constraints:
 
 - [ ] **NO CUDA STREAM QUERYING**: Do not use `cudaStreamQuery()` for backpressure or completion checking. It incurs severe driver latency. Rely strictly on `idle_mask` and `ready_flags`.
 - [ ] **NO WEAK ORDERING BUGS**: Do not use `volatile`. Do not use `__threadfence_system()`. You must use `cuda::std::atomic<T, cuda::thread_scope_system>` (or `<cuda/atomic>` with `thread_scope_system`) for all cross-device synchronization.
-- [ ] **NO HEAD OF LINE BLOCKING**: The host dispatcher MUST NOT statically map slots to predecoders. It must dynamically allocate via `idle_mask`. The consumer MUST harvest out-of-order by scanning all active slots.
-- [ ] **NO DATA LOSS**: If `idle_mask == 0` (all workers busy), the dispatcher MUST spin on the current slot (`QEC_CPU_RELAX()`). It MUST NOT advance `current_slot` until a worker is allocated and the graph is launched.
+- [ ] **NO HEAD OF LINE BLOCKING**: The host dispatcher MUST NOT statically map slots to predecoders. It must dynamically allocate via `idle_mask`. The consumer MUST harvest out-of-order by scanning all active slots. When all workers run the same model, they MUST share a single `function_id` so the dispatcher can pick any idle worker; per-worker unique IDs cause function-aware routing to degenerate into 1:1 static mapping.
+- [ ] **NO DATA LOSS**: If `idle_mask == 0` (all workers busy), the dispatcher MUST spin on the current slot (`CUDAQ_REALTIME_CPU_RELAX()`). It MUST NOT advance `current_slot` until a worker is allocated and the graph is launched.
 - [ ] **NO RACE CONDITIONS ON TAGS**: `inflight_slot_tags` does not need to be atomic because index `[worker_id]` is exclusively owned by the active flow once the dispatcher clears the bit in `idle_mask`, until the worker thread restores the bit.
 - [ ] **READY FLAG CLAIMING**: The CPU poller MUST claim each completion exactly once using compare_exchange_strong(1, 2) on the ready flag; use relaxed memory order on CAS failure. The worker MUST clear the flag (store 0) in `release_job`.
-- [ ] **IN_FLIGHT SENTINEL**: After a successful `cudaGraphLaunch`, the dispatcher MUST write `tx_flags[current_slot] = 0xEEEEEEEEEEEEEEEEULL` before clearing `rx_flags[current_slot]`. Set `tx_data_host = nullptr` and `tx_data_dev = nullptr` to force the 0xEEEE path. The producer MUST wait for both rx and tx to be 0 before reusing a slot. The consumer MUST ignore 0xEEEE and only harvest real responses (or 0xDEAD errors).
+- [ ] **IN_FLIGHT SENTINEL**: After a successful `cudaGraphLaunch`, the dispatcher MUST write `tx_flags[current_slot] = CUDAQ_TX_FLAG_IN_FLIGHT` before clearing `rx_flags[current_slot]`. In legacy mode (`io_ctxs_host == nullptr`), the host writes this sentinel after launch. The producer MUST wait for both rx and tx to be 0 before reusing a slot. The consumer MUST ignore IN_FLIGHT and only harvest real responses (or `CUDAQ_TX_FLAG_ERROR_TAG` errors).
 - [ ] **CONSUMER MEMORY ORDERING**: The consumer MUST set `slot_occupied[s] = 0` BEFORE calling `cudaq_host_ringbuffer_clear_slot`, with a `__sync_synchronize()` fence between them, to prevent the producer-consumer race on ARM.
-- [ ] **DMA DATA MOVEMENT**: Use `cudaMemcpyAsync` (DMA engine) for data copies. Input copy is issued via `pre_launch_fn` callback before graph launch at offset `CUDAQ_RPC_HEADER_SIZE` (24 bytes). Output copy is captured inside the graph. Do not use SM-based byte-copy kernels for fixed-address transfers.
+- [ ] **DMA DATA MOVEMENT**: Use `cudaMemcpyAsync` (DMA engine) for data copies. Input copy is issued via `pre_launch_fn` callback before graph launch at offset `CUDAQ_RPC_HEADER_SIZE` (24 bytes) using `cudaMemcpyHostToDevice` from the pinned ring buffer host pointer. Output copy is captured inside the graph. Do not use SM-based byte-copy kernels for fixed-address transfers.
 - [ ] **NO INPUT KERNEL IN GRAPH**: The captured CUDA graph must NOT contain an input-copy kernel. All input data movement is handled by the `pre_launch_fn` DMA callback issued on the worker stream before `cudaGraphLaunch`.
 - [ ] **DEFERRED COMPLETION**: When the CPU stage returns `DEFERRED_COMPLETION`, the pipeline MUST release `idle_mask` but MUST NOT write `tx_flags`. The external caller MUST call `complete_deferred(slot)` to signal completion.
 - [ ] **SHUTDOWN**: Use a `consumer_stop` (or equivalent) flag so the consumer thread can exit after a grace period even when `total_completed < total_submitted`; join the consumer after setting the flag so the process exits cleanly. Shut down the PyMatching queue before stopping the pipeline.

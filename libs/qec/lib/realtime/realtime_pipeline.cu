@@ -6,10 +6,10 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.
  ******************************************************************************/
 
+#include "cudaq/qec/realtime/nvtx_helpers.h"
+#include "cudaq/qec/realtime/pipeline.h"
 #include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
 #include "cudaq/realtime/daemon/dispatcher/host_dispatcher.h"
-#include "cudaq/qec/realtime/pipeline.h"
-#include "cudaq/qec/realtime/nvtx_helpers.h"
 
 #include <cuda/std/atomic>
 #include <cuda_runtime.h>
@@ -157,8 +157,7 @@ public:
 
   void write_and_signal(uint32_t slot, uint32_t function_id,
                         const void *payload, uint32_t payload_len,
-                        uint32_t request_id = 0,
-                        uint64_t ptp_timestamp = 0) {
+                        uint32_t request_id = 0, uint64_t ptp_timestamp = 0) {
     cudaq_host_ringbuffer_write_rpc_request(&rb_, slot, function_id, payload,
                                             payload_len, request_id,
                                             ptp_timestamp);
@@ -334,8 +333,7 @@ struct RealtimePipeline::Impl {
         disp_workers[i].post_launch_data = &gpu_only_ctxs[i];
       } else {
         disp_workers[i].post_launch_fn = worker_resources[i].post_launch_fn;
-        disp_workers[i].post_launch_data =
-            worker_resources[i].post_launch_data;
+        disp_workers[i].post_launch_data = worker_resources[i].post_launch_data;
       }
     }
 
@@ -591,6 +589,10 @@ RealtimePipeline::Stats RealtimePipeline::stats() const {
           impl_->total_completed.load(std::memory_order_relaxed),
           impl_->live_dispatched.load(cuda::std::memory_order_relaxed),
           impl_->backpressure_stalls.load(std::memory_order_relaxed)};
+}
+
+RealtimePipeline::RingBufferBases RealtimePipeline::ringbuffer_bases() const {
+  return {impl_->ring->rx_data_host(), impl_->ring->rx_data_dev()};
 }
 
 void RealtimePipeline::complete_deferred(int slot) {

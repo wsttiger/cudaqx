@@ -6,8 +6,8 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
 #include "cudaq/qec/realtime/ai_decoder_service.h"
+#include "cudaq/realtime/daemon/dispatcher/dispatch_kernel_launch.h"
 #include <NvOnnxParser.h>
 #include <algorithm>
 #include <cstdlib>
@@ -275,9 +275,8 @@ void AIDecoderService::setup_bindings() {
 
     std::printf("[TensorRT] Binding %d: \"%s\" %s, dtype=%d, elem_size=%zu, "
                 "volume=%zu, %zu bytes\n",
-                i, name, is_input ? "INPUT" : "OUTPUT",
-                static_cast<int>(dtype), trt_dtype_size(dtype),
-                tensor_volume(dims), size_bytes);
+                i, name, is_input ? "INPUT" : "OUTPUT", static_cast<int>(dtype),
+                trt_dtype_size(dtype), tensor_volume(dims), size_bytes);
 
     TensorBinding binding{name, nullptr, size_bytes, is_input};
 

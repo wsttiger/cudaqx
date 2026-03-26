@@ -179,6 +179,15 @@ public:
   /// response into the slot's ring buffer area.
   void complete_deferred(int slot);
 
+  struct RingBufferBases {
+    uint8_t *rx_data_host;
+    uint8_t *rx_data_dev;
+  };
+
+  /// Return the host and device base addresses of the RX data ring.
+  /// Useful for pre_launch callbacks that need to convert between the two.
+  RingBufferBases ringbuffer_bases() const;
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
