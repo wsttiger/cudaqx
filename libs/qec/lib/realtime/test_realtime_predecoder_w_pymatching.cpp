@@ -516,8 +516,8 @@ int main(int argc, char *argv[]) {
   int device_count = 0;
   CUDA_CHECK(cudaGetDeviceCount(&device_count));
   if (num_gpus < 1 || num_gpus > device_count) {
-    std::cerr << "ERROR: --num-gpus " << num_gpus
-              << " is out of range (1.." << device_count << ")\n";
+    std::cerr << "ERROR: --num-gpus " << num_gpus << " is out of range (1.."
+              << device_count << ")\n";
     return 1;
   }
 
