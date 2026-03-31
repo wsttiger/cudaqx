@@ -168,6 +168,14 @@ if(CMAKE_CUDA_COMPILER AND CUDAQ_REALTIME_INCLUDE_DIR)
         message(STATUS "NVTX profiling enabled for cudaq-realtime-pipeline")
       endif()
 
+      option(CUDAQ_NO_TX_SENTINEL
+        "Disable tx_flags backpressure check for hololink compat" OFF)
+      if(CUDAQ_NO_TX_SENTINEL)
+        target_compile_definitions(cudaq-realtime-pipeline
+          PRIVATE CUDAQ_NO_TX_SENTINEL)
+        message(STATUS "TX sentinel disabled for cudaq-realtime-pipeline")
+      endif()
+
       get_filename_component(_CUDAQ_RT_LIB_DIR "${_CUDAQ_RT_LIB}" DIRECTORY)
       set_target_properties(cudaq-realtime-pipeline PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON

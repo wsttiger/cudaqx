@@ -152,7 +152,12 @@ public:
   }
 
   bool slot_available(uint32_t slot) const {
+#ifdef CUDAQ_NO_TX_SENTINEL
+    auto *flags = reinterpret_cast<const volatile uint64_t *>(rx_flags_);
+    return __atomic_load_n(&flags[slot], __ATOMIC_ACQUIRE) == 0;
+#else
     return cudaq_host_ringbuffer_slot_available(&rb_, slot) != 0;
+#endif
   }
 
   void write_and_signal(uint32_t slot, uint32_t function_id,
@@ -646,8 +651,13 @@ bool RingBufferInjector::try_submit(uint32_t function_id, const void *payload,
                                     size_t payload_size, uint64_t request_id) {
   uint32_t cur = state_->next_slot.load(std::memory_order_relaxed);
   uint32_t slot = cur % static_cast<uint32_t>(state_->num_slots);
+#ifdef CUDAQ_NO_TX_SENTINEL
+  if ((*state_->slot_occupied)[slot])
+    return false;
+#else
   if (!state_->ring->slot_available(slot))
     return false;
+#endif
 
   if (!state_->next_slot.compare_exchange_weak(
           cur, cur + 1, std::memory_order_acq_rel, std::memory_order_relaxed))
