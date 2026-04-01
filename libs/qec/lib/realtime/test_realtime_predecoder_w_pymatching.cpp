@@ -481,6 +481,15 @@ int main(int argc, char *argv[]) {
       num_gpus = std::stoi(argv[i + 1]);
     }
   }
+  // Multi-GPU dispatch is not yet supported: the host dispatcher thread
+  // does not call cudaSetDevice before cudaGraphLaunch/cudaStreamQuery,
+  // causing hangs when workers span multiple devices.
+  if (num_gpus > 1) {
+    std::cerr << "[WARN] --num-gpus " << num_gpus
+              << " requested, but multi-GPU dispatch is not yet supported. "
+                 "Clamping to 1.\n";
+    num_gpus = 1;
+  }
   // Positional: config_name [rate_us] [duration_s]
   if (argc > 1 && std::string(argv[1]).substr(0, 2) != "--")
     config_name = argv[1];

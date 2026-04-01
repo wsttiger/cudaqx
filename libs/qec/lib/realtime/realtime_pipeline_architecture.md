@@ -102,16 +102,12 @@ flowchart LR
         C["consumer_loop()"]
     end
 
-    subgraph "GPU Streams (multi-GPU: round-robin across --num-gpus devices)"
-        G0["GPU 0: stream 0, stream 1"]
-        G1["GPU 1: stream 2, stream 3"]
-        Gn["GPU K: stream N-2, stream N-1"]
+    subgraph "GPU Streams (single GPU)"
+        G0["GPU 0: streams 0..N-1"]
     end
 
     P -->|"rx_flags signal"| D
     D -->|"cudaGraphLaunch"| G0
-    D -->|"cudaGraphLaunch"| G1
-    D -->|"cudaGraphLaunch"| Gn
     G0 -->|"ready_flags = 1"| W0
     G1 -->|"ready_flags = 1"| W1
     Gn -->|"ready_flags = 1"| Wn
@@ -174,8 +170,9 @@ sequenceDiagram
     end
 
     Disp->>GPU: cudaGraphLaunch graph_exec W, stream W
-    Disp->>RB: tx_flags S .store 0xEEEE, release, IN_FLIGHT sentinel
+    Disp->>RB: tx_flags S .store IN_FLIGHT, release (for consumer only)
     Disp->>RB: rx_flags S .store 0, release, free rx slot
+    Note over Disp: Producer uses slot_occupied[] for backpressure,<br>not tx_flags
 
     Note over Prod,App: === PHASE 3: GPU Inference ===
 
@@ -225,7 +222,7 @@ and the memory ordering used.
 | Atomic | Type | Scope | Writer(s) | Reader(s) | Ordering |
 |--------|------|-------|-----------|-----------|----------|
 | `rx_flags[slot]` | `cuda::atomic<uint64_t, system>` | Producer ↔ Dispatcher | Producer (signal), Dispatcher (clear), Consumer (clear) | Dispatcher (poll) | store: `release`, load: `acquire` |
-| `tx_flags[slot]` | `cuda::atomic<uint64_t, system>` | Dispatcher ↔ PyMatch Worker ↔ Consumer | Dispatcher (IN_FLIGHT), PyMatch Worker (READY/addr via `complete_deferred`) | Consumer (poll) | store: `release`, load: `acquire` |
+| `tx_flags[slot]` | `cuda::atomic<uint64_t, system>` | Dispatcher ↔ PyMatch Worker ↔ Consumer | Dispatcher (IN_FLIGHT), PyMatch Worker (READY/addr via `complete_deferred`) | Consumer (poll). Not used for producer backpressure. | store: `release`, load: `acquire` |
 
 ### Worker Pool Scheduling
 
@@ -266,38 +263,41 @@ transitions are driven by atomic flag writes from different threads.
 stateDiagram-v2
     [*] --> FREE : initialization
 
-    FREE --> RX_SIGNALED : Producer writes rx_flags[S] = host_ptr
+    FREE --> RX_SIGNALED : Producer writes rx_flags[S] = host_ptr, slot_occupied[S] = 1
     note right of RX_SIGNALED
-        rx_flags != 0, tx_flags = 0
+        slot_occupied = 1, rx_flags != 0, tx_flags = 0
         RPCHeader (24B) + payload in rx_data
     end note
 
-    RX_SIGNALED --> IN_FLIGHT : Dispatcher reads rx_flags, launches graph, sets tx_flags IN_FLIGHT, clears rx_flags
-    note right of IN_FLIGHT
-        rx_flags = 0, tx_flags = 0xEEEE
+    RX_SIGNALED --> DISPATCHED : Dispatcher reads rx_flags, launches graph, clears rx_flags
+    note right of DISPATCHED
+        slot_occupied = 1, rx_flags = 0
+        tx_flags = IN_FLIGHT (internal to dispatcher/consumer)
         GPU processing + predecoder worker + PyMatch queue
     end note
 
-    IN_FLIGHT --> TX_READY : PyMatch worker calls complete_deferred → tx_flags = slot_host_addr
+    DISPATCHED --> TX_READY : PyMatch worker calls complete_deferred → tx_flags = slot_host_addr
     note right of TX_READY
-        rx_flags = 0, tx_flags = valid addr
+        slot_occupied = 1, rx_flags = 0, tx_flags = valid addr
         Result available for consumer
     end note
 
-    TX_READY --> FREE : Consumer reads result, calls clear_slot
+    TX_READY --> FREE : Consumer reads result, sets slot_occupied=0, calls clear_slot
 
-    IN_FLIGHT --> TX_ERROR : cudaGraphLaunch failed, tx_flags = 0xDEAD | err
-    TX_ERROR --> FREE : Consumer reads error, calls clear_slot
+    DISPATCHED --> TX_ERROR : cudaGraphLaunch failed, tx_flags = error tag
+    TX_ERROR --> FREE : Consumer reads error, sets slot_occupied=0, calls clear_slot
 ```
 
-**`tx_flags` value encoding:**
+**`tx_flags` value encoding (internal to dispatcher/consumer):**
 
 | Value | Meaning |
 |-------|---------|
-| `0` | Slot is free (no pending result) |
-| `CUDAQ_TX_FLAG_IN_FLIGHT` (`0xEEEEEEEEEEEEEEEE`) | IN_FLIGHT — graph launched, result not yet ready |
-| `CUDAQ_TX_FLAG_ERROR_TAG<<48 \| err` (`0xDEAD____XXXXXXXX`) | ERROR — upper 16 bits = `0xDEAD`, lower 32 = cudaError_t |
+| `0` | Slot is free |
+| `CUDAQ_TX_FLAG_IN_FLIGHT` | Graph launched, result not yet ready |
+| `CUDAQ_TX_FLAG_ERROR_TAG<<48 \| err` | ERROR — upper 16 bits = `0xDEAD`, lower 32 = cudaError_t |
 | Any other non-zero | READY — value is host pointer to slot data containing result |
+
+**Producer backpressure** uses `slot_occupied[]` (not `tx_flags`), matching the hololink model where `ring_flag`/`rx_flags` is the sole sender-side backpressure mechanism.
 
 ## 6. CUDA Graph Structure (per Worker)
 
@@ -346,9 +346,9 @@ The pipeline uses implicit backpressure through slot availability:
 flowchart TD
     subgraph "Flow Control"
         Submit["Injector::try_submit()"]
-        Check{"slot_available(S)?<br>rx_flags=0 AND tx_flags=0"}
+        Check{"slot_occupied[S] == 0?"}
         CAS{"CAS next_slot<br>cur to cur+1"}
-        Write["Write RPCHeader + payload + signal"]
+        Write["Write RPCHeader + payload + signal<br>slot_occupied[S] = 1"]
         Stall["backpressure_stalls++<br>CUDAQ_REALTIME_CPU_RELAX()"]
         Retry["Retry"]
 
@@ -361,6 +361,8 @@ flowchart TD
     end
 ```
 
+Backpressure uses `slot_occupied[]` (a host-side byte vector set by the producer, cleared by the consumer) rather than `tx_flags`. This matches the hololink FPGA model where the sender checks `ring_flag`/`rx_flags` for slot availability.
+
 **Capacity:** With `num_slots = 16` and `num_workers = 8` (predecoder) + `16` (PyMatching),
 up to 16 syndromes can be in various stages of processing simultaneously. When all 16
 slots are occupied (either waiting for dispatch, in-flight on GPU, being decoded by
@@ -369,7 +371,7 @@ slot.
 
 **Round-robin limitation:** The injector uses strict round-robin slot selection. If slot N
 is busy but slot N+1 is free, the producer still stalls on slot N. This preserves FIFO
-ordering but contributes to backpressure stalls (~4.8M single-GPU, ~2.9M with 4 GPUs at 104 µs injection rate).
+ordering but contributes to backpressure stalls (~4.6M at 104 µs injection rate, single GPU).
 
 ## 8. ARM Memory Ordering Considerations
 
@@ -448,6 +450,7 @@ sequenceDiagram
 ```
 
 **Key invariant:** Between `DEFERRED_COMPLETION` and `complete_deferred()`, the ring
-buffer slot remains in the IN_FLIGHT state (`tx_flags = 0xEEEE`). The slot's data area
-is safe to read/write because the consumer only harvests when `tx_flags` transitions to
-a valid address, and the producer cannot reuse the slot while `tx_flags != 0`.
+buffer slot remains in the DISPATCHED state (`tx_flags = IN_FLIGHT`, `slot_occupied = 1`).
+The slot's data area is safe to read/write because the consumer only harvests when
+`tx_flags` transitions to a valid address, and the producer cannot reuse the slot while
+`slot_occupied != 0`.
