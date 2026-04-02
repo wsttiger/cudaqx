@@ -234,7 +234,7 @@ static void pre_launch_input_copy(void *user_data, void *slot_dev,
 /// these; it carries everything the callback needs to poll the GPU result,
 /// run PyMatching, and record correctness data.
 struct WorkerCtx {
-  ai_predecoder_service *predecoder;        ///< This worker's GPU predecoder
+  ai_predecoder_service *predecoder;      ///< This worker's GPU predecoder
   DecoderContext *decoder_ctx;            ///< Shared PyMatching decoder pool
   int32_t *decode_corrections = nullptr;  ///< Per-request correction results
   int32_t *decode_logical_pred = nullptr; ///< Per-request logical predictions
@@ -917,8 +917,7 @@ int main(int argc, char *argv[]) {
             (char *)job.ring_buffer_ptr + sizeof(rt_sdk::RPCResponse);
         std::memcpy(response_payload, &resp, sizeof(resp));
 
-        auto *header =
-            static_cast<rt_sdk::RPCResponse *>(job.ring_buffer_ptr);
+        auto *header = static_cast<rt_sdk::RPCResponse *>(job.ring_buffer_ptr);
         header->magic = rt_sdk::RPC_MAGIC_RESPONSE;
         header->status = 0;
         header->result_len = sizeof(resp);

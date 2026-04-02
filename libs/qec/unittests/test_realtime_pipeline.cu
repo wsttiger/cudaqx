@@ -46,7 +46,8 @@ static constexpr size_t kSkipTrtFloats = 1600;
 static constexpr size_t kSkipTrtBytes = kSkipTrtFloats * sizeof(float);
 static constexpr size_t kSlotSize = 8192;
 static constexpr size_t kNumSlots = 8;
-static constexpr uint32_t kTestFunctionId = rt_sdk::fnv1a_hash("test_predecoder");
+static constexpr uint32_t kTestFunctionId =
+    rt_sdk::fnv1a_hash("test_predecoder");
 
 // ============================================================================
 // Pre-launch DMA callback (mirrors production code)

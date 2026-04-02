@@ -40,7 +40,7 @@ using atomic_int_sys = cuda::std::atomic<int>;
   do {                                                                         \
     cudaError_t err = (call);                                                  \
     if (err != cudaSuccess) {                                                  \
-      std::cerr << "realtime_pipeline CUDA error: " << cudaGetErrorString(err)  \
+      std::cerr << "realtime_pipeline CUDA error: " << cudaGetErrorString(err) \
                 << " at " << __FILE__ << ":" << __LINE__ << std::endl;         \
       std::abort();                                                            \
     }                                                                          \
@@ -596,7 +596,8 @@ realtime_pipeline::Stats realtime_pipeline::stats() const {
           impl_->backpressure_stalls.load(std::memory_order_relaxed)};
 }
 
-realtime_pipeline::ring_buffer_bases realtime_pipeline::ringbuffer_bases() const {
+realtime_pipeline::ring_buffer_bases
+realtime_pipeline::ringbuffer_bases() const {
   return {impl_->ring->rx_data_host(), impl_->ring->rx_data_dev()};
 }
 
@@ -645,7 +646,8 @@ ring_buffer_injector &
 ring_buffer_injector::operator=(ring_buffer_injector &&) noexcept = default;
 
 bool ring_buffer_injector::try_submit(uint32_t function_id, const void *payload,
-                                    size_t payload_size, uint64_t request_id) {
+                                      size_t payload_size,
+                                      uint64_t request_id) {
   uint32_t cur = state_->next_slot.load(std::memory_order_relaxed);
   uint32_t slot = cur % static_cast<uint32_t>(state_->num_slots);
   if ((*state_->slot_occupied)[slot])
@@ -668,7 +670,7 @@ bool ring_buffer_injector::try_submit(uint32_t function_id, const void *payload,
 }
 
 void ring_buffer_injector::submit(uint32_t function_id, const void *payload,
-                                size_t payload_size, uint64_t request_id) {
+                                  size_t payload_size, uint64_t request_id) {
   while (!try_submit(function_id, payload, payload_size, request_id)) {
     if (state_->producer_stop &&
         state_->producer_stop->load(std::memory_order_acquire))

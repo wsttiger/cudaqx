@@ -21,7 +21,7 @@
     cudaError_t err = call;                                                    \
     if (err != cudaSuccess) {                                                  \
       throw std::runtime_error(                                                \
-          std::string("CUDA Error in ai_decoder_service: ") +                    \
+          std::string("CUDA Error in ai_decoder_service: ") +                  \
           cudaGetErrorString(err));                                            \
     }                                                                          \
   } while (0)
@@ -120,15 +120,15 @@ static size_t tensor_volume(const nvinfer1::Dims &d) {
 ai_decoder_service::Logger ai_decoder_service::gLogger;
 
 void ai_decoder_service::Logger::log(Severity severity,
-                                   const char *msg) noexcept {
+                                     const char *msg) noexcept {
   if (severity <= Severity::kWARNING) {
     std::printf("[TensorRT] %s\n", msg);
   }
 }
 
 ai_decoder_service::ai_decoder_service(const std::string &model_path,
-                                   void **device_mailbox_slot,
-                                   const std::string &engine_save_path)
+                                       void **device_mailbox_slot,
+                                       const std::string &engine_save_path)
     : device_mailbox_slot_(device_mailbox_slot) {
 
   if (std::getenv("SKIP_TRT")) {
@@ -336,7 +336,8 @@ void ai_decoder_service::capture_graph(cudaStream_t stream) {
   }
 
   if (!context_->enqueueV3(stream))
-    throw std::runtime_error("TRT enqueueV3 warmup failed in ai_decoder_service");
+    throw std::runtime_error(
+        "TRT enqueueV3 warmup failed in ai_decoder_service");
   DECODER_CUDA_CHECK(cudaStreamSynchronize(stream));
 
   cudaGraph_t graph;

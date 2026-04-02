@@ -18,7 +18,7 @@
     cudaError_t err = call;                                                    \
     if (err != cudaSuccess) {                                                  \
       throw std::runtime_error(                                                \
-          std::string("CUDA Error in ai_predecoder_service: ") +                 \
+          std::string("CUDA Error in ai_predecoder_service: ") +               \
           cudaGetErrorString(err));                                            \
     }                                                                          \
   } while (0)
@@ -98,7 +98,7 @@ ai_predecoder_service::~ai_predecoder_service() {
 }
 
 void ai_predecoder_service::capture_graph(cudaStream_t stream,
-                                        bool device_launch) {
+                                          bool device_launch) {
   bool skip_trt = (std::getenv("SKIP_TRT") != nullptr);
 
   if (!skip_trt) {

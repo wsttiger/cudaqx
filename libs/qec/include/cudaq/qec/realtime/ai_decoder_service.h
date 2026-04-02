@@ -31,7 +31,7 @@ public:
   /// @param engine_save_path If non-empty and model_path is .onnx, save the
   ///        built engine to this path for fast reloading on subsequent runs
   ai_decoder_service(const std::string &model_path, void **device_mailbox_slot,
-                   const std::string &engine_save_path = "");
+                     const std::string &engine_save_path = "");
 
   virtual ~ai_decoder_service();
 
