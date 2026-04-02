@@ -67,10 +67,16 @@ __global__ void gateway_output_kernel(void **mailbox_slot_ptr,
   __syncthreads();
 
   if (threadIdx.x == 0 && blockIdx.x == 0) {
+    auto *header = (const cudaq::realtime::RPCHeader *)ring_buffer_data;
+    uint32_t rid = header->request_id;
+    uint64_t pts = header->ptp_timestamp;
+
     auto *response = (cudaq::realtime::RPCResponse *)ring_buffer_data;
     response->magic = cudaq::realtime::RPC_MAGIC_RESPONSE;
     response->status = 0;
     response->result_len = static_cast<uint32_t>(result_size_bytes);
+    response->request_id = rid;
+    response->ptp_timestamp = pts;
     __threadfence_system();
   }
 }
