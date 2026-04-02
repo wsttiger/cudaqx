@@ -40,7 +40,7 @@ using atomic_int_sys = cuda::std::atomic<int>;
   do {                                                                         \
     cudaError_t err = (call);                                                  \
     if (err != cudaSuccess) {                                                  \
-      std::cerr << "RealtimePipeline CUDA error: " << cudaGetErrorString(err)  \
+      std::cerr << "realtime_pipeline CUDA error: " << cudaGetErrorString(err)  \
                 << " at " << __FILE__ << ":" << __LINE__ << std::endl;         \
       std::abort();                                                            \
     }                                                                          \
@@ -200,12 +200,12 @@ private:
 // Impl
 // ---------------------------------------------------------------------------
 
-struct RealtimePipeline::Impl {
-  PipelineStageConfig config;
+struct realtime_pipeline::Impl {
+  pipeline_stage_config config;
 
-  GpuStageFactory gpu_factory;
-  CpuStageCallback cpu_stage;
-  CompletionCallback completion_handler;
+  gpu_stage_factory gpu_factory;
+  cpu_stage_callback cpu_stage;
+  completion_callback completion_handler;
 
   // Owned infrastructure
   std::unique_ptr<RingBufferManager> ring;
@@ -223,7 +223,7 @@ struct RealtimePipeline::Impl {
   std::vector<cudaq_function_entry_t> function_table;
 
   // Per-worker GPU resources (from factory)
-  std::vector<GpuWorkerResources> worker_resources;
+  std::vector<gpu_worker_resources> worker_resources;
 
   // GPU-only mode state
   bool gpu_only = false;
@@ -253,7 +253,7 @@ struct RealtimePipeline::Impl {
   // Lifecycle
   // -----------------------------------------------------------------------
 
-  void allocate(const PipelineStageConfig &cfg) {
+  void allocate(const pipeline_stage_config &cfg) {
     if (cfg.num_workers > 64) {
       throw std::invalid_argument("num_workers (" +
                                   std::to_string(cfg.num_workers) +
@@ -450,7 +450,7 @@ struct RealtimePipeline::Impl {
     // atomic signaling (tx_flags, idle_mask).
 
     while (!consumer_stop.load(std::memory_order_relaxed)) {
-      CpuStageContext ctx;
+      cpu_stage_context ctx;
       ctx.worker_id = worker_id;
       ctx.origin_slot = inflight_slot_tags[worker_id];
       ctx.gpu_output = nullptr;
@@ -514,7 +514,7 @@ struct RealtimePipeline::Impl {
         if (status == CUDAQ_TX_READY) {
           NVTX_PUSH("ConsumerComplete");
           if (completion_handler) {
-            Completion c;
+            completion c;
             c.request_id = slot_request[s];
             c.slot = static_cast<int>(s);
             c.success = true;
@@ -533,7 +533,7 @@ struct RealtimePipeline::Impl {
 
         } else if (status == CUDAQ_TX_ERROR) {
           if (completion_handler) {
-            Completion c;
+            completion c;
             c.request_id = slot_request[s];
             c.slot = static_cast<int>(s);
             c.success = false;
@@ -555,52 +555,52 @@ struct RealtimePipeline::Impl {
 };
 
 // ---------------------------------------------------------------------------
-// RealtimePipeline public API
+// realtime_pipeline public API
 // ---------------------------------------------------------------------------
 
-RealtimePipeline::RealtimePipeline(const PipelineStageConfig &config)
+realtime_pipeline::realtime_pipeline(const pipeline_stage_config &config)
     : impl_(std::make_unique<Impl>()) {
   impl_->allocate(config);
 }
 
-RealtimePipeline::~RealtimePipeline() {
+realtime_pipeline::~realtime_pipeline() {
   if (impl_->started)
     impl_->stop_all();
   impl_->free_resources();
 }
 
-void RealtimePipeline::set_gpu_stage(GpuStageFactory factory) {
+void realtime_pipeline::set_gpu_stage(gpu_stage_factory factory) {
   impl_->gpu_factory = std::move(factory);
 }
 
-void RealtimePipeline::set_cpu_stage(CpuStageCallback callback) {
+void realtime_pipeline::set_cpu_stage(cpu_stage_callback callback) {
   impl_->cpu_stage = std::move(callback);
 }
 
-void RealtimePipeline::set_completion_handler(CompletionCallback handler) {
+void realtime_pipeline::set_completion_handler(completion_callback handler) {
   impl_->completion_handler = std::move(handler);
 }
 
-void RealtimePipeline::start() {
+void realtime_pipeline::start() {
   if (impl_->started)
     return;
   impl_->start_threads();
 }
 
-void RealtimePipeline::stop() { impl_->stop_all(); }
+void realtime_pipeline::stop() { impl_->stop_all(); }
 
-RealtimePipeline::Stats RealtimePipeline::stats() const {
+realtime_pipeline::Stats realtime_pipeline::stats() const {
   return {impl_->total_submitted.load(std::memory_order_relaxed),
           impl_->total_completed.load(std::memory_order_relaxed),
           impl_->live_dispatched.load(cuda::std::memory_order_relaxed),
           impl_->backpressure_stalls.load(std::memory_order_relaxed)};
 }
 
-RealtimePipeline::RingBufferBases RealtimePipeline::ringbuffer_bases() const {
+realtime_pipeline::ring_buffer_bases realtime_pipeline::ringbuffer_bases() const {
   return {impl_->ring->rx_data_host(), impl_->ring->rx_data_dev()};
 }
 
-void RealtimePipeline::complete_deferred(int slot) {
+void realtime_pipeline::complete_deferred(int slot) {
   uint8_t *slot_host = impl_->ring->rx_data_host() +
                        static_cast<size_t>(slot) * impl_->config.slot_size;
   uint64_t rx_value = reinterpret_cast<uint64_t>(slot_host);
@@ -609,10 +609,10 @@ void RealtimePipeline::complete_deferred(int slot) {
 }
 
 // ---------------------------------------------------------------------------
-// RingBufferInjector
+// ring_buffer_injector
 // ---------------------------------------------------------------------------
 
-struct RingBufferInjector::State {
+struct ring_buffer_injector::State {
   RingBufferManager *ring = nullptr;
   std::vector<uint64_t> *slot_request = nullptr;
   std::vector<uint8_t> *slot_occupied = nullptr;
@@ -623,8 +623,8 @@ struct RingBufferInjector::State {
   std::atomic<uint32_t> next_slot{0};
 };
 
-RingBufferInjector RealtimePipeline::create_injector() {
-  auto s = std::make_unique<RingBufferInjector::State>();
+ring_buffer_injector realtime_pipeline::create_injector() {
+  auto s = std::make_unique<ring_buffer_injector::State>();
   s->ring = impl_->ring.get();
   s->slot_request = &impl_->slot_request;
   s->slot_occupied = &impl_->slot_occupied;
@@ -632,19 +632,19 @@ RingBufferInjector RealtimePipeline::create_injector() {
   s->backpressure_stalls = &impl_->backpressure_stalls;
   s->producer_stop = &impl_->producer_stop;
   s->num_slots = impl_->config.num_slots;
-  return RingBufferInjector(std::move(s));
+  return ring_buffer_injector(std::move(s));
 }
 
-RingBufferInjector::RingBufferInjector(std::unique_ptr<State> s)
+ring_buffer_injector::ring_buffer_injector(std::unique_ptr<State> s)
     : state_(std::move(s)) {}
 
-RingBufferInjector::~RingBufferInjector() = default;
-RingBufferInjector::RingBufferInjector(RingBufferInjector &&) noexcept =
+ring_buffer_injector::~ring_buffer_injector() = default;
+ring_buffer_injector::ring_buffer_injector(ring_buffer_injector &&) noexcept =
     default;
-RingBufferInjector &
-RingBufferInjector::operator=(RingBufferInjector &&) noexcept = default;
+ring_buffer_injector &
+ring_buffer_injector::operator=(ring_buffer_injector &&) noexcept = default;
 
-bool RingBufferInjector::try_submit(uint32_t function_id, const void *payload,
+bool ring_buffer_injector::try_submit(uint32_t function_id, const void *payload,
                                     size_t payload_size, uint64_t request_id) {
   uint32_t cur = state_->next_slot.load(std::memory_order_relaxed);
   uint32_t slot = cur % static_cast<uint32_t>(state_->num_slots);
@@ -667,7 +667,7 @@ bool RingBufferInjector::try_submit(uint32_t function_id, const void *payload,
   return true;
 }
 
-void RingBufferInjector::submit(uint32_t function_id, const void *payload,
+void ring_buffer_injector::submit(uint32_t function_id, const void *payload,
                                 size_t payload_size, uint64_t request_id) {
   while (!try_submit(function_id, payload, payload_size, request_id)) {
     if (state_->producer_stop &&
@@ -678,7 +678,7 @@ void RingBufferInjector::submit(uint32_t function_id, const void *payload,
   }
 }
 
-uint64_t RingBufferInjector::backpressure_stalls() const {
+uint64_t ring_buffer_injector::backpressure_stalls() const {
   return state_->backpressure_stalls->load(std::memory_order_relaxed);
 }
 

@@ -11,7 +11,7 @@
  *
  * Uses the RealtimePipeline scaffolding to hide all ring buffer, atomics,
  * and thread management. Application code only provides:
- *   1. GPU stage factory (AIPreDecoderService instances)
+ *   1. GPU stage factory (ai_predecoder_service instances)
  *   2. CPU stage callback (PyMatching decode)
  *   3. Completion callback (timestamp recording)
  *
@@ -234,7 +234,7 @@ static void pre_launch_input_copy(void *user_data, void *slot_dev,
 /// these; it carries everything the callback needs to poll the GPU result,
 /// run PyMatching, and record correctness data.
 struct WorkerCtx {
-  AIPreDecoderService *predecoder;        ///< This worker's GPU predecoder
+  ai_predecoder_service *predecoder;        ///< This worker's GPU predecoder
   DecoderContext *decoder_ctx;            ///< Shared PyMatching decoder pool
   int32_t *decode_corrections = nullptr;  ///< Per-request correction results
   int32_t *decode_logical_pred = nullptr; ///< Per-request logical predictions
@@ -573,7 +573,7 @@ int main(int argc, char *argv[]) {
             << "x AIPreDecoder Graphs across " << num_gpus << " GPU(s)...\n";
 
   std::vector<cudaStream_t> predecoder_streams(config.num_predecoders);
-  std::vector<std::unique_ptr<AIPreDecoderService>> predecoders;
+  std::vector<std::unique_ptr<ai_predecoder_service>> predecoders;
   bool need_save = (model_path == onnx_file);
   for (int i = 0; i < config.num_predecoders; ++i) {
     int gpu = i % num_gpus;
@@ -582,7 +582,7 @@ int main(int argc, char *argv[]) {
     CUDA_CHECK(cudaStreamCreate(&predecoder_streams[i]));
 
     std::string save_path = (need_save && i == 0) ? engine_file : "";
-    auto pd = std::make_unique<AIPreDecoderService>(
+    auto pd = std::make_unique<ai_predecoder_service>(
         model_path, d_mailbox_bank + i, 1, save_path);
 
     cudaStream_t capture_stream;
@@ -741,13 +741,13 @@ int main(int argc, char *argv[]) {
   // Create pipeline (all atomics hidden inside)
   // =========================================================================
 
-  rt_pipeline::PipelineStageConfig stage_cfg;
+  rt_pipeline::pipeline_stage_config stage_cfg;
   stage_cfg.num_workers = config.num_workers;
   stage_cfg.num_slots = NUM_SLOTS;
   stage_cfg.slot_size = slot_size;
   stage_cfg.cores = {.dispatcher = 2, .consumer = 4, .worker_base = 10};
 
-  rt_pipeline::RealtimePipeline pipeline(stage_cfg);
+  rt_pipeline::realtime_pipeline pipeline(stage_cfg);
 
   // Wire ring buffer base pointers into pre-launch contexts so the H2D
   // copy callback can derive the host pointer from the device pointer the
@@ -759,7 +759,7 @@ int main(int argc, char *argv[]) {
   }
 
   // --- GPU stage factory ---
-  pipeline.set_gpu_stage([&](int w) -> rt_pipeline::GpuWorkerResources {
+  pipeline.set_gpu_stage([&](int w) -> rt_pipeline::gpu_worker_resources {
     return {.graph_exec = predecoders[w]->get_executable_graph(),
             .stream = predecoder_streams[w],
             .pre_launch_fn = pre_launch_input_copy,
@@ -775,12 +775,12 @@ int main(int argc, char *argv[]) {
   // (idle_mask) without signaling slot completion (tx_flags).
   pipeline.set_cpu_stage(
       [&deferred_outputs, &pymatch_queue, out_sz = model_output_bytes](
-          const rt_pipeline::CpuStageContext &ctx) -> size_t {
+          const rt_pipeline::cpu_stage_context &ctx) -> size_t {
         auto *wctx = static_cast<WorkerCtx *>(ctx.user_context);
         auto *pd = wctx->predecoder;
         auto *dctx = wctx->decoder_ctx;
 
-        PreDecoderJob job;
+        pre_decoder_job job;
         if (!pd->poll_next_job(job))
           return 0;
 
@@ -827,7 +827,7 @@ int main(int argc, char *argv[]) {
   std::vector<int32_t> decode_corrections(max_requests, -1);
   std::vector<int32_t> decode_logical_pred(max_requests, -1);
 
-  pipeline.set_completion_handler([&](const rt_pipeline::Completion &c) {
+  pipeline.set_completion_handler([&](const rt_pipeline::completion &c) {
     if (c.request_id < static_cast<uint64_t>(max_requests)) {
       complete_ts[c.request_id] = hrclock::now();
       completed[c.request_id] = c.success;

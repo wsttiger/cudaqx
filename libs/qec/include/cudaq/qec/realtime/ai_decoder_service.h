@@ -17,7 +17,7 @@
 
 namespace cudaq::qec::realtime {
 
-class AIDecoderService {
+class ai_decoder_service {
 public:
   class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char *msg) noexcept override;
@@ -30,10 +30,10 @@ public:
   /// mailbox bank
   /// @param engine_save_path If non-empty and model_path is .onnx, save the
   ///        built engine to this path for fast reloading on subsequent runs
-  AIDecoderService(const std::string &model_path, void **device_mailbox_slot,
+  ai_decoder_service(const std::string &model_path, void **device_mailbox_slot,
                    const std::string &engine_save_path = "");
 
-  virtual ~AIDecoderService();
+  virtual ~ai_decoder_service();
 
   virtual void capture_graph(cudaStream_t stream);
 
@@ -65,13 +65,13 @@ protected:
   void *d_trt_output_ = nullptr; // Primary output buffer (residual_detectors)
   std::vector<void *> d_aux_buffers_; // Additional I/O buffers TRT needs
 
-  struct TensorBinding {
+  struct tensor_binding {
     std::string name;
     void *d_buffer = nullptr;
     size_t size_bytes = 0;
     bool is_input = false;
   };
-  std::vector<TensorBinding> all_bindings_;
+  std::vector<tensor_binding> all_bindings_;
 
   size_t input_size_ = 0;
   size_t output_size_ = 0;

@@ -21,7 +21,7 @@
     cudaError_t err = call;                                                    \
     if (err != cudaSuccess) {                                                  \
       throw std::runtime_error(                                                \
-          std::string("CUDA Error in AIDecoderService: ") +                    \
+          std::string("CUDA Error in ai_decoder_service: ") +                    \
           cudaGetErrorString(err));                                            \
     }                                                                          \
   } while (0)
@@ -111,16 +111,16 @@ static size_t tensor_volume(const nvinfer1::Dims &d) {
 // Class Implementation
 // =============================================================================
 
-AIDecoderService::Logger AIDecoderService::gLogger;
+ai_decoder_service::Logger ai_decoder_service::gLogger;
 
-void AIDecoderService::Logger::log(Severity severity,
+void ai_decoder_service::Logger::log(Severity severity,
                                    const char *msg) noexcept {
   if (severity <= Severity::kWARNING) {
     std::printf("[TensorRT] %s\n", msg);
   }
 }
 
-AIDecoderService::AIDecoderService(const std::string &model_path,
+ai_decoder_service::ai_decoder_service(const std::string &model_path,
                                    void **device_mailbox_slot,
                                    const std::string &engine_save_path)
     : device_mailbox_slot_(device_mailbox_slot) {
@@ -141,7 +141,7 @@ AIDecoderService::AIDecoderService(const std::string &model_path,
   }
 }
 
-AIDecoderService::~AIDecoderService() {
+ai_decoder_service::~ai_decoder_service() {
   if (graph_exec_)
     cudaGraphExecDestroy(graph_exec_);
   if (d_trt_input_)
@@ -152,7 +152,7 @@ AIDecoderService::~AIDecoderService() {
     cudaFree(buf);
 }
 
-void AIDecoderService::load_engine(const std::string &path) {
+void ai_decoder_service::load_engine(const std::string &path) {
   std::ifstream file(path, std::ios::binary);
   if (!file.good())
     throw std::runtime_error("Error opening engine file: " + path);
@@ -169,7 +169,7 @@ void AIDecoderService::load_engine(const std::string &path) {
   context_.reset(engine_->createExecutionContext());
 }
 
-void AIDecoderService::build_engine_from_onnx(
+void ai_decoder_service::build_engine_from_onnx(
     const std::string &onnx_path, const std::string &engine_save_path) {
   runtime_.reset(nvinfer1::createInferRuntime(gLogger));
 
@@ -259,7 +259,7 @@ void AIDecoderService::build_engine_from_onnx(
   std::printf("[TensorRT] Built engine from ONNX: %s\n", onnx_path.c_str());
 }
 
-void AIDecoderService::setup_bindings() {
+void ai_decoder_service::setup_bindings() {
   int num_io = engine_->getNbIOTensors();
   bool found_input = false;
   bool found_output = false;
@@ -278,7 +278,7 @@ void AIDecoderService::setup_bindings() {
                 i, name, is_input ? "INPUT" : "OUTPUT", static_cast<int>(dtype),
                 trt_dtype_size(dtype), tensor_volume(dims), size_bytes);
 
-    TensorBinding binding{name, nullptr, size_bytes, is_input};
+    tensor_binding binding{name, nullptr, size_bytes, is_input};
 
     if (is_input && !found_input) {
       input_size_ = size_bytes;
@@ -292,7 +292,7 @@ void AIDecoderService::setup_bindings() {
   }
 }
 
-void AIDecoderService::allocate_resources() {
+void ai_decoder_service::allocate_resources() {
   if (all_bindings_.empty()) {
     // SKIP_TRT fallback path
     if (cudaMalloc(&d_trt_input_, input_size_) != cudaSuccess)
@@ -324,13 +324,13 @@ void AIDecoderService::allocate_resources() {
   }
 }
 
-void AIDecoderService::capture_graph(cudaStream_t stream) {
+void ai_decoder_service::capture_graph(cudaStream_t stream) {
   for (auto &b : all_bindings_) {
     context_->setTensorAddress(b.name.c_str(), b.d_buffer);
   }
 
   if (!context_->enqueueV3(stream))
-    throw std::runtime_error("TRT enqueueV3 warmup failed in AIDecoderService");
+    throw std::runtime_error("TRT enqueueV3 warmup failed in ai_decoder_service");
   DECODER_CUDA_CHECK(cudaStreamSynchronize(stream));
 
   cudaGraph_t graph;
@@ -341,7 +341,7 @@ void AIDecoderService::capture_graph(cudaStream_t stream) {
                                               d_trt_input_, input_size_);
   if (!context_->enqueueV3(stream))
     throw std::runtime_error(
-        "TRT enqueueV3 failed during graph capture in AIDecoderService");
+        "TRT enqueueV3 failed during graph capture in ai_decoder_service");
   gateway_output_kernel<<<1, 128, 0, stream>>>(device_mailbox_slot_,
                                                d_trt_output_, output_size_);
 
@@ -353,7 +353,7 @@ void AIDecoderService::capture_graph(cudaStream_t stream) {
     cudaGraphDestroy(graph);
     throw std::runtime_error(
         std::string(
-            "cudaGraphInstantiateWithFlags failed in AIDecoderService: ") +
+            "cudaGraphInstantiateWithFlags failed in ai_decoder_service: ") +
         cudaGetErrorString(inst_err));
   }
 

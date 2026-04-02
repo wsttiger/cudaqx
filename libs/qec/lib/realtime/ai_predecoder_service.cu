@@ -18,7 +18,7 @@
     cudaError_t err = call;                                                    \
     if (err != cudaSuccess) {                                                  \
       throw std::runtime_error(                                                \
-          std::string("CUDA Error in AIPreDecoderService: ") +                 \
+          std::string("CUDA Error in ai_predecoder_service: ") +                 \
           cudaGetErrorString(err));                                            \
     }                                                                          \
   } while (0)
@@ -55,11 +55,11 @@ __global__ void passthrough_copy_kernel(void *dst, const void *src,
 // Class Implementation
 // =============================================================================
 
-AIPreDecoderService::AIPreDecoderService(
+ai_predecoder_service::ai_predecoder_service(
     const std::string &path, void **mailbox,
     int /* queue_depth (ignored; always 1) */,
     const std::string &engine_save_path)
-    : AIDecoderService(path, mailbox, engine_save_path), queue_depth_(1) {
+    : ai_decoder_service(path, mailbox, engine_save_path), queue_depth_(1) {
   void *buf = nullptr;
 
   SERVICE_CUDA_CHECK(
@@ -80,7 +80,7 @@ AIPreDecoderService::AIPreDecoderService(
       (void **)&d_predecoder_outputs_, (void *)h_predecoder_outputs_, 0));
 }
 
-AIPreDecoderService::~AIPreDecoderService() {
+ai_predecoder_service::~ai_predecoder_service() {
   if (h_ready_flags_) {
     h_ready_flags_[0].~atomic_int_sys();
     cudaFreeHost((void *)h_ready_flags_);
@@ -97,7 +97,7 @@ AIPreDecoderService::~AIPreDecoderService() {
   }
 }
 
-void AIPreDecoderService::capture_graph(cudaStream_t stream,
+void ai_predecoder_service::capture_graph(cudaStream_t stream,
                                         bool device_launch) {
   bool skip_trt = (std::getenv("SKIP_TRT") != nullptr);
 
@@ -107,7 +107,7 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream,
     }
     if (!context_->enqueueV3(stream))
       throw std::runtime_error(
-          "TRT enqueueV3 warmup failed in AIPreDecoderService");
+          "TRT enqueueV3 warmup failed in ai_predecoder_service");
   }
   SERVICE_CUDA_CHECK(cudaStreamSynchronize(stream));
 
@@ -121,7 +121,7 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream,
   } else {
     if (!context_->enqueueV3(stream))
       throw std::runtime_error(
-          "TRT enqueueV3 failed during graph capture in AIPreDecoderService");
+          "TRT enqueueV3 failed during graph capture in ai_predecoder_service");
   }
 
   SERVICE_CUDA_CHECK(cudaMemcpyAsync(d_predecoder_outputs_, d_trt_output_,
@@ -156,7 +156,7 @@ void AIPreDecoderService::capture_graph(cudaStream_t stream,
   SERVICE_CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
-bool AIPreDecoderService::poll_next_job(PreDecoderJob &out_job) {
+bool ai_predecoder_service::poll_next_job(pre_decoder_job &out_job) {
   auto *sys_flags = static_cast<atomic_int_sys *>(h_ready_flags_);
   int expected = 1;
   // Atomically claim: 1 (Ready) -> 2 (Processing) so we enqueue the job exactly
@@ -175,7 +175,7 @@ bool AIPreDecoderService::poll_next_job(PreDecoderJob &out_job) {
   return false;
 }
 
-void AIPreDecoderService::release_job(int /* slot_idx */) {
+void ai_predecoder_service::release_job(int /* slot_idx */) {
   NVTX_PUSH("ReleaseJob");
   auto *sys_flags = static_cast<atomic_int_sys *>(h_ready_flags_);
   // PyMatching done: 2 (Processing) -> 0 (Idle)

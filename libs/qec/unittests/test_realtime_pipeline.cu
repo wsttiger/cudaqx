@@ -146,8 +146,8 @@ protected:
     unsetenv("SKIP_TRT");
   }
 
-  std::unique_ptr<AIPreDecoderService> create_predecoder(int mailbox_idx) {
-    auto pd = std::make_unique<AIPreDecoderService>(
+  std::unique_ptr<ai_predecoder_service> create_predecoder(int mailbox_idx) {
+    auto pd = std::make_unique<ai_predecoder_service>(
         "dummy.onnx",
         reinterpret_cast<void **>(mailbox_bank_dev_ + mailbox_idx), 1);
     pd->capture_graph(stream_, false);
@@ -164,7 +164,7 @@ protected:
                       cuda::std::memory_order_release);
   }
 
-  bool wait_ready_flag(AIPreDecoderService *pd, int timeout_ms = 2000) {
+  bool wait_ready_flag(ai_predecoder_service *pd, int timeout_ms = 2000) {
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
@@ -193,27 +193,27 @@ protected:
 };
 
 // ============================================================================
-// AIDecoderService Unit Tests (SKIP_TRT)
+// ai_decoder_service Unit Tests (SKIP_TRT)
 // ============================================================================
 
 TEST_F(RealtimePipelineTest, SkipTrtSizes) {
-  AIDecoderService svc("dummy.onnx", mailbox_bank_dev_);
+  ai_decoder_service svc("dummy.onnx", mailbox_bank_dev_);
   EXPECT_EQ(svc.get_input_size(), kSkipTrtBytes);
   EXPECT_EQ(svc.get_output_size(), kSkipTrtBytes);
 }
 
 TEST_F(RealtimePipelineTest, SkipTrtBuffersAllocated) {
-  AIDecoderService svc("dummy.onnx", mailbox_bank_dev_);
+  ai_decoder_service svc("dummy.onnx", mailbox_bank_dev_);
   EXPECT_NE(svc.get_trt_input_ptr(), nullptr);
 }
 
 TEST_F(RealtimePipelineTest, SkipTrtGraphExecNull_BeforeCapture) {
-  AIDecoderService svc("dummy.onnx", mailbox_bank_dev_);
+  ai_decoder_service svc("dummy.onnx", mailbox_bank_dev_);
   EXPECT_EQ(svc.get_executable_graph(), nullptr);
 }
 
 // ============================================================================
-// AIPreDecoderService Unit Tests (SKIP_TRT)
+// ai_predecoder_service Unit Tests (SKIP_TRT)
 // ============================================================================
 
 TEST_F(RealtimePipelineTest, PreDecoderConstruction) {
@@ -232,7 +232,7 @@ TEST_F(RealtimePipelineTest, PreDecoderGraphCaptured) {
 
 TEST_F(RealtimePipelineTest, PollReturnsFalseWhenIdle) {
   auto pd = create_predecoder(0);
-  PreDecoderJob job{};
+  pre_decoder_job job{};
   EXPECT_FALSE(pd->poll_next_job(job));
 }
 
@@ -242,7 +242,7 @@ TEST_F(RealtimePipelineTest, PollAndRelease) {
   auto *flags = pd->get_host_ready_flags();
   flags[0].store(1, cuda::std::memory_order_release);
 
-  PreDecoderJob job{};
+  pre_decoder_job job{};
   EXPECT_TRUE(pd->poll_next_job(job));
   EXPECT_EQ(job.slot_idx, 0);
   EXPECT_NE(job.inference_data, nullptr);
@@ -275,7 +275,7 @@ TEST_F(RealtimePipelineTest, GraphLaunchableFromHost) {
 
 class CorrectnessTest : public RealtimePipelineTest {
 protected:
-  void run_passthrough(AIPreDecoderService *pd, int mailbox_idx,
+  void run_passthrough(ai_predecoder_service *pd, int mailbox_idx,
                        const float *payload, size_t num_floats, float *output) {
     size_t payload_bytes = num_floats * sizeof(float);
     ASSERT_LE(payload_bytes, kSkipTrtBytes);
@@ -297,7 +297,7 @@ protected:
 
     ASSERT_TRUE(wait_ready_flag(pd));
 
-    PreDecoderJob job{};
+    pre_decoder_job job{};
     ASSERT_TRUE(pd->poll_next_job(job));
     std::memcpy(output, job.inference_data, payload_bytes);
     pd->release_job(0);
@@ -572,7 +572,7 @@ TEST_F(HostDispatcherTest, StatsCounter) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     ASSERT_TRUE(wait_ready_flag(pd.get()));
-    PreDecoderJob job{};
+    pre_decoder_job job{};
     if (pd->poll_next_job(job))
       pd->release_job(0);
 
@@ -636,7 +636,7 @@ TEST_F(HostDispatcherTest, SlotWraparound) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     ASSERT_TRUE(wait_ready_flag(pd.get()));
-    PreDecoderJob job{};
+    pre_decoder_job job{};
     if (pd->poll_next_job(job))
       pd->release_job(0);
 
@@ -670,7 +670,7 @@ TEST_F(HostDispatcherTest, SingleRequestRoundTrip) {
 
   ASSERT_TRUE(wait_ready_flag(pd.get())) << "Predecoder ready flag not set";
 
-  PreDecoderJob job{};
+  pre_decoder_job job{};
   ASSERT_TRUE(pd->poll_next_job(job));
   float output[kSkipTrtFloats];
   std::memcpy(output, job.inference_data, kSkipTrtBytes);
@@ -685,7 +685,7 @@ TEST_F(HostDispatcherTest, SingleRequestRoundTrip) {
 
 TEST_F(HostDispatcherTest, MultiPredecoderConcurrency) {
   constexpr int kNPd = 4;
-  std::vector<std::unique_ptr<AIPreDecoderService>> pds;
+  std::vector<std::unique_ptr<ai_predecoder_service>> pds;
   std::vector<PreLaunchCopyCtx> plcs(kNPd);
   std::vector<uint32_t> fids;
 
@@ -717,7 +717,7 @@ TEST_F(HostDispatcherTest, MultiPredecoderConcurrency) {
   for (int i = 0; i < kNPd; ++i) {
     ASSERT_TRUE(wait_ready_flag(pds[i].get()))
         << "Ready flag not set for predecoder " << i;
-    PreDecoderJob job{};
+    pre_decoder_job job{};
     ASSERT_TRUE(pds[i]->poll_next_job(job));
     float output[kSkipTrtFloats];
     std::memcpy(output, job.inference_data, kSkipTrtBytes);
@@ -735,7 +735,7 @@ TEST_F(HostDispatcherTest, SustainedThroughput_200Requests) {
   constexpr int kNPd = 2;
   constexpr int kTotalRequests = 200;
 
-  std::vector<std::unique_ptr<AIPreDecoderService>> pds;
+  std::vector<std::unique_ptr<ai_predecoder_service>> pds;
   std::vector<PreLaunchCopyCtx> plcs(kNPd);
   std::vector<uint32_t> fids;
 
@@ -780,7 +780,7 @@ TEST_F(HostDispatcherTest, SustainedThroughput_200Requests) {
 
     ASSERT_TRUE(wait_ready_flag(pds[pd_idx].get()))
         << "Ready flag not set for request " << r;
-    PreDecoderJob job{};
+    pre_decoder_job job{};
     if (pds[pd_idx]->poll_next_job(job))
       pds[pd_idx]->release_job(0);
 

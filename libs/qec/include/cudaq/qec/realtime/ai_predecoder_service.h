@@ -28,7 +28,7 @@
 
 namespace cudaq::qec::realtime {
 
-struct PreDecoderJob {
+struct pre_decoder_job {
   int slot_idx;    ///< Worker/slot index (for release_job; always 0)
   int origin_slot; ///< FPGA ring slot for tx_flags routing (dynamic pool)
   void *ring_buffer_ptr;
@@ -40,19 +40,19 @@ struct PreDecoderJob {
   uint64_t poll_ts_ns;
 };
 
-class AIPreDecoderService : public AIDecoderService {
+class ai_predecoder_service : public ai_decoder_service {
 public:
-  AIPreDecoderService(const std::string &engine_path,
+  ai_predecoder_service(const std::string &engine_path,
                       void **device_mailbox_slot, int queue_depth = 1,
                       const std::string &engine_save_path = "");
-  virtual ~AIPreDecoderService();
+  virtual ~ai_predecoder_service();
 
   void capture_graph(cudaStream_t stream, bool device_launch);
   void capture_graph(cudaStream_t stream) override {
     capture_graph(stream, true);
   }
 
-  bool poll_next_job(PreDecoderJob &out_job);
+  bool poll_next_job(pre_decoder_job &out_job);
   void release_job(int slot_idx);
 
   /// Stub for device-dispatcher batch path (returns nullptr; streaming uses

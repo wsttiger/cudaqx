@@ -21,24 +21,24 @@ namespace cudaq::qec::realtime {
 // Configuration
 // ---------------------------------------------------------------------------
 
-struct CorePinning {
+struct core_pinning {
   int dispatcher = -1; // -1 = no pinning
   int consumer = -1;
   int worker_base = -1; // workers pin to base, base+1, ...
 };
 
-struct PipelineStageConfig {
+struct pipeline_stage_config {
   int num_workers = 8;
   int num_slots = 32;
   size_t slot_size = 16384;
-  CorePinning cores;
+  core_pinning cores;
 };
 
 // ---------------------------------------------------------------------------
 // GPU Stage Factory
 // ---------------------------------------------------------------------------
 
-struct GpuWorkerResources {
+struct gpu_worker_resources {
   cudaGraphExec_t graph_exec = nullptr;
   cudaStream_t stream = nullptr;
   void (*pre_launch_fn)(void *user_data, void *slot_dev,
@@ -53,7 +53,7 @@ struct GpuWorkerResources {
 
 /// Called once per worker during start(). Returns GPU resources for that
 /// worker.
-using GpuStageFactory = std::function<GpuWorkerResources(int worker_id)>;
+using gpu_stage_factory = std::function<gpu_worker_resources(int worker_id)>;
 
 // ---------------------------------------------------------------------------
 // CPU Stage Callback
@@ -62,7 +62,7 @@ using GpuStageFactory = std::function<GpuWorkerResources(int worker_id)>;
 /// Passed to the user's CPU stage callback on each completed GPU workload.
 /// The user reads gpu_output, does post-processing, and writes the
 /// result into response_buffer. No atomics are exposed.
-struct CpuStageContext {
+struct cpu_stage_context {
   int worker_id;
   int origin_slot;
   const void *gpu_output;
@@ -76,11 +76,11 @@ struct CpuStageContext {
 /// Return 0 if no GPU result is ready yet (poll again).
 /// Return DEFERRED_COMPLETION to release the worker immediately while
 /// deferring slot completion to a later complete_deferred() call.
-using CpuStageCallback = std::function<size_t(const CpuStageContext &ctx)>;
+using cpu_stage_callback = std::function<size_t(const cpu_stage_context &ctx)>;
 
-/// Sentinel return value from CpuStageCallback: release the worker
+/// Sentinel return value from cpu_stage_callback: release the worker
 /// (idle_mask) but do NOT signal slot completion (tx_flags). The caller
-/// is responsible for calling RealtimePipeline::complete_deferred(slot)
+/// is responsible for calling realtime_pipeline::complete_deferred(slot)
 /// once the deferred work (e.g. a separate decode thread) finishes.
 static constexpr size_t DEFERRED_COMPLETION = SIZE_MAX;
 
@@ -88,7 +88,7 @@ static constexpr size_t DEFERRED_COMPLETION = SIZE_MAX;
 // Completion Callback
 // ---------------------------------------------------------------------------
 
-struct Completion {
+struct completion {
   uint64_t request_id;
   int slot;
   bool success;
@@ -96,23 +96,23 @@ struct Completion {
 };
 
 /// Called by the consumer thread for each completed (or errored) request.
-using CompletionCallback = std::function<void(const Completion &c)>;
+using completion_callback = std::function<void(const completion &c)>;
 
 // ---------------------------------------------------------------------------
 // Ring Buffer Injector (software-only test/replay data source)
 // ---------------------------------------------------------------------------
 
 /// Writes RPC-framed requests into the pipeline's ring buffer, simulating
-/// FPGA DMA deposits. Created via RealtimePipeline::create_injector().
-/// The parent RealtimePipeline must outlive the injector.
-class RingBufferInjector {
+/// FPGA DMA deposits. Created via realtime_pipeline::create_injector().
+/// The parent realtime_pipeline must outlive the injector.
+class ring_buffer_injector {
 public:
-  ~RingBufferInjector();
-  RingBufferInjector(RingBufferInjector &&) noexcept;
-  RingBufferInjector &operator=(RingBufferInjector &&) noexcept;
+  ~ring_buffer_injector();
+  ring_buffer_injector(ring_buffer_injector &&) noexcept;
+  ring_buffer_injector &operator=(ring_buffer_injector &&) noexcept;
 
-  RingBufferInjector(const RingBufferInjector &) = delete;
-  RingBufferInjector &operator=(const RingBufferInjector &) = delete;
+  ring_buffer_injector(const ring_buffer_injector &) = delete;
+  ring_buffer_injector &operator=(const ring_buffer_injector &) = delete;
 
   /// Try to submit a request. Returns true if accepted, false if
   /// backpressure (all slots busy). Non-blocking. Thread-safe.
@@ -126,32 +126,32 @@ public:
   uint64_t backpressure_stalls() const;
 
 private:
-  friend class RealtimePipeline;
+  friend class realtime_pipeline;
   struct State;
   std::unique_ptr<State> state_;
-  explicit RingBufferInjector(std::unique_ptr<State> s);
+  explicit ring_buffer_injector(std::unique_ptr<State> s);
 };
 
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
 
-class RealtimePipeline {
+class realtime_pipeline {
 public:
-  explicit RealtimePipeline(const PipelineStageConfig &config);
-  ~RealtimePipeline();
+  explicit realtime_pipeline(const pipeline_stage_config &config);
+  ~realtime_pipeline();
 
-  RealtimePipeline(const RealtimePipeline &) = delete;
-  RealtimePipeline &operator=(const RealtimePipeline &) = delete;
+  realtime_pipeline(const realtime_pipeline &) = delete;
+  realtime_pipeline &operator=(const realtime_pipeline &) = delete;
 
   /// Register the GPU stage factory (called before start).
-  void set_gpu_stage(GpuStageFactory factory);
+  void set_gpu_stage(gpu_stage_factory factory);
 
   /// Register the CPU worker callback (called before start).
-  void set_cpu_stage(CpuStageCallback callback);
+  void set_cpu_stage(cpu_stage_callback callback);
 
   /// Register the completion callback (called before start).
-  void set_completion_handler(CompletionCallback handler);
+  void set_completion_handler(completion_callback handler);
 
   /// Allocate resources, build dispatcher config, spawn all threads.
   void start();
@@ -161,7 +161,7 @@ public:
 
   /// Create a software injector for testing without FPGA hardware.
   /// The pipeline must be constructed but need not be started yet.
-  RingBufferInjector create_injector();
+  ring_buffer_injector create_injector();
 
   struct Stats {
     uint64_t submitted;
@@ -179,14 +179,14 @@ public:
   /// response into the slot's ring buffer area.
   void complete_deferred(int slot);
 
-  struct RingBufferBases {
+  struct ring_buffer_bases {
     uint8_t *rx_data_host;
     uint8_t *rx_data_dev;
   };
 
   /// Return the host and device base addresses of the RX data ring.
   /// Useful for pre_launch callbacks that need to convert between the two.
-  RingBufferBases ringbuffer_bases() const;
+  ring_buffer_bases ringbuffer_bases() const;
 
 private:
   struct Impl;
