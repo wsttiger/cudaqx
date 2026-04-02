@@ -1,7 +1,6 @@
 #!/bin/sh
 
-# Download realtime artifacts from GitHub release (if CUDAQ_REALTIME_ROOT not set)
-# REVERT-WITH-CUDAQ-REALTIME-BUILD
+# Download realtime artifacts from upstream CUDA Quantum repository
 if [ -z "$CUDAQ_REALTIME_ROOT" ]; then
   CUDAQ_REALTIME_ROOT=/tmp/cudaq-realtime
   _build_cwd=$(pwd)

@@ -49,6 +49,13 @@ static constexpr size_t kNumSlots = 8;
 static constexpr uint32_t kTestFunctionId =
     rt_sdk::fnv1a_hash("test_predecoder");
 
+// Helper function to check if a GPU is available
+bool isGpuAvailable() {
+  int deviceCount = 0;
+  cudaError_t err = cudaGetDeviceCount(&deviceCount);
+  return (err == cudaSuccess && deviceCount > 0);
+}
+
 // ============================================================================
 // Pre-launch DMA callback (mirrors production code)
 // ============================================================================
@@ -115,6 +122,9 @@ static void write_rpc_slot(uint8_t *slot_host, uint32_t function_id,
 class RealtimePipelineTest : public ::testing::Test {
 protected:
   void SetUp() override {
+    if (!isGpuAvailable()) {
+      GTEST_SKIP() << "No GPU available, skipping realtime pipeline tests";
+    }
     setenv("SKIP_TRT", "1", 1);
 
     ASSERT_TRUE(allocate_mapped_buffer(kNumSlots * sizeof(uint64_t),
@@ -276,6 +286,12 @@ TEST_F(RealtimePipelineTest, GraphLaunchableFromHost) {
 
 class CorrectnessTest : public RealtimePipelineTest {
 protected:
+  void SetUp() override {
+    if (!isGpuAvailable()) {
+      GTEST_SKIP() << "No GPU available, skipping correctness tests";
+    }
+  }
+
   void run_passthrough(ai_predecoder_service *pd, int mailbox_idx,
                        const float *payload, size_t num_floats, float *output) {
     size_t payload_bytes = num_floats * sizeof(float);
@@ -390,6 +406,9 @@ TEST_F(CorrectnessTest, IdentityPassthrough_MultipleRequests) {
 class HostDispatcherTest : public RealtimePipelineTest {
 protected:
   void SetUp() override {
+    if (!isGpuAvailable()) {
+      GTEST_SKIP() << "No GPU available, skipping host dispatcher tests";
+    }
     RealtimePipelineTest::SetUp();
     idle_mask_ = new atomic_uint64_sys(0);
     live_dispatched_ = new atomic_uint64_sys(0);
