@@ -206,7 +206,7 @@ The `ai_predecoder_service.cu` implementation contains only two device kernels:
 
 ### 5.4 Passthrough Copy Kernel (SKIP_TRT mode)
 
-When `SKIP_TRT` is set, the `passthrough_copy_kernel` substitutes for TRT inference, providing a deterministic identity function for testing and benchmarking the infrastructure overhead. In SKIP_TRT mode, the `AIDecoderService` constructor sets `input_size_ = output_size_ = 1600 * sizeof(float)` (6400 bytes) without loading any model file.
+When `SKIP_TRT` is set, the `passthrough_copy_kernel` substitutes for TRT inference, providing a deterministic identity function for testing and benchmarking the infrastructure overhead. In SKIP_TRT mode, the `ai_decoder_service` constructor sets `input_size_ = output_size_ = 1600 * sizeof(float)` (6400 bytes) without loading any model file.
 
 ---
 
@@ -216,7 +216,7 @@ The CPU-side processing uses a **two-tier decoupled architecture** that separate
 
 ### 6.1 Tier 1: Predecoder Workers (GPU Polling + Copy)
 
-Each predecoder has a dedicated worker thread in the `RealtimePipeline`. These threads:
+Each predecoder has a dedicated worker thread in the `realtime_pipeline`. These threads:
 
 1. **Poll** `ready_flags[0]` via `compare_exchange_strong(1, 2, acquire, relaxed)` (CAS claiming).
 2. **Copy** inference output from `h_predecoder_outputs_` to a per-slot buffer (`deferred_outputs[origin_slot]`).
@@ -342,19 +342,19 @@ This race caused exactly one request to get "stuck" indefinitely, eventually sta
 
 ---
 
-## 8. RealtimePipeline Scaffolding
+## 8. realtime_pipeline Scaffolding
 
-The low-level dispatcher, consumer, and worker threads are wrapped by a higher-level `RealtimePipeline` class (`libs/qec/include/cudaq/qec/realtime/pipeline.h`) that hides all ring buffer management, atomics, and thread lifecycle. Application code provides three callbacks:
+The low-level dispatcher, consumer, and worker threads are wrapped by a higher-level `realtime_pipeline` class (`libs/qec/include/cudaq/qec/realtime/pipeline.h`) that hides all ring buffer management, atomics, and thread lifecycle. Application code provides three callbacks:
 
-1. **GPU stage factory** (`GpuStageFactory`): Called once per worker during `start()`. Returns the `cudaGraphExec_t`, `cudaStream_t`, `pre_launch_fn`, `post_launch_fn`, `function_id`, and an opaque `user_context` for each worker.
-2. **CPU stage callback** (`CpuStageCallback`): Called by each worker thread when GPU inference completes. Receives `CpuStageContext` containing `gpu_output`, `gpu_output_size`, `response_buffer`, and the `user_context`. Returns the number of bytes written, `0` if no result ready (poll again), or `DEFERRED_COMPLETION` to release the worker without signaling slot completion.
-3. **Completion callback** (`CompletionCallback`): Called by the consumer thread for each completed (or errored) request with a `Completion` struct.
+1. **GPU stage factory** (`gpu_stage_factory`): Called once per worker during `start()`. Returns the `cudaGraphExec_t`, `cudaStream_t`, `pre_launch_fn`, `post_launch_fn`, `function_id`, and an opaque `user_context` for each worker.
+2. **CPU stage callback** (`cpu_stage_callback`): Called by each worker thread when GPU inference completes. Receives `cpu_stage_context` containing `gpu_output`, `gpu_output_size`, `response_buffer`, and the `user_context`. Returns the number of bytes written, `0` if no result ready (poll again), or `DEFERRED_COMPLETION` to release the worker without signaling slot completion.
+3. **Completion callback** (`completion_callback`): Called by the consumer thread for each completed (or errored) request with a `completion` struct.
 
 ```cpp
-RealtimePipeline pipeline(config);
-pipeline.set_gpu_stage([&](int worker_id) -> GpuWorkerResources { ... });
-pipeline.set_cpu_stage([&](const CpuStageContext& ctx) -> size_t { ... });
-pipeline.set_completion_handler([&](const Completion& c) { ... });
+realtime_pipeline pipeline(config);
+pipeline.set_gpu_stage([&](int worker_id) -> gpu_worker_resources { ... });
+pipeline.set_cpu_stage([&](const cpu_stage_context& ctx) -> size_t { ... });
+pipeline.set_completion_handler([&](const completion& c) { ... });
 auto injector = pipeline.create_injector();
 pipeline.start();
 injector.submit(function_id, payload, payload_size, request_id);
@@ -372,11 +372,11 @@ The caller is responsible for eventually calling `pipeline.complete_deferred(slo
 
 ### 8.2 GPU-Only Mode
 
-If no `CpuStageCallback` is registered, the pipeline operates in **GPU-only mode**: no CPU worker threads are spawned. Instead, the dispatcher's `post_launch_fn` enqueues a `cudaLaunchHostFunc` on each worker stream. When the GPU finishes, the CUDA runtime calls the host function, which stores into `tx_flags` and restores the `idle_mask` bit — all from the CUDA callback thread.
+If no `cpu_stage_callback` is registered, the pipeline operates in **GPU-only mode**: no CPU worker threads are spawned. Instead, the dispatcher's `post_launch_fn` enqueues a `cudaLaunchHostFunc` on each worker stream. When the GPU finishes, the CUDA runtime calls the host function, which stores into `tx_flags` and restores the `idle_mask` bit — all from the CUDA callback thread.
 
-### 8.3 RingBufferInjector
+### 8.3 ring_buffer_injector
 
-The `RingBufferInjector` class (created via `pipeline.create_injector()`) encapsulates the host-side submission logic for testing without FPGA hardware. It provides:
+The `ring_buffer_injector` class (created via `pipeline.create_injector()`) encapsulates the host-side submission logic for testing without FPGA hardware. It provides:
 
 - `try_submit()`: Non-blocking, returns false on backpressure. Checks `slot_occupied[slot]` to determine if the next slot is free — this mirrors the hololink model where the FPGA checks `ring_flag` (mapped to `rx_flags`) rather than a separate tx_flags sentinel.
 - `submit()`: Blocking spin-wait until a slot becomes available.
@@ -384,7 +384,7 @@ The `RingBufferInjector` class (created via `pipeline.create_injector()`) encaps
 
 The injector uses a round-robin slot selection with atomic CAS for thread safety.
 
-The `PipelineStageConfig` allows configuring `num_workers`, `num_slots`, `slot_size`, and optional `CorePinning` for dispatcher, consumer, and worker threads.
+The `pipeline_stage_config` allows configuring `num_workers`, `num_slots`, `slot_size`, and optional `core_pinning` for dispatcher, consumer, and worker threads.
 
 ---
 
@@ -392,8 +392,8 @@ The `PipelineStageConfig` allows configuring `num_workers`, `num_slots`, `slot_s
 
 1. **Producer** writes uint8 measurements into `payload_buf` from Stim test data.
 2. **Producer** calls `injector.submit(fid, payload, size, request_id)`.
-3. **RingBufferInjector** writes RPC header (`RPCHeader`: magic, function_id, arg_len, request_id, ptp_timestamp = 24 bytes) + payload into `rx_data[slot]`.
-4. **RingBufferInjector** sets `rx_flags[slot] = host_ptr` (release).
+3. **ring_buffer_injector** writes RPC header (`RPCHeader`: magic, function_id, arg_len, request_id, ptp_timestamp = 24 bytes) + payload into `rx_data[slot]`.
+4. **ring_buffer_injector** sets `rx_flags[slot] = host_ptr` (release).
 5. **Host Dispatcher** reads `rx_flags[slot]`, sees data.
 6. **Host Dispatcher** parses RPC header, looks up function in the function table.
 7. **Host Dispatcher** scans `idle_mask`, finds `worker_id = 2` is free.
@@ -465,8 +465,8 @@ When building a TensorRT engine from an ONNX model with dynamic batch dimensions
 A GTest-based test suite (`libs/qec/unittests/test_realtime_pipeline.cu`) validates the pipeline using `SKIP_TRT` passthrough mode (no TensorRT dependency at runtime). The tests are organized into three categories:
 
 ### 12.1 Unit Tests (8 tests)
-- **AIDecoderService**: Verify SKIP_TRT buffer sizes (1600 floats = 6400 bytes), allocation, and graph capture.
-- **AIPreDecoderService**: Verify mapped pinned memory allocation, `poll_next_job` / `release_job` state machine, and host-launchable graph.
+- **ai_decoder_service**: Verify SKIP_TRT buffer sizes (1600 floats = 6400 bytes), allocation, and graph capture.
+- **ai_predecoder_service**: Verify mapped pinned memory allocation, `poll_next_job` / `release_job` state machine, and host-launchable graph.
 
 ### 12.2 Correctness Tests (5 tests)
 Data-integrity tests that verify known payloads survive the full CUDA graph round-trip bitwise-identical (memcmp, not epsilon):
@@ -556,7 +556,7 @@ When generating code from this specification, the LLM **MUST** strictly adhere t
 - [ ] **NO DATA LOSS**: If `idle_mask == 0` (all workers busy), the dispatcher MUST spin on the current slot (`CUDAQ_REALTIME_CPU_RELAX()`). It MUST NOT advance `current_slot` until a worker is allocated and the graph is launched.
 - [ ] **NO RACE CONDITIONS ON TAGS**: `inflight_slot_tags` does not need to be atomic because index `[worker_id]` is exclusively owned by the active flow once the dispatcher clears the bit in `idle_mask`, until the worker thread restores the bit.
 - [ ] **READY FLAG CLAIMING**: The CPU poller MUST claim each completion exactly once using compare_exchange_strong(1, 2) on the ready flag; use relaxed memory order on CAS failure. The worker MUST clear the flag (store 0) in `release_job`.
-- [ ] **BACKPRESSURE MODEL**: The producer (RingBufferInjector) MUST check `slot_occupied[slot]` for backpressure, NOT `tx_flags`. This mirrors the hololink model where `ring_flag`/`rx_flags` is the sole sender-receiver backpressure mechanism. The dispatcher still writes `tx_flags = IN_FLIGHT` for the consumer's benefit, but the producer does not read `tx_flags`. The consumer uses `poll_tx()` to distinguish in-flight from completed results.
+- [ ] **BACKPRESSURE MODEL**: The producer (ring_buffer_injector) MUST check `slot_occupied[slot]` for backpressure, NOT `tx_flags`. This mirrors the hololink model where `ring_flag`/`rx_flags` is the sole sender-receiver backpressure mechanism. The dispatcher still writes `tx_flags = IN_FLIGHT` for the consumer's benefit, but the producer does not read `tx_flags`. The consumer uses `poll_tx()` to distinguish in-flight from completed results.
 - [ ] **CONSUMER MEMORY ORDERING**: The consumer MUST set `slot_occupied[s] = 0` BEFORE calling `cudaq_host_ringbuffer_clear_slot`, with a `__sync_synchronize()` fence between them, to prevent the producer-consumer race on ARM.
 - [ ] **DMA DATA MOVEMENT**: Use `cudaMemcpyAsync` (DMA engine) for data copies. Input copy is issued via `pre_launch_fn` callback before graph launch at offset `CUDAQ_RPC_HEADER_SIZE` (24 bytes) using `cudaMemcpyHostToDevice` from the pinned ring buffer host pointer. Output copy is captured inside the graph. Do not use SM-based byte-copy kernels for fixed-address transfers.
 - [ ] **NO INPUT KERNEL IN GRAPH**: The captured CUDA graph must NOT contain an input-copy kernel. All input data movement is handled by the `pre_launch_fn` DMA callback issued on the worker stream before `cudaGraphLaunch`.

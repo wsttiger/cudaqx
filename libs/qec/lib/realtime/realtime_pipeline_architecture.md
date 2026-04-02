@@ -4,27 +4,27 @@
 
 ```mermaid
 classDiagram
-    class RealtimePipeline {
+    class realtime_pipeline {
         -impl_ : Impl~ptr~
-        +set_gpu_stage(GpuStageFactory)
-        +set_cpu_stage(CpuStageCallback)
-        +set_completion_handler(CompletionCallback)
+        +set_gpu_stage(gpu_stage_factory)
+        +set_cpu_stage(cpu_stage_callback)
+        +set_completion_handler(completion_callback)
         +start()
         +stop()
-        +create_injector() RingBufferInjector
+        +create_injector() ring_buffer_injector
         +complete_deferred(slot)
-        +ringbuffer_bases() RingBufferBases
+        +ringbuffer_bases() ring_buffer_bases
         +stats() Stats
     }
 
-    class RingBufferInjector {
+    class ring_buffer_injector {
         -state_ : State~ptr~
         +try_submit(fid, payload, size, rid) bool
         +submit(fid, payload, size, rid)
         +backpressure_stalls() uint64_t
     }
 
-    class RingBufferManager {
+    class ring_buffer_manager {
         -rx_flags_ : atomic_uint64~N~
         -tx_flags_ : atomic_uint64~N~
         -rx_data_host_ : uint8_t~ptr~
@@ -46,7 +46,7 @@ classDiagram
         +shutdown_flag : atomic_int~ptr~
     }
 
-    class AIPreDecoderService {
+    class ai_predecoder_service {
         -h_ready_flags_ : atomic_int~ptr~
         -h_predecoder_outputs_ : void~ptr~
         -graph_exec_ : cudaGraphExec_t
@@ -55,7 +55,7 @@ classDiagram
         +release_job(slot)
     }
 
-    class PyMatchQueue {
+    class py_match_queue {
         -mtx_ : mutex
         -cv_ : condition_variable
         -jobs_ : queue~PyMatchJob~
@@ -64,12 +64,12 @@ classDiagram
         +shutdown()
     }
 
-    RealtimePipeline *-- RingBufferManager : owns
-    RealtimePipeline *-- cudaq_host_dispatch_loop_ctx_t : builds
-    RealtimePipeline --> RingBufferInjector : creates
-    RingBufferInjector --> RingBufferManager : writes to
-    cudaq_host_dispatch_loop_ctx_t --> AIPreDecoderService : launches graph
-    RealtimePipeline --> PyMatchQueue : deferred jobs flow through
+    realtime_pipeline *-- ring_buffer_manager : owns
+    realtime_pipeline *-- cudaq_host_dispatch_loop_ctx_t : builds
+    realtime_pipeline --> ring_buffer_injector : creates
+    ring_buffer_injector --> ring_buffer_manager : writes to
+    cudaq_host_dispatch_loop_ctx_t --> ai_predecoder_service : launches graph
+    realtime_pipeline --> py_match_queue : deferred jobs flow through
 ```
 
 ## 2. Thread Model
@@ -79,7 +79,7 @@ The pipeline spawns four categories of threads, each pinnable to a specific CPU 
 ```mermaid
 flowchart LR
     subgraph "Producer (main thread)"
-        P["RingBufferInjector::submit()"]
+        P["ring_buffer_injector::submit()"]
     end
 
     subgraph "Dispatcher Thread (core 2)"
@@ -142,7 +142,7 @@ sequenceDiagram
     participant Disp as Dispatcher<br>(dedicated thread)
     participant GPU as GPU Stream w<br>(CUDA Graph)
     participant PDW as Predecoder Worker w<br>(CPU)
-    participant PMQ as PyMatchQueue
+    participant PMQ as py_match_queue
     participant PMW as PyMatching Worker<br>(CPU)
     participant Cons as Consumer<br>(dedicated thread)
     participant App as Application<br>(completion handler)
@@ -230,7 +230,7 @@ and the memory ordering used.
 |--------|------|-------|-----------|-----------|----------|
 | `idle_mask` | `cuda::atomic<uint64_t, system>` | Dispatcher ↔ Pipeline Workers | Dispatcher (clear bit), Pipeline (set bit after DEFERRED_COMPLETION) | Dispatcher (find free worker) | fetch_and/fetch_or: `release`, load: `acquire` |
 
-### GPU ↔ CPU Handoff (per AIPreDecoderService)
+### GPU ↔ CPU Handoff (per ai_predecoder_service)
 
 | Atomic | Type | Scope | Writer(s) | Reader(s) | Ordering |
 |--------|------|-------|-----------|-----------|----------|
@@ -306,7 +306,7 @@ The graph is instantiated once at startup and replayed for every syndrome.
 
 ```mermaid
 flowchart TD
-    subgraph "CUDA Graph (AIPreDecoderService)"
+    subgraph "CUDA Graph (ai_predecoder_service)"
         A["TRT enqueueV3<br>(AI predecoder inference)"] --> B["cudaMemcpyAsync D2D<br>TRT output → h_predecoder_outputs<br>(host-mapped)"]
         B --> C["predecoder_signal_ready_kernel<br>ready_flags.store(1, release)"]
     end
@@ -335,7 +335,7 @@ flowchart TD
 
     P --> A
     C -.->|"GPU signals ready_flags = 1"| D
-    I -.->|"PyMatchQueue"| J
+    I -.->|"py_match_queue"| J
 ```
 
 ## 7. Backpressure and Flow Control
@@ -387,7 +387,7 @@ memory model. Key ordering guarantees:
    uses `cuda::thread_scope_system` + `memory_order_release`, paired with the
    worker's `compare_exchange_strong(acquire)`.
 
-3. **Predecoder Worker → PyMatch Worker:** The `PyMatchQueue` uses `std::mutex`
+3. **Predecoder Worker → PyMatch Worker:** The `py_match_queue` uses `std::mutex`
    + `std::condition_variable`, which provide implicit acquire/release semantics.
    The `deferred_outputs[slot]` buffer is written by the predecoder worker before
    `push()` and read by the PyMatch worker after `pop()`, so the mutex guarantees
@@ -412,7 +412,7 @@ flowchart LR
     end
 
     subgraph "Mutex-Based Ordering"
-        I["PyMatchQueue::push()<br>mutex lock/unlock"] -->|"happens-before"| J["PyMatchQueue::pop()<br>mutex lock/unlock"]
+        I["py_match_queue::push()<br>mutex lock/unlock"] -->|"happens-before"| J["py_match_queue::pop()<br>mutex lock/unlock"]
     end
 
     subgraph "Full Barriers"
@@ -430,8 +430,8 @@ thread (the PyMatching worker pool).
 ```mermaid
 sequenceDiagram
     participant PW as Predecoder Worker
-    participant Pipeline as RealtimePipeline
-    participant PMQ as PyMatchQueue
+    participant Pipeline as realtime_pipeline
+    participant PMQ as py_match_queue
     participant PMW as PyMatch Worker
 
     PW->>PW: poll_next_job() succeeds
