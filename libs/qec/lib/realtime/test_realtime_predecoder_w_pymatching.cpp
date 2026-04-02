@@ -54,7 +54,9 @@
 #include "cudaq/qec/realtime/nvtx_helpers.h"
 
 using namespace cudaq::qec;
-namespace realtime_ns = cudaq::realtime;
+using namespace cudaq::qec::realtime;
+namespace rt_sdk = cudaq::realtime;
+namespace rt_pipeline = cudaq::qec::realtime;
 
 // Portable CPU Yield
 #ifndef CUDAQ_REALTIME_CPU_RELAX
@@ -719,7 +721,7 @@ int main(int argc, char *argv[]) {
 
   // Build function table for RPC dispatch — all workers share a single
   // function_id so the dispatcher can pick any idle worker (no HOL blocking).
-  const uint32_t shared_fid = realtime_ns::fnv1a_hash("predecode");
+  const uint32_t shared_fid = rt_sdk::fnv1a_hash("predecode");
   std::vector<uint32_t> function_ids(config.num_workers, shared_fid);
 
   // =========================================================================
@@ -739,13 +741,13 @@ int main(int argc, char *argv[]) {
   // Create pipeline (all atomics hidden inside)
   // =========================================================================
 
-  realtime_ns::PipelineStageConfig stage_cfg;
+  rt_pipeline::PipelineStageConfig stage_cfg;
   stage_cfg.num_workers = config.num_workers;
   stage_cfg.num_slots = NUM_SLOTS;
   stage_cfg.slot_size = slot_size;
   stage_cfg.cores = {.dispatcher = 2, .consumer = 4, .worker_base = 10};
 
-  realtime_ns::RealtimePipeline pipeline(stage_cfg);
+  rt_pipeline::RealtimePipeline pipeline(stage_cfg);
 
   // Wire ring buffer base pointers into pre-launch contexts so the H2D
   // copy callback can derive the host pointer from the device pointer the
@@ -757,7 +759,7 @@ int main(int argc, char *argv[]) {
   }
 
   // --- GPU stage factory ---
-  pipeline.set_gpu_stage([&](int w) -> realtime_ns::GpuWorkerResources {
+  pipeline.set_gpu_stage([&](int w) -> rt_pipeline::GpuWorkerResources {
     return {.graph_exec = predecoders[w]->get_executable_graph(),
             .stream = predecoder_streams[w],
             .pre_launch_fn = pre_launch_input_copy,
@@ -773,7 +775,7 @@ int main(int argc, char *argv[]) {
   // (idle_mask) without signaling slot completion (tx_flags).
   pipeline.set_cpu_stage(
       [&deferred_outputs, &pymatch_queue, out_sz = model_output_bytes](
-          const realtime_ns::CpuStageContext &ctx) -> size_t {
+          const rt_pipeline::CpuStageContext &ctx) -> size_t {
         auto *wctx = static_cast<WorkerCtx *>(ctx.user_context);
         auto *pd = wctx->predecoder;
         auto *dctx = wctx->decoder_ctx;
@@ -808,13 +810,13 @@ int main(int argc, char *argv[]) {
         pd->release_job(job.slot_idx);
 
         auto *rpc_hdr =
-            static_cast<const realtime_ns::RPCHeader *>(job.ring_buffer_ptr);
+            static_cast<const rt_sdk::RPCHeader *>(job.ring_buffer_ptr);
         uint32_t rid = rpc_hdr->request_id;
 
         pymatch_queue.push({origin_slot, rid, job.ring_buffer_ptr});
 
         NVTX_POP(); // PredecoderPoll
-        return realtime_ns::DEFERRED_COMPLETION;
+        return rt_pipeline::DEFERRED_COMPLETION;
       });
 
   // --- Completion callback (record timestamps) ---
@@ -825,7 +827,7 @@ int main(int argc, char *argv[]) {
   std::vector<int32_t> decode_corrections(max_requests, -1);
   std::vector<int32_t> decode_logical_pred(max_requests, -1);
 
-  pipeline.set_completion_handler([&](const realtime_ns::Completion &c) {
+  pipeline.set_completion_handler([&](const rt_pipeline::Completion &c) {
     if (c.request_id < static_cast<uint64_t>(max_requests)) {
       complete_ts[c.request_id] = hrclock::now();
       completed[c.request_id] = c.success;
@@ -912,12 +914,12 @@ int main(int argc, char *argv[]) {
         // Write RPC response into ring buffer slot
         DecodeResponse resp{total_corrections, all_converged ? 1 : 0};
         char *response_payload =
-            (char *)job.ring_buffer_ptr + sizeof(realtime_ns::RPCResponse);
+            (char *)job.ring_buffer_ptr + sizeof(rt_sdk::RPCResponse);
         std::memcpy(response_payload, &resp, sizeof(resp));
 
         auto *header =
-            static_cast<realtime_ns::RPCResponse *>(job.ring_buffer_ptr);
-        header->magic = realtime_ns::RPC_MAGIC_RESPONSE;
+            static_cast<rt_sdk::RPCResponse *>(job.ring_buffer_ptr);
+        header->magic = rt_sdk::RPC_MAGIC_RESPONSE;
         header->status = 0;
         header->result_len = sizeof(resp);
 

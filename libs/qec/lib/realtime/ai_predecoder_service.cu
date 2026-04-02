@@ -23,7 +23,7 @@
     }                                                                          \
   } while (0)
 
-namespace cudaq::qec {
+namespace cudaq::qec::realtime {
 
 // System scope for NVLink/PCIe visibility to host (design: no
 // __threadfence_system)
@@ -183,4 +183,4 @@ void AIPreDecoderService::release_job(int /* slot_idx */) {
   NVTX_POP();
 }
 
-} // namespace cudaq::qec
+} // namespace cudaq::qec::realtime

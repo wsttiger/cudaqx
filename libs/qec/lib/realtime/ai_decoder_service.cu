@@ -26,7 +26,7 @@
     }                                                                          \
   } while (0)
 
-namespace cudaq::qec {
+namespace cudaq::qec::realtime {
 
 // =============================================================================
 // Gateway Kernels
@@ -362,4 +362,4 @@ void AIDecoderService::capture_graph(cudaStream_t stream) {
   DECODER_CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
-} // namespace cudaq::qec
+} // namespace cudaq::qec::realtime

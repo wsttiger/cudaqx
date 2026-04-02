@@ -35,7 +35,9 @@
 namespace {
 
 using namespace cudaq::qec;
-namespace rt = cudaq::realtime;
+using namespace cudaq::qec::realtime;
+namespace rt = cudaq::qec::realtime;
+namespace rt_sdk = cudaq::realtime;
 
 using atomic_uint64_sys = cuda::std::atomic<uint64_t>;
 using atomic_int_sys = cuda::std::atomic<int>;
@@ -44,7 +46,7 @@ static constexpr size_t kSkipTrtFloats = 1600;
 static constexpr size_t kSkipTrtBytes = kSkipTrtFloats * sizeof(float);
 static constexpr size_t kSlotSize = 8192;
 static constexpr size_t kNumSlots = 8;
-static constexpr uint32_t kTestFunctionId = rt::fnv1a_hash("test_predecoder");
+static constexpr uint32_t kTestFunctionId = rt_sdk::fnv1a_hash("test_predecoder");
 
 // ============================================================================
 // Pre-launch DMA callback (mirrors production code)
@@ -96,8 +98,8 @@ static void free_mapped_buffer(uint8_t *host_ptr) {
 
 static void write_rpc_slot(uint8_t *slot_host, uint32_t function_id,
                            const void *payload, size_t payload_len) {
-  rt::RPCHeader hdr{};
-  hdr.magic = rt::RPC_MAGIC_REQUEST;
+  rt_sdk::RPCHeader hdr{};
+  hdr.magic = rt_sdk::RPC_MAGIC_REQUEST;
   hdr.function_id = function_id;
   hdr.arg_len = static_cast<uint32_t>(payload_len);
   std::memcpy(slot_host, &hdr, sizeof(hdr));
@@ -587,7 +589,7 @@ TEST_F(HostDispatcherTest, InvalidMagicDropped) {
   start_loop();
 
   uint8_t *slot_host = rx_data_host_;
-  rt::RPCHeader bad_hdr;
+  rt_sdk::RPCHeader bad_hdr;
   bad_hdr.magic = 0xDEADBEEF;
   bad_hdr.function_id = kTestFunctionId;
   bad_hdr.arg_len = 4;
@@ -690,7 +692,7 @@ TEST_F(HostDispatcherTest, MultiPredecoderConcurrency) {
   for (int i = 0; i < kNPd; ++i) {
     pds.push_back(create_predecoder(i));
     std::string name = "predecoder_" + std::to_string(i);
-    fids.push_back(rt::fnv1a_hash(name.c_str()));
+    fids.push_back(rt_sdk::fnv1a_hash(name.c_str()));
     plcs[i].d_trt_input = pds[i]->get_trt_input_ptr();
     plcs[i].input_size = pds[i]->get_input_size();
     plcs[i].h_ring_ptrs = pds[i]->get_host_ring_ptrs();
@@ -740,7 +742,7 @@ TEST_F(HostDispatcherTest, SustainedThroughput_200Requests) {
   for (int i = 0; i < kNPd; ++i) {
     pds.push_back(create_predecoder(i));
     std::string name = "sustained_pd_" + std::to_string(i);
-    fids.push_back(rt::fnv1a_hash(name.c_str()));
+    fids.push_back(rt_sdk::fnv1a_hash(name.c_str()));
     plcs[i].d_trt_input = pds[i]->get_trt_input_ptr();
     plcs[i].input_size = pds[i]->get_input_size();
     plcs[i].h_ring_ptrs = pds[i]->get_host_ring_ptrs();

@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace cudaq::qec {
+namespace cudaq::qec::realtime {
 
 class AIDecoderService {
 public:
@@ -77,4 +77,4 @@ protected:
   size_t output_size_ = 0;
 };
 
-} // namespace cudaq::qec
+} // namespace cudaq::qec::realtime

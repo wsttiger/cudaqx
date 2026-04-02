@@ -27,7 +27,7 @@
 #include <thread>
 #include <vector>
 
-namespace cudaq::realtime {
+namespace cudaq::qec::realtime {
 
 using atomic_uint64_sys = cuda::std::atomic<uint64_t>;
 using atomic_int_sys = cuda::std::atomic<int>;
@@ -359,6 +359,7 @@ struct RealtimePipeline::Impl {
     disp_cfg.live_dispatched = static_cast<void *>(&live_dispatched);
     disp_cfg.idle_mask = static_cast<void *>(&idle_mask);
     disp_cfg.inflight_slot_tags = inflight_slot_tags.data();
+    disp_cfg.skip_stream_sweep = true;
 
     // --- Dispatcher thread ---
     // The config is copied by value into the lambda; the workers vector is
@@ -681,4 +682,4 @@ uint64_t RingBufferInjector::backpressure_stalls() const {
   return state_->backpressure_stalls->load(std::memory_order_relaxed);
 }
 
-} // namespace cudaq::realtime
+} // namespace cudaq::qec::realtime
