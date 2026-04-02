@@ -274,8 +274,8 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       set(_cuda_cccl_include_pipe "${_cuda_root_pipe}/include/cccl")
 
       add_executable(test_realtime_pipeline
-        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
-        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_predecoder_service.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/ai_decoder_service.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/ai_predecoder_service.cu
         ${CMAKE_CURRENT_SOURCE_DIR}/test_realtime_pipeline.cu
       )
 
@@ -355,9 +355,9 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
 
     if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_PARSER_LIBRARY)
       add_executable(test_realtime_predecoder_w_pymatching
-        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/test_realtime_predecoder_w_pymatching.cpp
-        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_decoder_service.cu
-        ${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime/ai_predecoder_service.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/test_realtime_predecoder_w_pymatching.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/ai_decoder_service.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/ai_predecoder_service.cu
       )
 
       set_target_properties(test_realtime_predecoder_w_pymatching PROPERTIES
@@ -368,7 +368,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       )
 
       target_compile_definitions(test_realtime_predecoder_w_pymatching PRIVATE
-        ONNX_MODEL_DIR="${CMAKE_SOURCE_DIR}/libs/qec/lib/realtime"
+        ONNX_MODEL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime"
       )
 
       # libcu++ (cuda/std/atomic) lives in CUDA toolkit under cccl/
