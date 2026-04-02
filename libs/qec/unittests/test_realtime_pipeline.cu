@@ -421,7 +421,7 @@ protected:
   }
 
   void TearDown() override {
-    if (!loop_stopped_) {
+    if (shutdown_flag_ && !loop_stopped_) {
       shutdown_flag_->store(1, cuda::std::memory_order_release);
       __sync_synchronize();
       if (loop_thread_.joinable())
