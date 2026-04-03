@@ -27,7 +27,7 @@
 #include <thread>
 #include <vector>
 
-namespace cudaq::qec::realtime {
+namespace cudaq::qec::realtime::experimental {
 
 using atomic_uint64_sys = cuda::std::atomic<uint64_t>;
 using atomic_int_sys = cuda::std::atomic<int>;
@@ -684,4 +684,4 @@ uint64_t ring_buffer_injector::backpressure_stalls() const {
   return state_->backpressure_stalls->load(std::memory_order_relaxed);
 }
 
-} // namespace cudaq::qec::realtime
+} // namespace cudaq::qec::realtime::experimental

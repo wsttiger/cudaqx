@@ -54,9 +54,9 @@
 #include "cudaq/qec/realtime/nvtx_helpers.h"
 
 using namespace cudaq::qec;
-using namespace cudaq::qec::realtime;
+using namespace cudaq::qec::realtime::experimental;
 namespace rt_sdk = cudaq::realtime;
-namespace rt_pipeline = cudaq::qec::realtime;
+namespace rt_pipeline = cudaq::qec::realtime::experimental;
 
 // Portable CPU Yield
 #ifndef CUDAQ_REALTIME_CPU_RELAX

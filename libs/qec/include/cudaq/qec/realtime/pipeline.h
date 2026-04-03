@@ -15,7 +15,7 @@
 #include <memory>
 #include <string>
 
-namespace cudaq::qec::realtime {
+namespace cudaq::qec::realtime::experimental {
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -193,4 +193,4 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-} // namespace cudaq::qec::realtime
+} // namespace cudaq::qec::realtime::experimental

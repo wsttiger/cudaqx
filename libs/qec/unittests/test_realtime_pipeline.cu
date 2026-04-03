@@ -35,8 +35,8 @@
 namespace {
 
 using namespace cudaq::qec;
-using namespace cudaq::qec::realtime;
-namespace rt = cudaq::qec::realtime;
+using namespace cudaq::qec::realtime::experimental;
+namespace rt_exp = cudaq::qec::realtime::experimental;
 namespace rt_sdk = cudaq::realtime;
 
 using atomic_uint64_sys = cuda::std::atomic<uint64_t>;

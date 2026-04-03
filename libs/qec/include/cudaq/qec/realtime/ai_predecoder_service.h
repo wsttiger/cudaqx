@@ -26,7 +26,7 @@
 #endif
 #endif
 
-namespace cudaq::qec::realtime {
+namespace cudaq::qec::realtime::experimental {
 
 struct pre_decoder_job {
   int slot_idx;    ///< Worker/slot index (for release_job; always 0)
@@ -94,4 +94,4 @@ private:
   void *d_predecoder_outputs_ = nullptr;
 };
 
-} // namespace cudaq::qec::realtime
+} // namespace cudaq::qec::realtime::experimental

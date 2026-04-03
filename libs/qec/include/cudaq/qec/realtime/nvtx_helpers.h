@@ -12,6 +12,8 @@
 
 #include <nvtx3/nvToolsExt.h>
 
+namespace cudaq::qec::realtime::experimental {
+
 struct NvtxRange {
   explicit NvtxRange(const char *name) { nvtxRangePushA(name); }
   ~NvtxRange() { nvtxRangePop(); }
@@ -19,10 +21,12 @@ struct NvtxRange {
   NvtxRange &operator=(const NvtxRange &) = delete;
 };
 
-#define NVTX_RANGE(name) NvtxRange _nvtx_range_##__LINE__(name)
+#define NVTX_RANGE(name)                                                       \
+  cudaq::qec::realtime::experimental::NvtxRange _nvtx_range_##__LINE__(name)
 #define NVTX_PUSH(name) nvtxRangePushA(name)
 #define NVTX_POP() nvtxRangePop()
 
+} // namespace cudaq::qec::realtime::experimental
 #else
 
 #define NVTX_RANGE(name) (void)0

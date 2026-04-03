@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace cudaq::qec::realtime {
+namespace cudaq::qec::realtime::experimental {
 
 class ai_decoder_service {
 public:
@@ -95,4 +95,4 @@ protected:
   size_t output_size_ = 0;
 };
 
-} // namespace cudaq::qec::realtime
+} // namespace cudaq::qec::realtime::experimental
