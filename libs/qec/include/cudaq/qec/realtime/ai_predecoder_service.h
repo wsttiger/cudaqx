@@ -45,6 +45,13 @@ public:
   ai_predecoder_service(const std::string &engine_path,
                         void **device_mailbox_slot, int queue_depth = 1,
                         const std::string &engine_save_path = "");
+
+  /// Create a passthrough (identity copy) instance for testing without TRT.
+  static std::unique_ptr<ai_predecoder_service>
+  create_passthrough(void **device_mailbox_slot, int queue_depth = 1,
+                     size_t input_bytes = 1600 * sizeof(float),
+                     size_t output_bytes = 1600 * sizeof(float));
+
   virtual ~ai_predecoder_service();
 
   void capture_graph(cudaStream_t stream, bool device_launch);
@@ -72,6 +79,10 @@ public:
   void **get_host_ring_ptrs() const { return h_ring_ptrs_; }
 
 private:
+  /// Passthrough constructor (delegates to base passthrough constructor).
+  ai_predecoder_service(void **device_mailbox_slot, int queue_depth,
+                        size_t input_bytes, size_t output_bytes);
+
   int queue_depth_; // Always 1
 
   cuda::atomic<int, cuda::thread_scope_system> *h_ready_flags_ = nullptr;

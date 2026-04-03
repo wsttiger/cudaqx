@@ -115,8 +115,6 @@ static void write_rpc_slot(uint8_t *slot_host, uint32_t function_id,
 class RealtimePipelineTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    setenv("SKIP_TRT", "1", 1);
-
     ASSERT_TRUE(allocate_mapped_buffer(kNumSlots * sizeof(uint64_t),
                                        &rx_flags_host_, &rx_flags_dev_));
     ASSERT_TRUE(allocate_mapped_buffer(kNumSlots * sizeof(uint64_t),
@@ -144,13 +142,11 @@ protected:
     free_mapped_buffer(tx_flags_host_);
     free_mapped_buffer(rx_data_host_);
     free_mapped_buffer(tx_data_host_);
-    unsetenv("SKIP_TRT");
   }
 
   std::unique_ptr<ai_predecoder_service> create_predecoder(int mailbox_idx) {
-    auto pd = std::make_unique<ai_predecoder_service>(
-        "dummy.onnx",
-        reinterpret_cast<void **>(mailbox_bank_dev_ + mailbox_idx), 1);
+    auto pd = ai_predecoder_service::create_passthrough(
+        reinterpret_cast<void **>(mailbox_bank_dev_ + mailbox_idx));
     pd->capture_graph(stream_, false);
     EXPECT_EQ(cudaStreamSynchronize(stream_), cudaSuccess);
     return pd;
@@ -194,27 +190,27 @@ protected:
 };
 
 // ============================================================================
-// ai_decoder_service Unit Tests (SKIP_TRT)
+// ai_decoder_service Unit Tests (passthrough)
 // ============================================================================
 
 TEST_F(RealtimePipelineTest, SkipTrtSizes) {
-  ai_decoder_service svc("dummy.onnx", mailbox_bank_dev_);
-  EXPECT_EQ(svc.get_input_size(), kSkipTrtBytes);
-  EXPECT_EQ(svc.get_output_size(), kSkipTrtBytes);
+  auto svc = ai_decoder_service::create_passthrough(mailbox_bank_dev_);
+  EXPECT_EQ(svc->get_input_size(), kSkipTrtBytes);
+  EXPECT_EQ(svc->get_output_size(), kSkipTrtBytes);
 }
 
 TEST_F(RealtimePipelineTest, SkipTrtBuffersAllocated) {
-  ai_decoder_service svc("dummy.onnx", mailbox_bank_dev_);
-  EXPECT_NE(svc.get_trt_input_ptr(), nullptr);
+  auto svc = ai_decoder_service::create_passthrough(mailbox_bank_dev_);
+  EXPECT_NE(svc->get_trt_input_ptr(), nullptr);
 }
 
 TEST_F(RealtimePipelineTest, SkipTrtGraphExecNull_BeforeCapture) {
-  ai_decoder_service svc("dummy.onnx", mailbox_bank_dev_);
-  EXPECT_EQ(svc.get_executable_graph(), nullptr);
+  auto svc = ai_decoder_service::create_passthrough(mailbox_bank_dev_);
+  EXPECT_EQ(svc->get_executable_graph(), nullptr);
 }
 
 // ============================================================================
-// ai_predecoder_service Unit Tests (SKIP_TRT)
+// ai_predecoder_service Unit Tests (passthrough)
 // ============================================================================
 
 TEST_F(RealtimePipelineTest, PreDecoderConstruction) {

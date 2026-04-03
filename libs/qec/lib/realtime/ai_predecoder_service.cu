@@ -55,29 +55,57 @@ __global__ void passthrough_copy_kernel(void *dst, const void *src,
 // Class Implementation
 // =============================================================================
 
+static void
+allocate_predecoder_buffers(atomic_int_sys *&h_ready_flags, void **&h_ring_ptrs,
+                            void *&h_predecoder_outputs,
+                            atomic_int_sys *&d_ready_flags, void **&d_ring_ptrs,
+                            void *&d_predecoder_outputs, size_t output_size) {
+  void *buf = nullptr;
+  SERVICE_CUDA_CHECK(
+      cudaHostAlloc(&buf, sizeof(atomic_int_sys), cudaHostAllocMapped));
+  h_ready_flags = static_cast<atomic_int_sys *>(buf);
+  new (h_ready_flags) atomic_int_sys(0);
+
+  SERVICE_CUDA_CHECK(
+      cudaHostAlloc(&h_ring_ptrs, sizeof(void *), cudaHostAllocMapped));
+  SERVICE_CUDA_CHECK(
+      cudaHostAlloc(&h_predecoder_outputs, output_size, cudaHostAllocMapped));
+
+  SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&d_ready_flags,
+                                              (void *)h_ready_flags, 0));
+  SERVICE_CUDA_CHECK(
+      cudaHostGetDevicePointer((void **)&d_ring_ptrs, (void *)h_ring_ptrs, 0));
+  SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&d_predecoder_outputs,
+                                              (void *)h_predecoder_outputs, 0));
+}
+
 ai_predecoder_service::ai_predecoder_service(
     const std::string &path, void **mailbox,
     int /* queue_depth (ignored; always 1) */,
     const std::string &engine_save_path)
     : ai_decoder_service(path, mailbox, engine_save_path), queue_depth_(1) {
-  void *buf = nullptr;
+  allocate_predecoder_buffers(
+      h_ready_flags_, h_ring_ptrs_, h_predecoder_outputs_, d_ready_flags_,
+      d_ring_ptrs_, d_predecoder_outputs_, get_output_size());
+}
 
-  SERVICE_CUDA_CHECK(
-      cudaHostAlloc(&buf, sizeof(atomic_int_sys), cudaHostAllocMapped));
-  h_ready_flags_ = static_cast<atomic_int_sys *>(buf);
-  new (h_ready_flags_) atomic_int_sys(0);
+ai_predecoder_service::ai_predecoder_service(void **device_mailbox_slot,
+                                             int queue_depth,
+                                             size_t input_bytes,
+                                             size_t output_bytes)
+    : ai_decoder_service(device_mailbox_slot, input_bytes, output_bytes),
+      queue_depth_(queue_depth) {
+  allocate_predecoder_buffers(
+      h_ready_flags_, h_ring_ptrs_, h_predecoder_outputs_, d_ready_flags_,
+      d_ring_ptrs_, d_predecoder_outputs_, get_output_size());
+}
 
-  SERVICE_CUDA_CHECK(
-      cudaHostAlloc(&h_ring_ptrs_, sizeof(void *), cudaHostAllocMapped));
-  SERVICE_CUDA_CHECK(cudaHostAlloc(&h_predecoder_outputs_, get_output_size(),
-                                   cudaHostAllocMapped));
-
-  SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&d_ready_flags_,
-                                              (void *)h_ready_flags_, 0));
-  SERVICE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&d_ring_ptrs_,
-                                              (void *)h_ring_ptrs_, 0));
-  SERVICE_CUDA_CHECK(cudaHostGetDevicePointer(
-      (void **)&d_predecoder_outputs_, (void *)h_predecoder_outputs_, 0));
+std::unique_ptr<ai_predecoder_service>
+ai_predecoder_service::create_passthrough(void **device_mailbox_slot,
+                                          int queue_depth, size_t input_bytes,
+                                          size_t output_bytes) {
+  return std::unique_ptr<ai_predecoder_service>(new ai_predecoder_service(
+      device_mailbox_slot, queue_depth, input_bytes, output_bytes));
 }
 
 ai_predecoder_service::~ai_predecoder_service() {
@@ -99,9 +127,9 @@ ai_predecoder_service::~ai_predecoder_service() {
 
 void ai_predecoder_service::capture_graph(cudaStream_t stream,
                                           bool device_launch) {
-  bool skip_trt = (std::getenv("SKIP_TRT") != nullptr);
+  bool has_trt = (context_ != nullptr);
 
-  if (!skip_trt) {
+  if (has_trt) {
     for (auto &b : all_bindings_) {
       context_->setTensorAddress(b.name.c_str(), b.d_buffer);
     }
@@ -115,7 +143,7 @@ void ai_predecoder_service::capture_graph(cudaStream_t stream,
   SERVICE_CUDA_CHECK(
       cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
-  if (skip_trt) {
+  if (!has_trt) {
     passthrough_copy_kernel<<<1, 256, 0, stream>>>(d_trt_output_, d_trt_input_,
                                                    get_input_size());
   } else {

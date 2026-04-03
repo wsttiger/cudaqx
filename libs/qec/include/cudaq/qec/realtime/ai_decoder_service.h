@@ -33,6 +33,12 @@ public:
   ai_decoder_service(const std::string &model_path, void **device_mailbox_slot,
                      const std::string &engine_save_path = "");
 
+  /// Create a passthrough (identity copy) instance for testing without TRT.
+  static std::unique_ptr<ai_decoder_service>
+  create_passthrough(void **device_mailbox_slot,
+                     size_t input_bytes = 1600 * sizeof(float),
+                     size_t output_bytes = 1600 * sizeof(float));
+
   virtual ~ai_decoder_service();
 
   virtual void capture_graph(cudaStream_t stream);
@@ -48,6 +54,10 @@ public:
   void *get_trt_input_ptr() const { return d_trt_input_; }
 
 protected:
+  /// Passthrough constructor (no TRT, identity copy kernel only).
+  ai_decoder_service(void **device_mailbox_slot, size_t input_bytes,
+                     size_t output_bytes);
+
   void load_engine(const std::string &path);
   void build_engine_from_onnx(const std::string &onnx_path,
                               const std::string &engine_save_path = "");

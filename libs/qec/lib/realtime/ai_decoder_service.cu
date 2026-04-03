@@ -130,21 +130,27 @@ ai_decoder_service::ai_decoder_service(const std::string &model_path,
                                        void **device_mailbox_slot,
                                        const std::string &engine_save_path)
     : device_mailbox_slot_(device_mailbox_slot) {
-
-  if (std::getenv("SKIP_TRT")) {
-    input_size_ = 1600 * sizeof(float);
-    output_size_ = 1600 * sizeof(float);
-    allocate_resources();
+  std::string ext = model_path.substr(model_path.find_last_of('.'));
+  if (ext == ".onnx") {
+    build_engine_from_onnx(model_path, engine_save_path);
   } else {
-    std::string ext = model_path.substr(model_path.find_last_of('.'));
-    if (ext == ".onnx") {
-      build_engine_from_onnx(model_path, engine_save_path);
-    } else {
-      load_engine(model_path);
-    }
-    setup_bindings();
-    allocate_resources();
+    load_engine(model_path);
   }
+  setup_bindings();
+  allocate_resources();
+}
+
+ai_decoder_service::ai_decoder_service(void **device_mailbox_slot,
+                                       size_t input_bytes, size_t output_bytes)
+    : device_mailbox_slot_(device_mailbox_slot), input_size_(input_bytes),
+      output_size_(output_bytes) {
+  allocate_resources();
+}
+
+std::unique_ptr<ai_decoder_service> ai_decoder_service::create_passthrough(
+    void **device_mailbox_slot, size_t input_bytes, size_t output_bytes) {
+  return std::unique_ptr<ai_decoder_service>(
+      new ai_decoder_service(device_mailbox_slot, input_bytes, output_bytes));
 }
 
 ai_decoder_service::~ai_decoder_service() {
@@ -300,7 +306,7 @@ void ai_decoder_service::setup_bindings() {
 
 void ai_decoder_service::allocate_resources() {
   if (all_bindings_.empty()) {
-    // SKIP_TRT fallback path
+    // Passthrough path (no TRT bindings)
     if (cudaMalloc(&d_trt_input_, input_size_) != cudaSuccess)
       throw std::runtime_error("Failed to allocate TRT Input");
     if (cudaMalloc(&d_trt_output_, output_size_) != cudaSuccess)
