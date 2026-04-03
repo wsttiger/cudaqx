@@ -8,7 +8,15 @@
 
 #pragma once
 
-#include <NvInfer.h>
+// TensorRT 10.12+ headers emit deprecation warnings for internal symbols
+// (IPluginV2, legacy calibrator enums, IAlgorithmSelector, etc.) that are
+// scheduled for removal in a future release.  These warnings originate inside
+// the TensorRT headers themselves and cannot be fixed on our side.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#include "NvInfer.h"
+#pragma GCC diagnostic pop
+
 #include <cuda_runtime.h>
 #include <memory>
 #include <stdexcept>
