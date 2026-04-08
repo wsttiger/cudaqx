@@ -69,8 +69,7 @@ cudaqx::tensor<uint8_t> SparseCSR::to_dense() const {
   for (uint32_t r = 0; r < nrows; ++r)
     for (int32_t j = indptr[r]; j < indptr[r + 1]; ++j)
       data[static_cast<size_t>(r) * ncols + indices[j]] = 1;
-  T.copy(data.data(),
-         {static_cast<size_t>(nrows), static_cast<size_t>(ncols)});
+  T.copy(data.data(), {static_cast<size_t>(nrows), static_cast<size_t>(ncols)});
   return T;
 }
 
@@ -150,8 +149,8 @@ StimData load_stim_data(const std::string &data_dir) {
     std::cerr << "[Data] No H_csr.bin found in " << data_dir << "\n";
     return sd;
   }
-  std::cout << "[Data] Loaded H_csr " << sd.H.nrows << "x" << sd.H.ncols
-            << " (" << sd.H.nnz << " nnz)\n";
+  std::cout << "[Data] Loaded H_csr " << sd.H.nrows << "x" << sd.H.ncols << " ("
+            << sd.H.nnz << " nnz)\n";
 
   if (load_csr(data_dir + "/O_csr.bin", sd.O))
     std::cout << "[Data] Loaded O_csr " << sd.O.nrows << "x" << sd.O.ncols

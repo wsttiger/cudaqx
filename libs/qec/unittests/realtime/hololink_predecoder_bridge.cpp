@@ -222,8 +222,8 @@ int main(int argc, char *argv[]) {
       obs_f.read(reinterpret_cast<char *>(&obs_num_samples), sizeof(uint32_t));
       obs_f.read(reinterpret_cast<char *>(&obs_num_observables),
                  sizeof(uint32_t));
-      ground_truth_obs.resize(
-          static_cast<size_t>(obs_num_samples) * obs_num_observables);
+      ground_truth_obs.resize(static_cast<size_t>(obs_num_samples) *
+                              obs_num_observables);
       obs_f.read(reinterpret_cast<char *>(ground_truth_obs.data()),
                  ground_truth_obs.size() * sizeof(int32_t));
       std::cout << "  Observables: " << obs_num_samples << " samples x "
@@ -246,8 +246,8 @@ int main(int argc, char *argv[]) {
             << " B, Pages: " << num_pages << std::endl;
 
   hololink_transceiver_t transceiver = hololink_create_transceiver(
-      ib_device.c_str(), 1, remote_qp, gpu_id, frame_size, page_size,
-      num_pages, peer_ip.c_str(),
+      ib_device.c_str(), 1, remote_qp, gpu_id, frame_size, page_size, num_pages,
+      peer_ip.c_str(),
       0, // forward
       1, // rx_only
       1  // tx_only
@@ -292,10 +292,8 @@ int main(int argc, char *argv[]) {
   ext_rb.tx_data = tx_ring_data;
   ext_rb.rx_stride_sz = page_size;
   ext_rb.tx_stride_sz = page_size;
-  ext_rb.rx_flags_host =
-      reinterpret_cast<volatile uint64_t *>(rx_ring_flag);
-  ext_rb.tx_flags_host =
-      reinterpret_cast<volatile uint64_t *>(tx_ring_flag);
+  ext_rb.rx_flags_host = reinterpret_cast<volatile uint64_t *>(rx_ring_flag);
+  ext_rb.tx_flags_host = reinterpret_cast<volatile uint64_t *>(tx_ring_flag);
   ext_rb.rx_data_host = rx_ring_data;
   ext_rb.tx_data_host = tx_ring_data;
 
@@ -305,8 +303,8 @@ int main(int argc, char *argv[]) {
 
   rt_pipeline::pipeline_stage_config stage_cfg;
   stage_cfg.num_workers = pcfg.num_workers;
-  stage_cfg.num_slots = std::min(static_cast<size_t>(num_pages),
-                                 static_cast<size_t>(NUM_SLOTS));
+  stage_cfg.num_slots =
+      std::min(static_cast<size_t>(num_pages), static_cast<size_t>(NUM_SLOTS));
   stage_cfg.slot_size = page_size;
   stage_cfg.cores = {.dispatcher = 2, .consumer = 4, .worker_base = 10};
   stage_cfg.external_ringbuffer = &ext_rb;
@@ -373,6 +371,22 @@ int main(int argc, char *argv[]) {
             static_cast<const rt_sdk::RPCHeader *>(job.ring_buffer_ptr);
         uint32_t rid = rpc_hdr->request_id;
 
+        const uint8_t *pred_out = deferred_outputs[origin_slot].data();
+        int input_nz = 0;
+        const uint8_t *inp = static_cast<const uint8_t *>(job.ring_buffer_ptr) +
+                             CUDAQ_RPC_HEADER_SIZE;
+        for (size_t k = 0; k < out_sz - 1; ++k)
+          input_nz += (inp[k] != 0);
+        int output_nz = 0;
+        for (size_t k = 1; k < out_sz; ++k)
+          output_nz += (pred_out[k] != 0);
+
+        std::cout << "  [RDMA+TRT] Shot " << rid << ": received "
+                  << (out_sz - 1) << " detectors"
+                  << " (input_nonzero=" << input_nz << ")"
+                  << ", predecoder logical_pred=" << (int)pred_out[0]
+                  << ", residual_nonzero=" << output_nz << std::endl;
+
         pymatch_queue.push({origin_slot, rid, job.ring_buffer_ptr});
 
         NVTX_POP();
@@ -390,8 +404,7 @@ int main(int argc, char *argv[]) {
   for (int t = 0; t < pcfg.num_decode_workers; ++t) {
     pymatch_threads[t] = std::thread([&pipeline, &pymatch_queue,
                                       &deferred_outputs, &decoder_ctx,
-                                      &result_corrections,
-                                      &result_logical_pred,
+                                      &result_corrections, &result_logical_pred,
                                       &result_converged]() {
       PyMatchJob job;
       while (pymatch_queue.pop(job)) {
@@ -463,8 +476,7 @@ int main(int argc, char *argv[]) {
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
   std::cout << "\n=== Bridge Ready ===" << std::endl;
-  std::cout << "  QP Number: 0x" << std::hex << our_qp << std::dec
-            << std::endl;
+  std::cout << "  QP Number: 0x" << std::hex << our_qp << std::dec << std::endl;
   std::cout << "  RKey: " << our_rkey << std::endl;
   std::cout << "  Buffer Addr: 0x" << std::hex << our_buffer << std::dec
             << std::endl;
@@ -525,8 +537,8 @@ int main(int argc, char *argv[]) {
 
     if (!ground_truth_obs.empty() &&
         static_cast<uint32_t>(i) < obs_num_samples) {
-      int32_t gt = ground_truth_obs[static_cast<size_t>(i) *
-                                    obs_num_observables];
+      int32_t gt =
+          ground_truth_obs[static_cast<size_t>(i) * obs_num_observables];
       bool match = (pipeline_parity == gt);
       bool pred_match = ((lpred % 2) == gt);
       std::cout << " ground_truth=" << gt
@@ -542,10 +554,8 @@ int main(int argc, char *argv[]) {
   }
 
   if (verified > 0) {
-    double ler =
-        static_cast<double>(mismatches) / verified;
-    double pred_ler =
-        static_cast<double>(pred_only_mismatches) / verified;
+    double ler = static_cast<double>(mismatches) / verified;
+    double pred_ler = static_cast<double>(pred_only_mismatches) / verified;
     std::cout << "\n  [Correctness] Verified: " << verified << " shots"
               << std::endl;
     std::cout << "  [Correctness] Pipeline (pred+pymatch) mismatches: "

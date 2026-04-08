@@ -396,9 +396,10 @@ PYEOF
 
 resolve_paths() {
     local cuda_qx_utils="${CUDA_QX_DIR}/build/libs/qec/unittests/utils"
+    local cuda_qx_realtime="${CUDA_QX_DIR}/build/libs/qec/unittests/realtime"
     local cq_build_dir="${CUDA_QUANTUM_DIR}/realtime/build/unittests"
 
-    BRIDGE_BIN="${cuda_qx_utils}/hololink_predecoder_bridge"
+    BRIDGE_BIN="${cuda_qx_realtime}/hololink_predecoder_bridge"
     PLAYBACK_BIN="${cuda_qx_utils}/hololink_fpga_syndrome_playback"
     EMULATOR_BIN="${cq_build_dir}/utils/hololink_fpga_emulator"
 
