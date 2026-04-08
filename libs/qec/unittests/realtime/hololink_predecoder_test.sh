@@ -44,7 +44,7 @@ DO_SETUP_NETWORK=false
 DO_RUN=true
 
 CUDA_QUANTUM_DIR="${CUDA_QUANTUM_DIR:-/workspaces/cuda-quantum}"
-CUDA_QX_DIR="${CUDA_QX_DIR:-/workspaces/cuda-qx}"
+CUDA_QX_DIR="${CUDA_QX_DIR:-/workspaces/cudaqx}"
 
 IB_DEVICE=""
 BRIDGE_IP="10.0.0.1"
