@@ -518,12 +518,19 @@ struct realtime_pipeline::Impl {
       uint64_t nsub = total_submitted.load(std::memory_order_acquire);
       uint64_t ncomp = total_completed.load(std::memory_order_relaxed);
 
-      if (pdone && ncomp >= nsub)
+      // For external ring buffers the FPGA owns the producer side, so
+      // total_submitted is never incremented.  Skip the drain check and
+      // rely on consumer_stop (set by stop_all timeout) instead.
+      if (!external_ring_ && pdone && ncomp >= nsub)
         break;
 
       bool found_any = false;
       for (uint32_t s = 0; s < ns; ++s) {
-        if (!slot_occupied[s])
+        // With an external ring buffer (FPGA source) nobody calls the
+        // ring_buffer_injector, so slot_occupied is never set.  Poll
+        // all slots unconditionally; the tx_flag value distinguishes
+        // idle (0) from in-flight/complete.
+        if (!external_ring_ && !slot_occupied[s])
           continue;
 
         int cuda_error = 0;
