@@ -1,5 +1,5 @@
-AI Predecoder + PyMatching Streaming Benchmark
-================================================
+Realtime AI Predecoder Pipeline
+================================
 
 This guide explains how to build and run the hybrid AI predecoder + PyMatching
 streaming benchmark. The benchmark uses a TensorRT-accelerated neural network
@@ -176,20 +176,6 @@ Pipeline Configurations
      - Pre-decoders
      - Workers
      - Decode Workers
-   * - ``d7``
-     - 7
-     - 7
-     - ``model1_d7_r7_unified_Z_batch1.onnx``
-     - 16
-     - 16
-     - 32
-   * - ``d13``
-     - 13
-     - 13
-     - ``predecoder_memory_d13_T13_X.onnx``
-     - 16
-     - 16
-     - 32
    * - ``d13_r104``
      - 13
      - 104
@@ -197,20 +183,6 @@ Pipeline Configurations
      - 8
      - 8
      - 16
-   * - ``d21``
-     - 21
-     - 21
-     - ``model1_d21_r21_unified_X_batch1.onnx``
-     - 16
-     - 16
-     - 32
-   * - ``d31``
-     - 31
-     - 31
-     - ``model1_d31_r31_unified_Z_batch1.onnx``
-     - 16
-     - 16
-     - 32
 
 Example
 ^^^^^^^
@@ -288,17 +260,15 @@ End-to-end latency measured from ``injector.submit()`` to the completion
 callback. Includes GPU inference, CPU-side PyMatching decode, and all pipeline
 overhead. The first 20 requests are excluded as warmup.
 
-Worker-Level Averages
-^^^^^^^^^^^^^^^^^^^^^
+PyMatching Average Time
+^^^^^^^^^^^^^^^^^^^^^^^
 
 .. code-block:: text
 
    PyMatching decode:         75.6 us
-   Total worker:              75.7 us
-   Worker overhead:            0.1 us
 
-Isolated PyMatching MWPM decode time versus total worker thread time.
-The difference is pipeline bookkeeping overhead.
+Average time for the PyMatching MWPM decoder to process a single residual
+syndrome.
 
 Syndrome Density
 ^^^^^^^^^^^^^^^^
@@ -321,13 +291,9 @@ Printed only when ``--data-dir`` is provided:
 .. code-block:: text
 
    Pipeline (pred+pymatch) mismatches: 108  LER: 0.0018
-   Predecoder-only mismatches:         22843  LER: 0.3807
 
 - **Pipeline LER**: logical error rate of the full predecoder + PyMatching
   chain compared to ground-truth observables.
-- **Predecoder-only LER**: error rate using only the predecoder's logical
-  prediction without MWPM correction, showing how much PyMatching improves
-  accuracy.
 
 .. note::
 

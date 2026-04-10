@@ -11,4 +11,4 @@ Examples that illustrate how to use CUDA-QX for application development are avai
       Circuit-Level QEC <circuit_level_noise.rst>
       Decoders <decoders.rst>
       Real-Time Decoding <realtime_decoding.rst>
-      AI Predecoder + PyMatching Benchmark <realtime_predecoder_pymatching.rst>
+      Realtime AI Predecoder Pipeline <realtime_predecoder_pymatching.rst>
