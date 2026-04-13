@@ -6,6 +6,9 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
+/// @file predecoder_pipeline_common.cpp
+/// @brief Implementations for shared predecoder pipeline utilities.
+
 #include "predecoder_pipeline_common.h"
 
 #include <fstream>

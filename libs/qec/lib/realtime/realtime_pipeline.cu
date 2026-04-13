@@ -102,8 +102,17 @@ static void gpu_only_post_launch(void *user_data, void *slot_dev,
 // RingBufferManager
 // ---------------------------------------------------------------------------
 
+/// @brief Manages a pinned, GPU-mapped ring buffer for host-device
+/// communication.
+///
+/// Allocates rx/tx flag arrays and a data region using cudaHostAllocMapped
+/// so both CPU and GPU can access them via mapped pointers. Provides
+/// helpers for writing RPC requests, polling completion, and clearing slots.
 class RingBufferManager {
 public:
+  /// @brief Allocate a ring buffer with the given slot count and size.
+  /// @param num_slots Number of slots in the ring buffer.
+  /// @param slot_size Size of each slot in bytes.
   RingBufferManager(size_t num_slots, size_t slot_size)
       : num_slots_(num_slots), slot_size_(slot_size) {
     PIPELINE_CUDA_CHECK(cudaHostAlloc(
@@ -151,11 +160,21 @@ public:
     cudaFreeHost(rx_data_host_);
   }
 
+  /// @brief Check whether a slot's rx_flag is zero (available for writing).
+  /// @param slot Slot index to check.
+  /// @return True if the slot is available.
   bool slot_available(uint32_t slot) const {
     auto *flags = reinterpret_cast<const volatile uint64_t *>(rx_flags_);
     return __atomic_load_n(&flags[slot], __ATOMIC_ACQUIRE) == 0;
   }
 
+  /// @brief Write an RPC request into a slot and signal the dispatcher.
+  /// @param slot Destination slot index.
+  /// @param function_id RPC function identifier.
+  /// @param payload Pointer to the payload data.
+  /// @param payload_len Size of the payload in bytes.
+  /// @param request_id Caller-assigned request identifier.
+  /// @param ptp_timestamp Optional PTP timestamp for the request.
   void write_and_signal(uint32_t slot, uint32_t function_id,
                         const void *payload, uint32_t payload_len,
                         uint32_t request_id = 0, uint64_t ptp_timestamp = 0) {
@@ -165,21 +184,34 @@ public:
     cudaq_host_ringbuffer_signal_slot(&rb_, slot);
   }
 
+  /// @brief Poll the TX flag for a slot to check completion status.
+  /// @param slot Slot index to poll.
+  /// @param cuda_error Output: CUDA error code if status is CUDAQ_TX_ERROR.
+  /// @return TX status (CUDAQ_TX_READY, CUDAQ_TX_ERROR, or pending).
   cudaq_tx_status_t poll_tx(uint32_t slot, int *cuda_error) const {
     return cudaq_host_ringbuffer_poll_tx_flag(&rb_, slot, cuda_error);
   }
 
+  /// @brief Clear a slot's rx and tx flags after completion.
+  /// @param slot Slot index to clear.
   void clear_slot(uint32_t slot) {
     cudaq_host_ringbuffer_clear_slot(&rb_, slot);
   }
 
+  /// @brief Return the number of slots.
   size_t num_slots() const { return num_slots_; }
+  /// @brief Return the slot size in bytes.
   size_t slot_size() const { return slot_size_; }
 
+  /// @brief Return the host-side RX flag array.
   atomic_uint64_sys *rx_flags() { return rx_flags_; }
+  /// @brief Return the host-side TX flag array.
   atomic_uint64_sys *tx_flags() { return tx_flags_; }
+  /// @brief Return the host-mapped RX data base pointer.
   uint8_t *rx_data_host() { return rx_data_host_; }
+  /// @brief Return the device-mapped RX data base pointer.
   uint8_t *rx_data_dev() { return rx_data_dev_; }
+  /// @brief Return a const reference to the underlying cudaq_ringbuffer_t.
   const cudaq_ringbuffer_t &ringbuffer() const { return rb_; }
 
 private:
