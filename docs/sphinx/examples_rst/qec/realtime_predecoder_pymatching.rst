@@ -1,6 +1,11 @@
 Realtime AI Predecoder Pipeline
 ================================
 
+.. note::
+
+  The following information is about a C++ demonstration that must be built
+  from source and is not part of any distributed CUDA-Q QEC binaries.
+
 This guide explains how to build and run the hybrid AI predecoder + PyMatching
 streaming benchmark. The benchmark uses a TensorRT-accelerated neural network
 (the *predecoder*) to reduce syndrome density on the GPU, then feeds the
@@ -11,7 +16,8 @@ syndrome density, and logical error rate statistics.
 
 The benchmark binary is
 ``test_realtime_predecoder_w_pymatching``, built from
-``libs/qec/unittests/realtime/test_realtime_predecoder_w_pymatching.cpp``.
+`libs/qec/unittests/realtime/test_realtime_predecoder_w_pymatching.cpp
+<https://github.com/NVIDIA/cudaqx/blob/main/libs/qec/unittests/realtime/test_realtime_predecoder_w_pymatching.cpp>`_.
 
 
 Prerequisites
@@ -27,7 +33,7 @@ Hardware
 Software
 ^^^^^^^^
 
-- **CUDA Toolkit** 13.0 or later
+- **CUDA Toolkit** 12.6 or later
 - **TensorRT** 10.x (headers and libraries)
 - **CUDA-Q SDK** pre-installed (provides ``libcudaq``, ``libnvqir``, ``nvq++``)
 - **CUDA-Q Realtime** libraries (``libcudaq-realtime``,
