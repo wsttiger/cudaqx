@@ -11,7 +11,9 @@
 ///
 /// Used by both the software-only benchmark
 /// (test_realtime_predecoder_w_pymatching.cpp) and the FPGA bridge
-/// (hololink_predecoder_bridge.cpp).
+/// (hololink_predecoder_bridge.cpp). These helpers are example and test support
+/// code rather than part of the stable library API, but documenting them keeps
+/// the benchmark and bridge configuration visible from the generated docs.
 
 #pragma once
 
@@ -63,6 +65,9 @@ namespace rt_pipeline = cudaq::qec::realtime::experimental;
 // =============================================================================
 
 /// @brief Maximum number of pipeline ring buffer slots.
+/// @details Shared by the benchmark and bridge so both data sources use the
+/// same ring depth assumptions when staging requests into the realtime
+/// pipeline.
 constexpr size_t NUM_SLOTS = 16;
 
 /// @brief Named configuration for a predecoder pipeline instance.
@@ -141,6 +146,8 @@ struct PipelineConfig {
 /// @brief Round a value up to the next power of two.
 /// @param v Input value (must be > 0).
 /// @return Smallest power of two >= @p v.
+/// @details Used when sizing buffers that must satisfy alignment or TensorRT
+/// engine requirements.
 inline size_t round_up_pow2(size_t v) {
   v--;
   v |= v >> 1;
@@ -159,7 +166,9 @@ inline size_t round_up_pow2(size_t v) {
 /// @brief Shared state for a pool of PyMatching MWPM decoder instances.
 ///
 /// Each decode worker thread acquires its own decoder via acquire_decoder()
-/// and accumulates timing and syndrome density statistics atomically.
+/// and accumulates timing and syndrome density statistics atomically. The
+/// context also carries shape information needed to interpret the predecoder
+/// residual syndrome output.
 struct DecoderContext {
   /// @brief Pool of decoder instances (one per decode worker thread).
   std::vector<std::unique_ptr<cudaq::qec::decoder>> decoders;
@@ -178,6 +187,9 @@ struct DecoderContext {
 
   /// @brief Acquire a thread-local decoder from the pool.
   /// @return Pointer to the decoder assigned to the calling thread.
+  /// @details The first call on each thread claims a stable decoder index via
+  /// @c next_decoder_idx so repeated calls from that thread reuse the same
+  /// decoder instance.
   cudaq::qec::decoder *acquire_decoder() {
     thread_local int my_idx =
         next_decoder_idx.fetch_add(1, std::memory_order_relaxed);
@@ -210,7 +222,10 @@ struct PreLaunchCopyCtx {
   void *d_trt_input;
   /// @brief Size of the input tensor in bytes.
   size_t input_size;
-  /// @brief Host mailbox bank (array of per-worker slot device pointers).
+  /// @brief Host mailbox bank written by the dispatcher callback.
+  /// @details The current slot device pointer is published here so the CPU
+  /// polling path can recover the originating ring slot after TensorRT
+  /// inference completes.
   void **h_ring_ptrs;
   /// @brief Device-mapped base of the RX data ring.
   uint8_t *rx_data_dev_base;
@@ -231,14 +246,18 @@ void pre_launch_input_copy(void *user_data, void *slot_dev,
 // =============================================================================
 
 /// @brief Per-worker context passed through gpu_worker_resources::user_context.
+/// @details Bridges the GPU predecoder worker with the downstream PyMatching
+/// decode pool and correctness-tracking arrays used by the benchmark.
 struct WorkerCtx {
   /// @brief Pointer to the AI predecoder service for this worker.
   ai_predecoder_service *predecoder;
   /// @brief Shared decoder context (PyMatching pool and statistics).
   DecoderContext *decoder_ctx;
   /// @brief Array to store per-request total correction counts.
+  /// Indexed by request_id when correctness checking is enabled.
   int32_t *decode_corrections = nullptr;
-  /// @brief Array to store per-request predecoder logical predictions.
+  /// @brief Array to store per-request logical prediction parity.
+  /// Indexed by request_id when correctness checking is enabled.
   int32_t *decode_logical_pred = nullptr;
   /// @brief Maximum number of requests to track.
   int max_requests = 0;
@@ -249,6 +268,9 @@ struct WorkerCtx {
 };
 
 /// @brief Packed RPC response containing decode results.
+/// @details This payload is written directly into the pipeline response buffer
+/// after the RPC header, so the struct remains packed to match the transport
+/// framing exactly.
 struct __attribute__((packed)) DecodeResponse {
   /// @brief Total number of corrections applied (predecoder + PyMatching).
   int32_t total_corrections;
@@ -270,8 +292,11 @@ struct PyMatchJob {
   void *ring_buffer_ptr;
 };
 
-/// @brief Thread-safe bounded queue for dispatching PyMatching decode jobs
-/// from the CPU stage to a pool of decode worker threads.
+/// @brief Thread-safe queue for dispatching PyMatching decode jobs.
+/// @details The queue connects the pipeline CPU stage, which only harvests
+/// completed predecoder outputs, to a separate pool of PyMatching workers that
+/// can finish decoding asynchronously and later call
+/// @ref cudaq::qec::realtime::experimental::realtime_pipeline::complete_deferred.
 class PyMatchQueue {
 public:
   /// @brief Enqueue a job and wake one waiting worker.
@@ -300,7 +325,8 @@ private:
 /// @brief Container for pre-generated syndrome test data.
 ///
 /// Loaded from binary files (detectors.bin, observables.bin) and accessed
-/// by sample index with automatic wraparound.
+/// by sample index with automatic wraparound. This lets the benchmark replay a
+/// fixed corpus indefinitely at a target request rate.
 struct TestData {
   /// @brief Flattened detector samples (num_samples * num_detectors).
   std::vector<int32_t> detectors;
@@ -357,7 +383,8 @@ TestData load_test_data(const std::string &data_dir);
 /// @brief Sparse matrix in Compressed Sparse Row (CSR) format.
 ///
 /// Used to store parity check matrices (H) and observable matrices (O)
-/// loaded from binary files.
+/// loaded from binary files before converting them into the dense tensor form
+/// expected by the decoder construction helpers.
 struct SparseCSR {
   /// @brief Number of rows.
   uint32_t nrows = 0;
@@ -385,6 +412,8 @@ struct SparseCSR {
 };
 
 /// @brief Collection of Stim-derived data for configuring PyMatching.
+/// @details Bundles the parity check matrix, observable projection matrix, and
+/// optional edge priors emitted by the offline Stim export step.
 struct StimData {
   /// @brief Parity check matrix (H) in CSR format.
   SparseCSR H;

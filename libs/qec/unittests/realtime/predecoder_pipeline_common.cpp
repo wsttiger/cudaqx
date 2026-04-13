@@ -6,8 +6,11 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-/// @file predecoder_pipeline_common.cpp
-/// @brief Implementations for shared predecoder pipeline utilities.
+// Implementation file for shared predecoder pipeline utilities.
+//
+// Provides the runtime behavior behind the helper types declared in
+// predecoder_pipeline_common.h, including the TensorRT pre-launch staging
+// callback, the deferred PyMatching job queue, and binary dataset loaders.
 
 #include "predecoder_pipeline_common.h"
 
@@ -18,6 +21,10 @@
 // Pre-launch DMA copy callback
 // =============================================================================
 
+// Store the most recent slot pointer in the mailbox bank so the CPU polling
+// path can map TensorRT completion back to the original ring slot, then issue
+// an asynchronous host-to-device copy of the detector payload located
+// immediately after the RPC header.
 void pre_launch_input_copy(void *user_data, void *slot_dev,
                            cudaStream_t stream) {
   NVTX_PUSH("PreLaunchCopy");
@@ -36,6 +43,8 @@ void pre_launch_input_copy(void *user_data, void *slot_dev,
 // PyMatchQueue
 // =============================================================================
 
+// Keep the critical section short so predecoder workers can hand off jobs to
+// the PyMatching pool without stalling the realtime pipeline.
 void PyMatchQueue::push(PyMatchJob &&j) {
   {
     std::lock_guard<std::mutex> lk(mtx_);
@@ -44,6 +53,8 @@ void PyMatchQueue::push(PyMatchJob &&j) {
   cv_.notify_one();
 }
 
+// Workers sleep until a new job arrives or shutdown() is called. Returning
+// false signals that the worker should exit.
 bool PyMatchQueue::pop(PyMatchJob &out) {
   std::unique_lock<std::mutex> lk(mtx_);
   cv_.wait(lk, [&] { return !jobs_.empty() || stop_; });
@@ -54,6 +65,8 @@ bool PyMatchQueue::pop(PyMatchJob &out) {
   return true;
 }
 
+// Wake all waiting workers so they can observe stop_ and exit once the queue
+// has drained.
 void PyMatchQueue::shutdown() {
   {
     std::lock_guard<std::mutex> lk(mtx_);
@@ -66,6 +79,8 @@ void PyMatchQueue::shutdown() {
 // SparseCSR
 // =============================================================================
 
+// Expand the CSR representation into a dense row-major tensor so helper code
+// can build decoders using the regular tensor-based APIs.
 cudaqx::tensor<uint8_t> SparseCSR::to_dense() const {
   cudaqx::tensor<uint8_t> T;
   std::vector<uint8_t> data(static_cast<size_t>(nrows) * ncols, 0);
@@ -76,6 +91,8 @@ cudaqx::tensor<uint8_t> SparseCSR::to_dense() const {
   return T;
 }
 
+// Primarily used to fetch the first observable row for projecting residual
+// corrections onto logical parity bits.
 std::vector<uint8_t> SparseCSR::row_dense(uint32_t r) const {
   std::vector<uint8_t> row(ncols, 0);
   for (int32_t j = indptr[r]; j < indptr[r + 1]; ++j)
@@ -87,6 +104,8 @@ std::vector<uint8_t> SparseCSR::row_dense(uint32_t r) const {
 // Test data loaders
 // =============================================================================
 
+// The binary format starts with a uint32 row/column header followed by
+// row-major int32 payload data.
 bool load_binary_file(const std::string &path, uint32_t &out_rows,
                       uint32_t &out_cols, std::vector<int32_t> &data) {
   std::ifstream f(path, std::ios::binary);
@@ -100,6 +119,8 @@ bool load_binary_file(const std::string &path, uint32_t &out_rows,
   return f.good();
 }
 
+// Return a default-constructed TestData on any load or consistency failure so
+// callers can use TestData::loaded() as the success check.
 TestData load_test_data(const std::string &data_dir) {
   TestData td;
   std::string det_path = data_dir + "/detectors.bin";
@@ -129,6 +150,7 @@ TestData load_test_data(const std::string &data_dir) {
   return td;
 }
 
+// The file layout is [nrows, ncols, nnz, indptr..., indices...].
 bool load_csr(const std::string &path, SparseCSR &out) {
   std::ifstream f(path, std::ios::binary);
   if (!f.good())
@@ -145,6 +167,8 @@ bool load_csr(const std::string &path, SparseCSR &out) {
   return f.good();
 }
 
+// Missing optional files leave the corresponding members empty while still
+// allowing the benchmark to proceed with the available data.
 StimData load_stim_data(const std::string &data_dir) {
   StimData sd;
 

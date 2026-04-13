@@ -6,6 +6,12 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.
  ******************************************************************************/
 
+// Realtime pipeline implementation.
+//
+// Implements the mapped ring buffer, host dispatcher integration, GPU-only
+// completion path, CPU polling worker threads, and consumer-side completion
+// harvesting for realtime_pipeline.
+
 #include "cudaq/qec/realtime/nvtx_helpers.h"
 #include "cudaq/qec/realtime/pipeline.h"
 #include "cudaq/realtime/daemon/dispatcher/cudaq_realtime.h"
@@ -46,6 +52,7 @@ using atomic_int_sys = cuda::std::atomic<int>;
     }                                                                          \
   } while (0)
 
+// Pin a thread to a specific CPU core when requested.
 static void pin_thread(std::thread &t, int core) {
   if (core < 0)
     return;
@@ -59,6 +66,10 @@ static void pin_thread(std::thread &t, int core) {
 // GPU-only mode: completion signaling via cudaLaunchHostFunc
 // ---------------------------------------------------------------------------
 
+// Per-worker state for GPU-only completion signaling. When no cpu_stage
+// callback is installed, the pipeline uses cudaLaunchHostFunc to mark
+// completion on the worker's CUDA stream and then release the worker back to
+// the dispatcher.
 struct GpuOnlyWorkerCtx {
   atomic_uint64_sys *tx_flags;
   atomic_uint64_sys *idle_mask;
@@ -73,6 +84,7 @@ struct GpuOnlyWorkerCtx {
   uint64_t tx_value;
 };
 
+// Host callback launched on the worker CUDA stream in GPU-only mode.
 static void gpu_only_host_callback(void *user_data) {
   auto *ctx = static_cast<GpuOnlyWorkerCtx *>(user_data);
   ctx->tx_flags[ctx->origin_slot].store(ctx->tx_value,
@@ -81,6 +93,8 @@ static void gpu_only_host_callback(void *user_data) {
                            cuda::std::memory_order_release);
 }
 
+// Post-launch hook that chains user callbacks and schedules GPU-only
+// completion signaling.
 static void gpu_only_post_launch(void *user_data, void *slot_dev,
                                  cudaStream_t stream) {
   NVTX_PUSH("GPUPostLaunch");
@@ -102,17 +116,13 @@ static void gpu_only_post_launch(void *user_data, void *slot_dev,
 // RingBufferManager
 // ---------------------------------------------------------------------------
 
-/// @brief Manages a pinned, GPU-mapped ring buffer for host-device
-/// communication.
-///
-/// Allocates rx/tx flag arrays and a data region using cudaHostAllocMapped
-/// so both CPU and GPU can access them via mapped pointers. Provides
-/// helpers for writing RPC requests, polling completion, and clearing slots.
+// Manage a pinned, GPU-mapped ring buffer for host-device communication.
+//
+// This allocates rx/tx flag arrays and a data region using cudaHostAllocMapped
+// so both CPU and GPU can access them via mapped pointers.
 class RingBufferManager {
 public:
-  /// @brief Allocate a ring buffer with the given slot count and size.
-  /// @param num_slots Number of slots in the ring buffer.
-  /// @param slot_size Size of each slot in bytes.
+  // Allocate a ring buffer with the given slot count and size.
   RingBufferManager(size_t num_slots, size_t slot_size)
       : num_slots_(num_slots), slot_size_(slot_size) {
     PIPELINE_CUDA_CHECK(cudaHostAlloc(
@@ -160,21 +170,13 @@ public:
     cudaFreeHost(rx_data_host_);
   }
 
-  /// @brief Check whether a slot's rx_flag is zero (available for writing).
-  /// @param slot Slot index to check.
-  /// @return True if the slot is available.
+  // Check whether a slot's rx_flag is zero and therefore available.
   bool slot_available(uint32_t slot) const {
     auto *flags = reinterpret_cast<const volatile uint64_t *>(rx_flags_);
     return __atomic_load_n(&flags[slot], __ATOMIC_ACQUIRE) == 0;
   }
 
-  /// @brief Write an RPC request into a slot and signal the dispatcher.
-  /// @param slot Destination slot index.
-  /// @param function_id RPC function identifier.
-  /// @param payload Pointer to the payload data.
-  /// @param payload_len Size of the payload in bytes.
-  /// @param request_id Caller-assigned request identifier.
-  /// @param ptp_timestamp Optional PTP timestamp for the request.
+  // Write an RPC request into a slot and signal the dispatcher.
   void write_and_signal(uint32_t slot, uint32_t function_id,
                         const void *payload, uint32_t payload_len,
                         uint32_t request_id = 0, uint64_t ptp_timestamp = 0) {
@@ -184,34 +186,30 @@ public:
     cudaq_host_ringbuffer_signal_slot(&rb_, slot);
   }
 
-  /// @brief Poll the TX flag for a slot to check completion status.
-  /// @param slot Slot index to poll.
-  /// @param cuda_error Output: CUDA error code if status is CUDAQ_TX_ERROR.
-  /// @return TX status (CUDAQ_TX_READY, CUDAQ_TX_ERROR, or pending).
+  // Poll the TX flag for a slot to check completion status.
   cudaq_tx_status_t poll_tx(uint32_t slot, int *cuda_error) const {
     return cudaq_host_ringbuffer_poll_tx_flag(&rb_, slot, cuda_error);
   }
 
-  /// @brief Clear a slot's rx and tx flags after completion.
-  /// @param slot Slot index to clear.
+  // Clear a slot's rx and tx flags after completion.
   void clear_slot(uint32_t slot) {
     cudaq_host_ringbuffer_clear_slot(&rb_, slot);
   }
 
-  /// @brief Return the number of slots.
+  // Return the number of slots.
   size_t num_slots() const { return num_slots_; }
-  /// @brief Return the slot size in bytes.
+  // Return the slot size in bytes.
   size_t slot_size() const { return slot_size_; }
 
-  /// @brief Return the host-side RX flag array.
+  // Return the host-side RX flag array.
   atomic_uint64_sys *rx_flags() { return rx_flags_; }
-  /// @brief Return the host-side TX flag array.
+  // Return the host-side TX flag array.
   atomic_uint64_sys *tx_flags() { return tx_flags_; }
-  /// @brief Return the host-mapped RX data base pointer.
+  // Return the host-mapped RX data base pointer.
   uint8_t *rx_data_host() { return rx_data_host_; }
-  /// @brief Return the device-mapped RX data base pointer.
+  // Return the device-mapped RX data base pointer.
   uint8_t *rx_data_dev() { return rx_data_dev_; }
-  /// @brief Return a const reference to the underlying cudaq_ringbuffer_t.
+  // Return a const reference to the underlying cudaq_ringbuffer_t.
   const cudaq_ringbuffer_t &ringbuffer() const { return rb_; }
 
 private:
@@ -232,6 +230,9 @@ private:
 // Impl
 // ---------------------------------------------------------------------------
 
+// PIMPL implementation backing realtime_pipeline. Owns the
+// dispatcher-facing ring buffer state, worker resources, completion
+// accounting, and thread lifecycle machinery hidden from the public header.
 struct realtime_pipeline::Impl {
   pipeline_stage_config config;
 
@@ -290,6 +291,7 @@ struct realtime_pipeline::Impl {
   // Lifecycle
   // -----------------------------------------------------------------------
 
+  // Allocate mapped ring state and mailbox storage for the pipeline.
   void allocate(const pipeline_stage_config &cfg) {
     if (cfg.num_workers > 64) {
       throw std::invalid_argument("num_workers (" +
@@ -320,6 +322,8 @@ struct realtime_pipeline::Impl {
     slot_occupied.resize(cfg.num_slots, 0);
   }
 
+  // Build worker resources, configure the host dispatcher, and spawn all
+  // runtime threads.
   void start_threads() {
     if (!gpu_factory) {
       throw std::logic_error("gpu_factory must be set before calling start()");
@@ -441,6 +445,8 @@ struct realtime_pipeline::Impl {
     started = true;
   }
 
+  /// @brief Stop the dispatcher, worker, and consumer threads in dependency
+  /// order.
   void stop_all() {
     if (!started)
       return;
@@ -477,6 +483,7 @@ struct realtime_pipeline::Impl {
     started = false;
   }
 
+  /// @brief Release owned mapped-memory allocations after shutdown.
   void free_resources() {
     ring.reset();
     if (h_mailbox_bank) {
@@ -489,6 +496,11 @@ struct realtime_pipeline::Impl {
   // Worker loop (one per worker thread)
   // -----------------------------------------------------------------------
 
+  /// @brief Poll-mode CPU worker loop.
+  /// @param worker_id Zero-based worker index.
+  /// @details Each worker repeatedly polls its user-supplied cpu_stage
+  /// callback, writes the response status into the ring buffer when work
+  /// completes, and returns itself to the dispatcher's idle mask.
   void worker_loop(int worker_id) {
     auto *wr = &worker_resources[worker_id];
 
@@ -539,6 +551,11 @@ struct realtime_pipeline::Impl {
   // Consumer loop
   // -----------------------------------------------------------------------
 
+  /// @brief Harvest completed ring-buffer slots and invoke the completion
+  /// handler.
+  /// @details The consumer owns slot completion accounting and the ordering
+  /// required when clearing @c slot_occupied before resetting the shared ring
+  /// buffer flags on ARM and x86 hosts.
   void consumer_loop() {
     const uint32_t ns = static_cast<uint32_t>(config.num_slots);
 
@@ -616,37 +633,55 @@ struct realtime_pipeline::Impl {
 // realtime_pipeline public API
 // ---------------------------------------------------------------------------
 
+// Construction eagerly binds the active ring buffer and allocates the mapped
+// mailbox bank so callers can inspect ring addresses before start().
 realtime_pipeline::realtime_pipeline(const pipeline_stage_config &config)
     : impl_(std::make_unique<Impl>()) {
   impl_->allocate(config);
 }
 
+// Destruction is shutdown-safe: any still-running threads are joined before
+// mapped host/device resources are released.
 realtime_pipeline::~realtime_pipeline() {
   if (impl_->started)
     impl_->stop_all();
   impl_->free_resources();
 }
 
+// The factory is stored and invoked later during start() so each worker can
+// build stream-local graph state exactly once.
 void realtime_pipeline::set_gpu_stage(gpu_stage_factory factory) {
   impl_->gpu_factory = std::move(factory);
 }
 
+// Installing a CPU stage switches the pipeline into deferred completion mode,
+// where worker threads poll for GPU readiness and decide when to publish
+// tx_flags.
 void realtime_pipeline::set_cpu_stage(cpu_stage_callback callback) {
   impl_->cpu_stage = std::move(callback);
 }
 
+// The completion handler runs on the dedicated consumer thread after the
+// shared ring buffer indicates either success or CUDA error completion.
 void realtime_pipeline::set_completion_handler(completion_callback handler) {
   impl_->completion_handler = std::move(handler);
 }
 
+// Repeated calls after a successful start are ignored so callers can treat
+// start() as idempotent during setup sequences.
 void realtime_pipeline::start() {
   if (impl_->started)
     return;
   impl_->start_threads();
 }
 
+// stop() delegates to the internal shutdown path, which first allows
+// in-flight requests to drain and then tears down the dispatcher and worker
+// threads.
 void realtime_pipeline::stop() { impl_->stop_all(); }
 
+// The returned counters are sampled lock-free and may race with live updates,
+// but each field is individually coherent.
 realtime_pipeline::Stats realtime_pipeline::stats() const {
   return {impl_->total_submitted.load(std::memory_order_relaxed),
           impl_->total_completed.load(std::memory_order_relaxed),
@@ -654,11 +689,16 @@ realtime_pipeline::Stats realtime_pipeline::stats() const {
           impl_->backpressure_stalls.load(std::memory_order_relaxed)};
 }
 
+// In external-ring mode this exposes the caller-owned ring pointers; otherwise
+// it returns the internally allocated mapped ring buffer bases.
 realtime_pipeline::ring_buffer_bases
 realtime_pipeline::ringbuffer_bases() const {
   return {impl_->active_rb_.rx_data_host, impl_->active_rb_.rx_data};
 }
 
+// Deferred completions publish the slot host pointer into the tx_flags array
+// using release ordering so the consumer can safely observe the completed
+// response payload.
 void realtime_pipeline::complete_deferred(int slot) {
   uint8_t *slot_host = impl_->active_rb_.rx_data_host +
                        static_cast<size_t>(slot) * impl_->config.slot_size;
@@ -682,6 +722,8 @@ struct ring_buffer_injector::State {
   std::atomic<uint32_t> next_slot{0};
 };
 
+// The injector captures pointers into the pipeline's submission and
+// bookkeeping state so software tests can emulate FPGA DMA writes.
 ring_buffer_injector realtime_pipeline::create_injector() {
   if (impl_->external_ring_) {
     throw std::logic_error(
@@ -699,15 +741,25 @@ ring_buffer_injector realtime_pipeline::create_injector() {
   return ring_buffer_injector(std::move(s));
 }
 
+// Ownership of the shared injector state transfers with the move.
 ring_buffer_injector::ring_buffer_injector(std::unique_ptr<State> s)
     : state_(std::move(s)) {}
 
+// Destruction is trivial because the parent pipeline owns the ring buffer and
+// completion bookkeeping.
 ring_buffer_injector::~ring_buffer_injector() = default;
+// Moving an injector transfers the submission cursor and shared state handle
+// without touching the underlying ring buffer.
 ring_buffer_injector::ring_buffer_injector(ring_buffer_injector &&) noexcept =
     default;
+// Moving an injector transfers the submission cursor and shared state handle
+// without touching the underlying ring buffer.
 ring_buffer_injector &
 ring_buffer_injector::operator=(ring_buffer_injector &&) noexcept = default;
 
+// try_submit() attempts a single-slot claim using the shared round-robin
+// cursor and returns immediately if the chosen slot is still occupied or
+// another thread wins the cursor race.
 bool ring_buffer_injector::try_submit(uint32_t function_id, const void *payload,
                                       size_t payload_size,
                                       uint64_t request_id) {
@@ -732,6 +784,8 @@ bool ring_buffer_injector::try_submit(uint32_t function_id, const void *payload,
   return true;
 }
 
+// submit() spin-waits with CUDAQ_REALTIME_CPU_RELAX until a slot becomes
+// available or the producer stop flag is raised during shutdown.
 void ring_buffer_injector::submit(uint32_t function_id, const void *payload,
                                   size_t payload_size, uint64_t request_id) {
   while (!try_submit(function_id, payload, payload_size, request_id)) {
@@ -743,6 +797,8 @@ void ring_buffer_injector::submit(uint32_t function_id, const void *payload,
   }
 }
 
+// This mirrors the pipeline-wide counter used for throughput and backpressure
+// reporting.
 uint64_t ring_buffer_injector::backpressure_stalls() const {
   return state_->backpressure_stalls->load(std::memory_order_relaxed);
 }

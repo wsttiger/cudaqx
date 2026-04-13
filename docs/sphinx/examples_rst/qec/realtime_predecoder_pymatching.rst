@@ -209,7 +209,7 @@ Changing the Predecoder Model
 The ONNX model file for each configuration is set in the ``PipelineConfig``
 factory methods in
 ``libs/qec/unittests/realtime/predecoder_pipeline_common.h``. To use a
-different model, edit the ``onnx_filename`` field and rebuild:
+different model, edit the ``onnx_filename`` field and rebuild.
 
 .. code-block:: cpp
 

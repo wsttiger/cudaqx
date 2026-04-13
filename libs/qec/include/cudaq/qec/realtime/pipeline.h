@@ -87,7 +87,9 @@ struct gpu_worker_resources {
 };
 
 /// @brief Factory called once per worker during start().
-/// @return GPU resources for the given worker.
+/// @param worker_id Zero-based worker index assigned by the pipeline.
+/// @return GPU resources for the given worker. Any handles, callbacks, and
+/// user data returned here must remain valid until the pipeline stops.
 using gpu_stage_factory = std::function<gpu_worker_resources(int worker_id)>;
 
 // ---------------------------------------------------------------------------
@@ -117,8 +119,8 @@ struct cpu_stage_context {
 };
 
 /// @brief CPU stage callback type.
-///
-/// @return Number of bytes written into response_buffer.
+/// @param ctx Poll-mode view of the current worker state and response buffer.
+/// @return Number of bytes written into @p ctx.response_buffer.
 /// Return 0 if no GPU result is ready yet (poll again).
 /// Return DEFERRED_COMPLETION to release the worker immediately while
 /// deferring slot completion to a later complete_deferred() call.
@@ -147,6 +149,7 @@ struct completion {
 };
 
 /// @brief Callback invoked by the consumer thread for each completed request.
+/// @param c Metadata for the completed or errored request.
 using completion_callback = std::function<void(const completion &c)>;
 
 // ---------------------------------------------------------------------------
@@ -161,8 +164,11 @@ using completion_callback = std::function<void(const completion &c)>;
 /// pipeline is configured with an external ring buffer.
 class ring_buffer_injector {
 public:
+  /// @brief Destroy the injector state.
   ~ring_buffer_injector();
+  /// @brief Move-construct an injector.
   ring_buffer_injector(ring_buffer_injector &&) noexcept;
+  /// @brief Move-assign an injector.
   ring_buffer_injector &operator=(ring_buffer_injector &&) noexcept;
 
   ring_buffer_injector(const ring_buffer_injector &) = delete;
@@ -212,7 +218,11 @@ class realtime_pipeline {
 public:
   /// @brief Construct a pipeline and allocate ring buffer resources.
   /// @param config Stage configuration (slots, slot size, workers, etc.).
+  /// @note Construction allocates the backing ring buffer or binds the
+  /// caller-provided external ring so @ref ringbuffer_bases can be queried
+  /// before @ref start.
   explicit realtime_pipeline(const pipeline_stage_config &config);
+  /// @brief Stop the pipeline if needed and release owned resources.
   ~realtime_pipeline();
 
   realtime_pipeline(const realtime_pipeline &) = delete;
@@ -233,10 +243,15 @@ public:
   ///   completed or errored request.
   void set_completion_handler(completion_callback handler);
 
-  /// @brief Allocate resources, build dispatcher config, spawn all threads.
+  /// @brief Allocate resources, build dispatcher config, and spawn all threads.
+  /// @throws std::logic_error If the GPU stage factory was not registered.
+  /// @throws std::logic_error If GPU-only mode is requested with an external
+  /// ring buffer.
   void start();
 
   /// @brief Signal shutdown, join all threads, free resources.
+  /// @note Safe to call multiple times. Subsequent calls are no-ops once the
+  /// pipeline has fully stopped.
   void stop();
 
   /// @brief Create a software injector for testing without FPGA hardware.
@@ -278,6 +293,8 @@ public:
 
   /// @brief Return the host and device base addresses of the RX data ring.
   /// @return Struct containing both base pointers.
+  /// @note In external-ring mode these pointers are the caller-provided ring
+  /// addresses. In internal mode they refer to the owned mapped ring buffer.
   ring_buffer_bases ringbuffer_bases() const;
 
 private:
