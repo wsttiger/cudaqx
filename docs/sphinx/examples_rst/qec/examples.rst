@@ -12,3 +12,4 @@ Examples that illustrate how to use CUDA-QX for application development are avai
       Decoders <decoders.rst>
       Real-Time Decoding <realtime_decoding.rst>
       Realtime AI Predecoder Pipeline <realtime_predecoder_pymatching.rst>
+      Relay BP Decoding with CUDA-Q Realtime <realtime_relay_bp.rst>
