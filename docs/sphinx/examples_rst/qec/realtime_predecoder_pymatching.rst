@@ -28,7 +28,7 @@ Hardware
 
 - CUDA-capable GPU (NVIDIA Grace Blackwell / GB200 recommended)
 - Sufficient GPU memory for the TensorRT engine (the d13_r104 model requires
-  approximately 1 GB per predecoder instance)
+  approximately 11 MB per predecoder instance)
 
 Software
 ^^^^^^^^
