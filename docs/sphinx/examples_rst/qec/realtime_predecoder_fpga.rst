@@ -1,5 +1,5 @@
-Realtime AI Predecoder Pipeline with FPGA
-==========================================
+AI Predecoder with CUDA-Q Realtime (with FPGA Data Injection)
+=============================================================
 
 .. note::
 
@@ -120,6 +120,14 @@ The FPGA emulator is in the ``cuda-quantum`` repository:
 
 Data Directory Layout
 ---------------------
+
+.. note::
+
+  Exercising the following test program requires data files that are generated
+  using the Ising-Decoding repository. Please see the instructions in the
+  `Ising-Decoding README
+  <https://github.com/NVIDIA/Ising-Decoding/blob/main/README.md#generating-data-for-cuda-q-qec-realtime-predecoder-test-application>`_
+  for how to generate these files.
 
 The syndrome data directory follows the same format as the software benchmark.
 See :doc:`/examples_rst/qec/realtime_predecoder_pymatching` for the full

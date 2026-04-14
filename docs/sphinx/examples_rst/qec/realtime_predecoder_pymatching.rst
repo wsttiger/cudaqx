@@ -1,5 +1,5 @@
-Realtime AI Predecoder Pipeline
-================================
+AI Predecoder with CUDA-Q Realtime
+==================================
 
 .. note::
 
@@ -41,6 +41,14 @@ Software
   and installed to a known prefix (e.g. ``/tmp/cudaq-realtime``)
 
 Additional inputs:
+
+.. note::
+
+  Exercising the following test program requires data files that are generated
+  using the Ising-Decoding repository. Please see the instructions in the
+  `Ising-Decoding README
+  <https://github.com/NVIDIA/Ising-Decoding/blob/main/README.md#generating-data-for-cuda-q-qec-realtime-predecoder-test-application>`_
+  for how to generate these files.
 
 - **Predecoder ONNX model** (e.g. ``predecoder_memory_d13_T104_X.onnx``)
   placed under ``libs/qec/lib/realtime/``. A cached TensorRT ``.engine`` file
