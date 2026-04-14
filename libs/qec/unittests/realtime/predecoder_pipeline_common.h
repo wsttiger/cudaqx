@@ -296,7 +296,8 @@ struct PyMatchJob {
 /// @details The queue connects the pipeline CPU stage, which only harvests
 /// completed predecoder outputs, to a separate pool of PyMatching workers that
 /// can finish decoding asynchronously and later call
-/// @ref cudaq::qec::realtime::experimental::realtime_pipeline::complete_deferred.
+/// @ref
+/// cudaq::qec::realtime::experimental::realtime_pipeline::complete_deferred.
 class PyMatchQueue {
 public:
   /// @brief Enqueue a job and wake one waiting worker.
