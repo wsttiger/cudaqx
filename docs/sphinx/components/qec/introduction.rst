@@ -1056,6 +1056,9 @@ Additional quantum gates can be applied, and only when `get_corrections` is call
 For detailed information on real-time decoding, see:
 
 * :doc:`/examples_rst/qec/realtime_decoding` - Complete Guide with Examples
+* :doc:`/examples_rst/qec/realtime_predecoder_pymatching` - Realtime AI Predecoder Pipeline
+* :doc:`/examples_rst/qec/realtime_predecoder_fpga` - Realtime AI Predecoder Pipeline with FPGA
+* :ref:`realtime_pipeline_api` - Realtime Pipeline C++ API
 * :doc:`/examples_rst/qec/realtime_relay_bp` - Relay BP Decoding with CUDA-Q Realtime
 * :doc:`/api/qec/cpp_api` - C++ API Reference (see Real-Time Decoding section)
 * :doc:`/api/qec/python_api` - Python API Reference (see Real-Time Decoding section)

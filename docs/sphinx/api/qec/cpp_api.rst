@@ -70,6 +70,8 @@ Real-Time Decoding
 
 .. include:: cpp_realtime_decoding_api.rst
 
+.. include:: realtime_pipeline_api.rst
+
 .. _parity_check_matrix_utilities:
 
 Parity Check Matrix Utilities
