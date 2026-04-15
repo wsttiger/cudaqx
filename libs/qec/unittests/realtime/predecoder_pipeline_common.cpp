@@ -16,6 +16,79 @@
 
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
+
+#include <nlohmann/json.hpp>
+
+// =============================================================================
+// PipelineConfig::from_json
+// =============================================================================
+
+PipelineConfig PipelineConfig::from_json(const std::string &json_str) {
+  try {
+    auto j = nlohmann::json::parse(json_str);
+    PipelineConfig cfg;
+    cfg.label = j.value("label", std::string("custom"));
+    cfg.distance = j.at("distance").get<int>();
+    cfg.num_rounds = j.at("num_rounds").get<int>();
+    cfg.onnx_filename = j.at("onnx_filename").get<std::string>();
+    cfg.num_predecoders = j.at("num_predecoders").get<int>();
+    cfg.num_workers = j.at("num_workers").get<int>();
+    cfg.num_decode_workers = j.at("num_decode_workers").get<int>();
+    return cfg;
+  } catch (const nlohmann::json::exception &e) {
+    throw std::runtime_error(std::string("PipelineConfig JSON error: ") +
+                             e.what());
+  }
+}
+
+// =============================================================================
+// PipelineConfig::from_name
+// =============================================================================
+
+std::optional<PipelineConfig>
+PipelineConfig::from_name(const std::string &name) {
+  if (name == "d7")
+    return d7_r7();
+  if (name == "d13")
+    return d13_r13();
+  if (name == "d13_r104")
+    return d13_r104();
+  if (name == "d21")
+    return d21_r21();
+  if (name == "d21_r42")
+    return d21_r42();
+  if (name == "d31")
+    return d31_r31();
+  return std::nullopt;
+}
+
+// =============================================================================
+// PipelineConfig::apply_cli_overrides
+// =============================================================================
+
+void PipelineConfig::apply_cli_overrides(int argc, char *argv[]) {
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    auto val_of = [&](const std::string &prefix) -> std::string {
+      return arg.substr(prefix.size());
+    };
+    if (arg.find("--distance=") == 0)
+      distance = std::stoi(val_of("--distance="));
+    else if (arg.find("--num-rounds=") == 0)
+      num_rounds = std::stoi(val_of("--num-rounds="));
+    else if (arg.find("--onnx-filename=") == 0)
+      onnx_filename = val_of("--onnx-filename=");
+    else if (arg.find("--num-predecoders=") == 0)
+      num_predecoders = std::stoi(val_of("--num-predecoders="));
+    else if (arg.find("--num-workers=") == 0)
+      num_workers = std::stoi(val_of("--num-workers="));
+    else if (arg.find("--num-decode-workers=") == 0)
+      num_decode_workers = std::stoi(val_of("--num-decode-workers="));
+    else if (arg.find("--label=") == 0)
+      label = val_of("--label=");
+  }
+}
 
 // =============================================================================
 // Pre-launch DMA copy callback

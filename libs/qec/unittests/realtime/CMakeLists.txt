@@ -47,6 +47,7 @@ if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_PARSER_LIBRARY
     ${CMAKE_CURRENT_SOURCE_DIR}/../../include
     ${CMAKE_SOURCE_DIR}/libs/core/include
     ${CUDAQ_REALTIME_INCLUDE_DIR}
+    ${CMAKE_BINARY_DIR}/_deps/json-src/include
   )
 
   target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
@@ -124,6 +125,7 @@ if (GPU_ROCE_TRANSCEIVER_LIB AND CUDAQ_REALTIME_INCLUDE_DIR AND
     ${CMAKE_SOURCE_DIR}/libs/core/include
     ${CUDAQ_REALTIME_INCLUDE_DIR}
     ${HOLOSCAN_SENSOR_BRIDGE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/_deps/json-src/include
   )
 
   target_link_libraries(hololink_predecoder_bridge PRIVATE
