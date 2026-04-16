@@ -18,30 +18,6 @@
 #include <iostream>
 #include <stdexcept>
 
-#include <nlohmann/json.hpp>
-
-// =============================================================================
-// PipelineConfig::from_json
-// =============================================================================
-
-PipelineConfig PipelineConfig::from_json(const std::string &json_str) {
-  try {
-    auto j = nlohmann::json::parse(json_str);
-    PipelineConfig cfg;
-    cfg.label = j.value("label", std::string("custom"));
-    cfg.distance = j.at("distance").get<int>();
-    cfg.num_rounds = j.at("num_rounds").get<int>();
-    cfg.onnx_filename = j.at("onnx_filename").get<std::string>();
-    cfg.num_predecoders = j.at("num_predecoders").get<int>();
-    cfg.num_workers = j.at("num_workers").get<int>();
-    cfg.num_decode_workers = j.at("num_decode_workers").get<int>();
-    return cfg;
-  } catch (const nlohmann::json::exception &e) {
-    throw std::runtime_error(std::string("PipelineConfig JSON error: ") +
-                             e.what());
-  }
-}
-
 // =============================================================================
 // PipelineConfig::from_name
 // =============================================================================
