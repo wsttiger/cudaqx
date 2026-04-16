@@ -51,6 +51,7 @@ if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND TENSORRT_ONNX_PARSER_LIBRARY
 
   target_link_libraries(test_realtime_predecoder_w_pymatching PRIVATE
     CUDA::cudart
+    CUDA::cuda_driver
     ${TENSORRT_LIBRARY}
     ${TENSORRT_ONNX_PARSER_LIBRARY}
     ${CUDAQ_REALTIME_LIBRARY}
