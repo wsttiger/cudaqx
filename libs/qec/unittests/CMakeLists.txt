@@ -305,7 +305,6 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       target_link_libraries(test_realtime_pipeline PRIVATE
         GTest::gtest_main
         CUDA::cudart
-        CUDA::cuda_driver
         ${TENSORRT_LIBRARY_FOR_PIPELINE}
         ${TENSORRT_ONNX_PARSER_FOR_PIPELINE}
         ${CUDAQ_REALTIME_LIBRARY}

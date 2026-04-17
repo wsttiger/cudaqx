@@ -167,20 +167,21 @@ int main(int argc, char *argv[]) {
         model_path, d_mailbox_bank + i, 1, save_path);
     cudaStream_t cap;
     BRIDGE_CUDA_CHECK(cudaStreamCreate(&cap));
-    // Intentionally pass collect_resources=false even if the user
-    // requested --print-graph-resources: CUDA driver-API introspection
-    // during graph capture perturbs the primary context in ways that break
-    // DOCA/Hololink GPU-RoCE on the FPGA bridge path.  Use the benchmark
-    // (test_realtime_predecoder_w_pymatching) with --print-graph-resources
-    // for graph inspection.
-    pd->capture_graph(cap, false, /*collect_resources=*/false);
+    // Do not retain the captured graph: the bridge must not invoke
+    // CUDA driver-API graph introspection (cuGraphKernelNodeGetParams,
+    // cuFuncGetAttribute, ...), because those calls perturb the primary
+    // context in ways that break DOCA/Hololink GPU-RoCE on the FPGA
+    // bridge path.  Use the benchmark (test_realtime_predecoder_w_pymatching)
+    // with --print-graph-resources for graph inspection.
+    pd->capture_graph(cap, false, /*save_graph=*/false);
     BRIDGE_CUDA_CHECK(cudaStreamDestroy(cap));
     predecoders.push_back(std::move(pd));
   }
   if (print_graph_resources) {
     std::cerr << "[WARN] --print-graph-resources is not supported by the "
-                 "FPGA bridge (introspection breaks DOCA GPU-RoCE). "
-                 "Use the software benchmark to inspect graph resources."
+                 "FPGA bridge (driver-API graph introspection breaks DOCA "
+                 "GPU-RoCE). Use the software benchmark to inspect graph "
+                 "resources."
               << std::endl;
   }
 

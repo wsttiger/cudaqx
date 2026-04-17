@@ -32,6 +32,7 @@
 #include <unistd.h>
 
 #include "cudaq/qec/realtime/ai_decoder_service.h"
+#include "cudaq/qec/realtime/graph_resources.h"
 #include "cudaq/realtime/daemon/dispatcher/host_dispatcher.h"
 
 #define CUDA_CHECK(call)                                                       \
@@ -183,17 +184,21 @@ int main(int argc, char *argv[]) {
 
     cudaStream_t capture_stream;
     CUDA_CHECK(cudaStreamCreate(&capture_stream));
-    // Only collect resources on predecoder 0 when requested; skipping it on
-    // the others avoids the cost of graph introspection on every worker.
+    // Only retain the captured-graph clone on predecoder 0 when resource
+    // inspection is requested; skipping it on the others avoids cloning
+    // the graph on every worker.
     pd->capture_graph(capture_stream, false,
-                      /*collect_resources=*/print_graph_resources && i == 0);
+                      /*save_graph=*/print_graph_resources && i == 0);
     CUDA_CHECK(cudaStreamDestroy(capture_stream));
 
     std::cout << "[Setup] Predecoder " << i << " (GPU " << gpu
               << "): input_size=" << pd->get_input_size()
               << " output_size=" << pd->get_output_size() << "\n";
     if (print_graph_resources && i == 0) {
-      pd->print_graph_resources(std::cout);
+      auto info = cudaq::qec::realtime::experimental::collect_graph_resources(
+          pd->get_captured_graph());
+      cudaq::qec::realtime::experimental::print_graph_resources(std::cout,
+                                                                info);
     }
     predecoders.push_back(std::move(pd));
   }
