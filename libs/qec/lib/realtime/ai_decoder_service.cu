@@ -109,8 +109,10 @@ static int trt_dtype_bits(nvinfer1::DataType dtype) {
     return 8;
   case nvinfer1::DataType::kINT4:
     return 4;
+#if NV_TENSORRT_VERSION >= NV_TENSORRT_VERSION_INT(10, 8, 0)
   case nvinfer1::DataType::kFP4:
     return 4;
+#endif
   default:
     return 32;
   }
@@ -218,9 +220,11 @@ scan_network_for_quant_info(const nvinfer1::INetworkDefinition &network) {
       case nvinfer1::DataType::kFP8:
         info.has_fp8 = true;
         break;
+#if NV_TENSORRT_VERSION >= NV_TENSORRT_VERSION_INT(10, 8, 0)
       case nvinfer1::DataType::kFP4:
         info.has_fp4 = true;
         break;
+#endif
       case nvinfer1::DataType::kINT8:
       case nvinfer1::DataType::kINT4:
         info.has_int8 = true;
