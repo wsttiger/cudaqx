@@ -1,5 +1,5 @@
 /****************************************************************-*- C++ -*-****
- * Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                  *
+ * Copyright (c) 2024 - 2026 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
  * This source code and the accompanying materials are made available under    *
@@ -10,6 +10,6 @@
 
 namespace nb = nanobind;
 
-namespace cudaq::qec::decoding {
-void bindDecoding(nb::module_ &mod);
-} // namespace cudaq::qec::decoding
+namespace cudaq::qec::dem_sampler {
+void bindDemSampling(nb::module_ &mod);
+} // namespace cudaq::qec::dem_sampler
