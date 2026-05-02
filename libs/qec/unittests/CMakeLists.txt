@@ -449,6 +449,7 @@ endif()
 add_subdirectory(backend-specific)
 add_subdirectory(realtime)
 add_subdirectory(decoders/pymatching)
+add_subdirectory(decoders/chromobius)
 
 # Hololink bridge tools (FPGA playback + graph-launched QLDPC bridge)
 if(CUDAQX_QEC_ENABLE_HOLOLINK_TOOLS)
