@@ -325,6 +325,76 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
       gtest_discover_tests(test_realtime_pipeline
         TEST_PREFIX "test_realtime_pipeline."
       )
+
+      find_package(Python3 COMPONENTS Interpreter)
+      if(Python3_FOUND)
+        set(_ai_decoder_quantized_onnx_dir
+          "${CMAKE_CURRENT_BINARY_DIR}/ai_decoder_quantized_onnx")
+        set(_ai_decoder_int8_onnx
+          "${_ai_decoder_quantized_onnx_dir}/qdq_int8.onnx")
+        set(_ai_decoder_fp8_onnx
+          "${_ai_decoder_quantized_onnx_dir}/qdq_fp8.onnx")
+
+        add_custom_command(
+          OUTPUT
+            "${_ai_decoder_int8_onnx}"
+            "${_ai_decoder_fp8_onnx}"
+          COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/realtime/generate_ai_decoder_quantized_onnx.py"
+            --out-dir "${_ai_decoder_quantized_onnx_dir}"
+          DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/realtime/generate_ai_decoder_quantized_onnx.py"
+          VERBATIM
+        )
+        add_custom_target(generate_ai_decoder_quantized_onnx
+          DEPENDS "${_ai_decoder_int8_onnx}" "${_ai_decoder_fp8_onnx}")
+
+        add_executable(test_ai_decoder_quantized_onnx
+          ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/ai_decoder_service.cu
+          ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_decoder_quantized_onnx.cu
+        )
+
+        set_target_properties(test_ai_decoder_quantized_onnx PROPERTIES
+          CUDA_SEPARABLE_COMPILATION ON
+          CUDA_RESOLVE_DEVICE_SYMBOLS ON
+          CUDA_STANDARD 17
+          LINKER_LANGUAGE CUDA
+        )
+
+        target_compile_definitions(test_ai_decoder_quantized_onnx PRIVATE
+          INT8_QDQ_ONNX_PATH="${_ai_decoder_int8_onnx}"
+          FP8_QDQ_ONNX_PATH="${_ai_decoder_fp8_onnx}"
+        )
+
+        target_include_directories(test_ai_decoder_quantized_onnx PRIVATE
+          ${_cuda_cccl_include_pipe}
+          ${CUDAToolkit_INCLUDE_DIRS}
+          ${TENSORRT_INCLUDE_DIR_FOR_PIPELINE}
+          ${CMAKE_CURRENT_SOURCE_DIR}/../include
+          ${CMAKE_SOURCE_DIR}/libs/core/include
+          ${CUDAQ_REALTIME_INCLUDE_DIR}
+        )
+
+        target_link_libraries(test_ai_decoder_quantized_onnx PRIVATE
+          GTest::gtest_main
+          CUDA::cudart
+          ${TENSORRT_LIBRARY_FOR_PIPELINE}
+          ${TENSORRT_ONNX_PARSER_FOR_PIPELINE}
+          ${CUDAQ_REALTIME_LIBRARY}
+          ${CUDAQ_REALTIME_DISPATCH_LIBRARY}
+          ${CUDAQ_REALTIME_HOST_DISPATCH_LIBRARY}
+          cudaq-realtime-pipeline
+        )
+        set_target_properties(test_ai_decoder_quantized_onnx PROPERTIES
+          BUILD_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+          INSTALL_RPATH "${CUDAQ_REALTIME_LIB_DIR};${CMAKE_BINARY_DIR}/lib"
+        )
+        add_dependencies(test_ai_decoder_quantized_onnx
+          generate_ai_decoder_quantized_onnx)
+        add_dependencies(CUDAQXQECUnitTests test_ai_decoder_quantized_onnx)
+        gtest_discover_tests(test_ai_decoder_quantized_onnx
+          TEST_PREFIX "test_ai_decoder_quantized_onnx.")
+      endif()
     else()
       message(WARNING "TensorRT not found. Skipping test_realtime_pipeline (needs NvInfer.h + TRT libs for compile/link).")
     endif()
