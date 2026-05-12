@@ -211,11 +211,12 @@ create_test_decoder_config_trt(int id) {
   trt_config.batch_size = 4;
   trt_config.use_cuda_graph = false;
   trt_config.global_decoder = "pymatching";
-  trt_config.global_decoder_params =
+  auto pymatching_params =
       cudaq::qec::decoding::config::pymatching_decoder_config();
-  trt_config.global_decoder_params->merge_strategy = "smallest_weight";
-  trt_config.global_decoder_params->error_rate_vec =
+  pymatching_params.merge_strategy = "smallest_weight";
+  pymatching_params.error_rate_vec =
       std::vector<double>(config.block_size, 0.1);
+  trt_config.global_decoder_params = pymatching_params;
 
   return config;
 }
@@ -225,6 +226,12 @@ TEST(DecoderYAMLTest, TrtDecoderConfigRoundTrip) {
   multi_config.decoders.push_back(create_test_decoder_config_trt(0));
 
   test_decoder_yaml_roundtrip(multi_config);
+  const auto &trt_config =
+      std::get<cudaq::qec::decoding::config::trt_decoder_config>(
+          multi_config.decoders[0].decoder_custom_args);
+  EXPECT_TRUE(std::holds_alternative<
+              cudaq::qec::decoding::config::pymatching_decoder_config>(
+      trt_config.global_decoder_params));
 }
 
 TEST(DecoderYAMLTest, TrtDecoderConfigToHeterogeneousMap) {

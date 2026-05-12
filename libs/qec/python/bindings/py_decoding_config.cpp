@@ -149,8 +149,25 @@ void bindDecodingConfig(nb::module_ &mod) {
       .def_rw("batch_size", &trt_decoder_config::batch_size)
       .def_rw("use_cuda_graph", &trt_decoder_config::use_cuda_graph)
       .def_rw("global_decoder", &trt_decoder_config::global_decoder)
-      .def_rw("global_decoder_params",
-              &trt_decoder_config::global_decoder_params)
+      .def_prop_rw(
+          "global_decoder_params",
+          [](const trt_decoder_config &self)
+              -> std::optional<pymatching_decoder_config> {
+            if (std::holds_alternative<pymatching_decoder_config>(
+                    self.global_decoder_params)) {
+              return std::get<pymatching_decoder_config>(
+                  self.global_decoder_params);
+            }
+            return std::nullopt;
+          },
+          [](trt_decoder_config &self,
+             std::optional<pymatching_decoder_config> value) {
+            if (value.has_value()) {
+              self.global_decoder_params = value.value();
+            } else {
+              self.global_decoder_params = std::monostate();
+            }
+          })
       .def("to_heterogeneous_map", &trt_decoder_config::to_heterogeneous_map,
            nb::rv_policy::move)
       .def_static("from_heterogeneous_map",
