@@ -13,7 +13,7 @@ on:
         - 'Debug'
       version:
         type: string
-        description: Version number to create wheels with (e.g. 0.2.0). Defaults to 0.99.99 if unspecified
+        description: Version number to create wheels with (e.g. 0.2.0). Defaults to 0.14.99 if unspecified
         required: false
       cudaq_wheels:
         type: choice
@@ -51,7 +51,7 @@ jobs:
     # FIXME: there is no guarantee that this CUDA-Q image aligns with the CUDA-Q
     # commit that we are trying to align with.
     container:
-      image: ghcr.io/nvidia/cuda-quantum-devdeps:manylinux-${{ matrix.platform }}-cu${{ matrix.cuda_version }}-gcc11-main
+      image: ghcr.io/nvidia/cuda-quantum-devdeps:manylinux-${{ matrix.platform }}-cu${{ matrix.cuda_version }}-gcc12-main
       options: --ulimit nofile=1048576:1048576
     permissions: write-all
     strategy:
@@ -61,8 +61,8 @@ jobs:
         platform: ['amd64', 'arm64']
         cuda_version: ['12.6', '13.0']
         toolchain:
-          - cc: gcc-11
-            cxx: g++-11
+          - cc: gcc-12
+            cxx: g++-12
             build-type: Release
 
     steps:
@@ -167,7 +167,7 @@ jobs:
               --build-type ${{ inputs.build_type }} \
               --python-version ${{ matrix.python }} \
               --tensorrt-path /trt_download/TensorRT-${{ steps.config.outputs.tensorrt_version }} \
-              --version ${{ inputs.version || '0.99.99' }}
+              --version ${{ inputs.version || '0.14.99' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -199,7 +199,7 @@ jobs:
       - name: Build CUDA-QX Meta Packages
         shell: bash
         run: |
-          bash scripts/ci/build_metapackages.sh ${{ inputs.version || '0.99.99' }}
+          bash scripts/ci/build_metapackages.sh ${{ inputs.version || '0.14.99' }}
           find libs -name dist | xargs ls -la
           mkdir -p /metapackages
           mv libs/{qec,solvers}/python/metapackages/dist/* /metapackages/
@@ -355,8 +355,8 @@ jobs:
              ${{ matrix.python }} \
              ${{ matrix.platform }} \
              ${{ matrix.cuda_version }} \
-             ${{ inputs.cudaq_wheels == 'Custom' && '0.99.99' || 'SKIP' }} \
-             ${{ inputs.version || '0.99.99' }}
+             ${{ inputs.cudaq_wheels == 'Custom' && '0.14.99' || 'SKIP' }} \
+             ${{ inputs.version || '0.14.99' }}
   
   test-wheels-gpu:
     name: Test CUDA-QX wheels (GPU)
@@ -471,8 +471,8 @@ jobs:
              ${{ matrix.python }} \
              ${{ matrix.runner.arch }} \
              ${{ matrix.cuda_version }} \
-             ${{ inputs.cudaq_wheels == 'Custom' && '0.99.99' || 'SKIP' }} \
-             ${{ inputs.version || '0.99.99' }}
+             ${{ inputs.cudaq_wheels == 'Custom' && '0.14.99' || 'SKIP' }} \
+             ${{ inputs.version || '0.14.99' }}
 
       # - name: Upload any core files
       #   if: success() || failure()

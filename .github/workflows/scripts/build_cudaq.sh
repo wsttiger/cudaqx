@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # ============================================================================ #
 # Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                   #
@@ -11,6 +11,8 @@
 # ==============================================================================
 # Handling options
 # ==============================================================================
+
+set -eo pipefail
 
 show_help() {
     echo "Usage: $0 [options]"
@@ -79,7 +81,7 @@ export CUDA_VERSION=${cuda_version}
 export CUDAQ_INSTALL_PREFIX=/usr/local/cudaq
 
 # We need to use a newer toolchain because CUDA-QX libraries rely on c++20
-source /opt/rh/gcc-toolset-11/enable
+source /opt/rh/gcc-toolset-12/enable
 
 export CC=gcc
 export CXX=g++
@@ -99,35 +101,35 @@ echo "Building MLIR bindings for ${python}" && \
     Python3_EXECUTABLE="$(which ${python})" \
     LLVM_PROJECTS='clang;mlir;python-bindings' \
     LLVM_CMAKE_CACHE=/cmake/caches/LLVM.cmake LLVM_SOURCE=/llvm-project \
-    bash /scripts/build_llvm.sh -c Release -v 
+    bash scripts/build_llvm.sh -c Release -v
 
 # ==============================================================================
 # Building CUDA-Q
 # ==============================================================================
 
 CUDAQ_PATCH='diff --git a/CMakeLists.txt b/CMakeLists.txt
-index dc906f615..5d591ea06 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -682,7 +682,7 @@ if(CUDAQ_BUILD_TESTS)
+@@ -709,8 +709,8 @@ if(CUDAQ_BUILD_TESTS)
  endif()
 
  if (CUDAQ_ENABLE_PYTHON)
 -  find_package(Python 3 COMPONENTS Interpreter Development)
+-  find_package(Python3 COMPONENTS Interpreter Development)
 +  find_package(Python 3 COMPONENTS Interpreter Development.Module)
++  find_package(Python3 COMPONENTS Interpreter Development.Module)
 
    # Apply specific patch to pybind11 for our documentation.
    # Only apply the patch if not already applied.
 diff --git a/python/runtime/cudaq/domains/plugins/CMakeLists.txt b/python/runtime/cudaq/domains/plugins/CMakeLists.txt
-index 675919e25..7de85b815 100644
 --- a/python/runtime/cudaq/domains/plugins/CMakeLists.txt
 +++ b/python/runtime/cudaq/domains/plugins/CMakeLists.txt
-@@ -31,7 +31,7 @@ else()
-   endif()
+@@ -33,7 +33,7 @@ if (SKBUILD)
+ else()
    target_link_libraries(cudaq-pyscf
      PRIVATE
--      Python::Python pybind11::pybind11
-+      Python::Module pybind11::pybind11
+-      nanobind-static Python3::Python
++      nanobind-static Python3::Module
        cudaq-chemistry cudaq-operator cudaq cudaq-py-utils cudaq-platform-default)
  endif()
 '

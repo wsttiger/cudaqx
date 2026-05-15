@@ -132,7 +132,7 @@ if $devdeps; then
   PLAT_STR="--plat manylinux_2_34_x86_64"
 else
   # We need to use a newer toolchain because CUDA-QX libraries rely on c++20
-  source /opt/rh/gcc-toolset-11/enable
+  source /opt/rh/gcc-toolset-12/enable
 fi
 
 export CC=gcc
@@ -140,6 +140,29 @@ export CXX=g++
 export SETUPTOOLS_SCM_PRETEND_VERSION=$wheels_version
 export CUDAQX_QEC_VERSION=$wheels_version
 export CUDAQX_SOLVERS_VERSION=$wheels_version
+
+# ==============================================================================
+# cuStabilizer / cuQuantum SDK location
+# ==============================================================================
+# Install the cuquantum-python pip wheel into the outer interpreter (it bundles
+# the cuStabilizer headers and library).  `python -m build` later spawns an
+# isolated venv whose Python_EXECUTABLE has no cuquantum-python wheel
+# installed, so the Python probe in cmake/Modules/FindcuStabilizer.cmake cannot
+# find the library on its own.  Resolve the wheel's install prefix here and
+# export CUQUANTUM_ROOT so the isolated build env's CMake invocation picks it
+# up.  Honors a pre-set CUQUANTUM_ROOT (e.g. for system installs).
+if [ -z "$CUQUANTUM_ROOT" ]; then
+  $python -m pip install --upgrade "cuquantum-python-cu${cuda_version}>=26.3.0"
+  CUQUANTUM_ROOT=$($python -m pip show "custabilizer-cu${cuda_version}" 2>/dev/null \
+                   | sed -nE 's|^Location: (.*)|\1/cuquantum|p')
+fi
+if [ -z "$CUQUANTUM_ROOT" ] || [ ! -f "$CUQUANTUM_ROOT/include/custabilizer.h" ]; then
+  echo "ERROR: could not locate cuStabilizer headers via custabilizer-cu${cuda_version}." >&2
+  echo "       Make sure cuquantum-python-cu${cuda_version} is installed for $python." >&2
+  exit 1
+fi
+export CUQUANTUM_ROOT
+echo "Using CUQUANTUM_ROOT=$CUQUANTUM_ROOT"
 
 # ==============================================================================
 # QEC library
@@ -150,7 +173,7 @@ cp pyproject.toml.cu${cuda_version} pyproject.toml
 
 SKBUILD_CMAKE_ARGS="-DCUDAQ_DIR=$cudaq_prefix/lib/cmake/cudaq;-DTENSORRT_ROOT=$tensorrt_path"
 if ! $devdeps; then
-  SKBUILD_CMAKE_ARGS+=";-DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/opt/rh/gcc-toolset-11/root/usr/lib/gcc/${ARCH}-redhat-linux/11/"
+  SKBUILD_CMAKE_ARGS+=";-DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/opt/rh/gcc-toolset-12/root/usr/lib/gcc/${ARCH}-redhat-linux/12/"
 fi
 SKBUILD_CMAKE_ARGS+=";-DCMAKE_BUILD_TYPE=$build_type"
 export SKBUILD_CMAKE_ARGS
@@ -163,6 +186,7 @@ LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$(pwd)/_skbuild/lib:$tensorrt_path/lib" \
 $python -m auditwheel -v repair dist/*.whl $CUDAQ_EXCLUDE_LIST \
   --wheel-dir /wheels \
   --exclude libcudart.so.${cuda_version} \
+  --exclude libcustabilizer.so.0 \
   --exclude libnvinfer.so.10 \
   --exclude libnvonnxparser.so.10 \
   --exclude libcudaq-qec.so \
@@ -178,7 +202,7 @@ cp pyproject.toml.cu${cuda_version} pyproject.toml
 
 SKBUILD_CMAKE_ARGS="-DCUDAQ_DIR=$cudaq_prefix/lib/cmake/cudaq"
 if ! $devdeps; then
-  SKBUILD_CMAKE_ARGS+=";-DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/opt/rh/gcc-toolset-11/root/usr/lib/gcc/${ARCH}-redhat-linux/11/;"
+  SKBUILD_CMAKE_ARGS+=";-DCMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN=/opt/rh/gcc-toolset-12/root/usr/lib/gcc/${ARCH}-redhat-linux/12/;"
 fi
 SKBUILD_CMAKE_ARGS+=";-DCMAKE_BUILD_TYPE=$build_type" \
 export SKBUILD_CMAKE_ARGS

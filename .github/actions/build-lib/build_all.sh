@@ -1,5 +1,7 @@
 #!/bin/sh
 
+. "$(dirname "$0")/setup_custabilizer.sh"
+
 _rt_flag=""
 if [ -n "$CUDAQ_REALTIME_ROOT" ]; then
   _rt_flag="-DCUDAQ_REALTIME_ROOT=$CUDAQ_REALTIME_ROOT"
@@ -7,8 +9,8 @@ fi
 
 cmake -S . -B "$1" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=gcc-11 \
-  -DCMAKE_CXX_COMPILER=g++-11 \
+  -DCMAKE_C_COMPILER=gcc-12 \
+  -DCMAKE_CXX_COMPILER=g++-12 \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DCUDAQ_DIR=/cudaq-install/lib/cmake/cudaq/ \
@@ -18,4 +20,4 @@ cmake -S . -B "$1" \
   -DCMAKE_INSTALL_PREFIX="$2" \
   $_rt_flag
 
-cmake --build "$1" --target install
+cmake --build "$1" --target install -j 4
