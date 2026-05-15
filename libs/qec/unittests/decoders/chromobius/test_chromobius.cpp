@@ -46,7 +46,8 @@ cudaqx::heterogeneous_map make_params() {
 } // namespace
 
 TEST(ChromobiusDecoder, checkAllZeroSyndrome) {
-  auto decoder = cudaq::qec::decoder::get("chromobius", make_H(), make_params());
+  auto decoder =
+      cudaq::qec::decoder::get("chromobius", make_H(), make_params());
 
   std::vector<cudaq::qec::float_t> syndrome = {0, 0, 0, 0};
   auto result = decoder->decode(syndrome);
@@ -59,7 +60,8 @@ TEST(ChromobiusDecoder, checkAllZeroSyndrome) {
 }
 
 TEST(ChromobiusDecoder, checkKnownObservableFlip) {
-  auto decoder = cudaq::qec::decoder::get("chromobius", make_H(), make_params());
+  auto decoder =
+      cudaq::qec::decoder::get("chromobius", make_H(), make_params());
 
   std::vector<cudaq::qec::float_t> syndrome = {1, 0, 0, 0};
   auto result = decoder->decode(syndrome);

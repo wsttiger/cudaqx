@@ -7,8 +7,8 @@
  ******************************************************************************/
 
 #include "chromobius/decode/decoder.h"
-#include "cudaq/qec/decoder.h"
 #include "stim.h"
+#include "cudaq/qec/decoder.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -75,15 +75,15 @@ public:
       throw std::runtime_error("Chromobius decoder requires a rank-2 tensor H");
 
     ::chromobius::DecoderConfigOptions options;
-    options.drop_mobius_errors_involving_remnant_errors = get_bool_param(
-        params, "drop_mobius_errors_involving_remnant_errors",
-        options.drop_mobius_errors_involving_remnant_errors);
-    options.ignore_decomposition_failures = get_bool_param(
-        params, "ignore_decomposition_failures",
-        options.ignore_decomposition_failures);
-    options.include_coords_in_mobius_dem = get_bool_param(
-        params, "include_coords_in_mobius_dem",
-        options.include_coords_in_mobius_dem);
+    options.drop_mobius_errors_involving_remnant_errors =
+        get_bool_param(params, "drop_mobius_errors_involving_remnant_errors",
+                       options.drop_mobius_errors_involving_remnant_errors);
+    options.ignore_decomposition_failures =
+        get_bool_param(params, "ignore_decomposition_failures",
+                       options.ignore_decomposition_failures);
+    options.include_coords_in_mobius_dem =
+        get_bool_param(params, "include_coords_in_mobius_dem",
+                       options.include_coords_in_mobius_dem);
 
     return_weight = get_bool_param(params, "return_weight", false);
 
@@ -159,6 +159,6 @@ public:
       })
 };
 
-CUDAQ_REGISTER_TYPE(chromobius)
+CUDAQ_EXT_PT_REGISTER_TYPE(chromobius)
 
 } // namespace cudaq::qec
