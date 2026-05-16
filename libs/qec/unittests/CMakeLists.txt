@@ -342,7 +342,7 @@ if(CUDAQ_REALTIME_ROOT AND CMAKE_CUDA_COMPILER)
 
       add_executable(test_ai_decoder_quantized_onnx
         ${CMAKE_CURRENT_SOURCE_DIR}/../lib/realtime/ai_decoder_service.cu
-        ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_decoder_quantized_onnx.cu
+        ${CMAKE_CURRENT_SOURCE_DIR}/test_ai_decoder_quantized_onnx.cpp
       )
 
       set_target_properties(test_ai_decoder_quantized_onnx PROPERTIES
