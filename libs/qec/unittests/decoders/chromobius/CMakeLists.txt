@@ -33,7 +33,7 @@ gtest_discover_tests(test_chromobius)
 # Correctness test using reference data copied from upstream Chromobius.
 add_executable(test_chromobius_correctness test_chromobius_correctness.cpp)
 target_compile_definitions(test_chromobius_correctness PRIVATE
-  CHROMOBIUS_REFERENCE_DATA_DIR="${CMAKE_SOURCE_DIR}/libs/qec/test_data/chromobius")
+  CHROMOBIUS_REFERENCE_DATA_DIR="${CMAKE_CURRENT_LIST_DIR}/../../../test_data/chromobius")
 target_link_libraries(test_chromobius_correctness PRIVATE
   GTest::gtest_main cudaq-qec cudaq::cudaq)
 add_dependencies(test_chromobius_correctness cudaq-qec-chromobius)

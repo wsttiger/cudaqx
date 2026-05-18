@@ -18,8 +18,8 @@ def _reference_dir() -> Path:
 
 
 def _read_dem() -> str:
-    return (_reference_dir() / "basic_reference.dem").read_text(
-        encoding="utf-8")
+    return (_reference_dir() /
+            "basic_reference.dem").read_text(encoding="utf-8")
 
 
 def _parse_bits(bits: str) -> list[float]:
@@ -34,17 +34,18 @@ def _parse_bits(bits: str) -> list[float]:
 def _read_shots() -> list[tuple[str, list[float], list[float]]]:
     shots = []
     path = _reference_dir() / "basic_reference.tsv"
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(),
-                                   start=1):
+    for line_no, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         columns = line.split()
         if len(columns) != 3:
-            raise ValueError(f"Malformed reference row {path}:{line_no}: {line}")
+            raise ValueError(
+                f"Malformed reference row {path}:{line_no}: {line}")
         name, syndrome_bits, expected_bits = columns
-        shots.append((name, _parse_bits(syndrome_bits),
-                      _parse_bits(expected_bits)))
+        shots.append(
+            (name, _parse_bits(syndrome_bits), _parse_bits(expected_bits)))
     return shots
 
 
@@ -71,4 +72,4 @@ def test_chromobius_batch_matches_upstream_predict_reference():
     for batch_result, (name, _, expected) in zip(batch_results, shots):
         assert batch_result.converged, name
         assert batch_result.result == expected, (name, batch_result.result,
-                                                expected)
+                                                 expected)
