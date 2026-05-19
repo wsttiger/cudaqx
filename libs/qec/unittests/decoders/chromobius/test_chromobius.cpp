@@ -8,7 +8,7 @@
 
 #include "cudaq/qec/decoder.h"
 
-#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <string>
@@ -72,14 +72,15 @@ TEST(ChromobiusDecoder, checkKnownObservableFlip) {
 }
 
 TEST(ChromobiusDecoder, checkDemPath) {
-  const std::string dem_path = "/tmp/cudaq_qec_chromobius_test.dem";
+  const auto dem_path = std::filesystem::path(testing::TempDir()) /
+                        "cudaq_qec_chromobius_test.dem";
   {
     std::ofstream file(dem_path);
     file << chromobius_dem;
   }
 
   cudaqx::heterogeneous_map params;
-  params.insert("dem_path", dem_path);
+  params.insert("dem_path", dem_path.string());
   auto decoder = cudaq::qec::decoder::get("chromobius", make_H(), params);
 
   std::vector<cudaq::qec::float_t> syndrome = {0, 0, 0, 0};
@@ -89,7 +90,7 @@ TEST(ChromobiusDecoder, checkDemPath) {
   ASSERT_EQ(result.result.size(), 1);
   EXPECT_EQ(result.result[0], 0.0);
 
-  std::remove(dem_path.c_str());
+  std::filesystem::remove(dem_path);
 }
 
 TEST(ChromobiusDecoder, checkMissingDemThrows) {

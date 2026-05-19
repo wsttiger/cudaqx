@@ -24,8 +24,6 @@ namespace {
 std::string get_dem_text(const cudaqx::heterogeneous_map &params) {
   if (params.contains("dem"))
     return params.get<std::string>("dem");
-  if (params.contains("dem_str"))
-    return params.get<std::string>("dem_str");
   if (params.contains("dem_path")) {
     const auto path = params.get<std::string>("dem_path");
     std::ifstream file(path);
@@ -37,7 +35,7 @@ std::string get_dem_text(const cudaqx::heterogeneous_map &params) {
 
   throw std::runtime_error(
       "Chromobius decoder requires a Stim detector error model via the "
-      "'dem', 'dem_str', or 'dem_path' parameter.");
+      "'dem' or 'dem_path' parameter.");
 }
 
 std::vector<std::vector<uint32_t>> identity_sparse(std::size_t size) {
