@@ -42,6 +42,19 @@ bool isGpuAvailable() {
   return err == cudaSuccess && device_count > 0;
 }
 
+bool isFp8HardwareAvailable() {
+  int device = 0;
+  cudaError_t err = cudaGetDevice(&device);
+  if (err != cudaSuccess)
+    return false;
+
+  cudaDeviceProp prop{};
+  err = cudaGetDeviceProperties(&prop, device);
+  if (err != cudaSuccess)
+    return false;
+  return prop.major >= 9;
+}
+
 void write_rpc_slot(uint8_t *slot_host, const std::vector<float> &input) {
   std::memset(slot_host, 0, kSlotSize);
   rt_sdk::RPCHeader hdr{};
@@ -150,6 +163,9 @@ TEST_F(AiDecoderQuantizedOnnxSmokeTest, Fp8QdqRunsWithExpectedNumerics) {
   ASSERT_TRUE(info.has_fp8);
   EXPECT_FALSE(info.has_int8);
   EXPECT_TRUE(info.requires_strongly_typed());
+
+  if (!isFp8HardwareAvailable())
+    GTEST_SKIP() << "FP8 Q/DQ requires FP8-capable GPU hardware";
 
   std::vector<float> output;
   run_service(FP8_QDQ_ONNX_PATH, expected, output);
