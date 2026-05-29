@@ -29,6 +29,9 @@ void bindDecodingConfig(nb::module_ &mod) {
   auto mod_cfg =
       qecmod.def_submodule("config", "Realtime decoding configuration");
 
+  // Allow Python None to clear std::optional<T> fields.
+  const auto setter_accepts_none = nb::for_setter(nb::arg("value").none());
+
   // srelay_bp_config
   nb::class_<config::srelay_bp_config>(mod_cfg, "srelay_bp_config",
                                        "Relay-BP decoder configuration.")
