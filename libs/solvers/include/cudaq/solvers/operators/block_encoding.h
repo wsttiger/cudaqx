@@ -151,6 +151,12 @@ public:
   /// @param system View of system qubits (target register)
   void select(cudaq::qview<> ancilla, cudaq::qview<> system) const;
 
+  /// @brief Apply SELECT controlled by an additional external qubit.
+  /// @details Applies SELECT only when @p control is in the |1> state. The
+  /// ancilla register still selects the Pauli LCU term.
+  void controlled_select(cudaq::qubit &control, cudaq::qview<> ancilla,
+                         cudaq::qview<> system) const;
+
   /// @brief Apply the full block encoding: PREPARE → SELECT → PREPARE†
   /// @details Applies the complete block encoding unitary operation
   /// @param ancilla View of ancilla qubits

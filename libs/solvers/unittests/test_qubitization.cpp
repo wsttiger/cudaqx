@@ -127,6 +127,96 @@ TEST(QubitizationTester, checkAdjointWalkPowerKernelCompile) {
   EXPECT_NO_THROW(adjoint_walk_power_functor_test());
 }
 
+TEST(QubitizationTester, checkControlledSelectAndWalkKernelsCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+
+  auto controlled_select_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    encoding.controlled_select(control, anc, sys);
+  };
+  EXPECT_NO_THROW(controlled_select_test());
+
+  auto controlled_reflection_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    encoding.prepare(anc);
+    controlled_reflect_about_prepare(control, anc, encoding);
+  };
+  EXPECT_NO_THROW(controlled_reflection_test());
+
+  auto controlled_walk_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    apply_controlled_qubitization_walk(control, anc, sys, encoding);
+  };
+  EXPECT_NO_THROW(controlled_walk_test());
+
+  auto controlled_walk_functor_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    controlled_qubitization_walk{}(control, anc, sys, encoding);
+  };
+  EXPECT_NO_THROW(controlled_walk_functor_test());
+
+  auto controlled_adjoint_walk_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    apply_controlled_adjoint_qubitization_walk(control, anc, sys, encoding);
+  };
+  EXPECT_NO_THROW(controlled_adjoint_walk_test());
+
+  auto controlled_adjoint_walk_functor_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    controlled_adjoint_qubitization_walk{}(control, anc, sys, encoding);
+  };
+  EXPECT_NO_THROW(controlled_adjoint_walk_functor_test());
+}
+
+TEST(QubitizationTester, checkControlledWalkExecution) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = x(0);
+  pauli_lcu encoding(h, 1);
+
+  auto control_off = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    apply_controlled_qubitization_walk(control, anc, sys, encoding);
+  };
+  auto off_counts = cudaq::sample(100, control_off);
+  EXPECT_FLOAT_EQ(1.0, off_counts.probability("00"));
+
+  auto control_on = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    x(control);
+    encoding.prepare(anc);
+    apply_controlled_qubitization_walk(control, anc, sys, encoding);
+  };
+  auto on_counts = cudaq::sample(100, control_on);
+  EXPECT_FLOAT_EQ(1.0, on_counts.probability("11"));
+}
+
 TEST(QubitizationTester, checkObservableBuilders) {
   using namespace cudaq::spin;
   using namespace cudaq::solvers;

@@ -135,6 +135,183 @@ struct pauli_prepare_kernel {
   }
 };
 
+__qpu__ void controlled_pauli_x(cudaq::qubit &control, cudaq::qview<> anc,
+                                cudaq::qubit &target) {
+  int n_anc = anc.size();
+  if (n_anc == 0) {
+    x<cudaq::ctrl>(control, target);
+  } else if (n_anc == 1) {
+    x<cudaq::ctrl>(control, anc[0], target);
+  } else if (n_anc == 2) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], target);
+  } else if (n_anc == 3) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], target);
+  } else if (n_anc == 4) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], target);
+  } else if (n_anc == 5) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], target);
+  } else if (n_anc == 6) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   target);
+  } else if (n_anc == 7) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], target);
+  } else if (n_anc == 8) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], target);
+  } else if (n_anc == 9) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], target);
+  } else if (n_anc == 10) {
+    x<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], anc[9], target);
+  }
+}
+
+__qpu__ void controlled_pauli_y(cudaq::qubit &control, cudaq::qview<> anc,
+                                cudaq::qubit &target) {
+  int n_anc = anc.size();
+  if (n_anc == 0) {
+    y<cudaq::ctrl>(control, target);
+  } else if (n_anc == 1) {
+    y<cudaq::ctrl>(control, anc[0], target);
+  } else if (n_anc == 2) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], target);
+  } else if (n_anc == 3) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], target);
+  } else if (n_anc == 4) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], target);
+  } else if (n_anc == 5) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], target);
+  } else if (n_anc == 6) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   target);
+  } else if (n_anc == 7) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], target);
+  } else if (n_anc == 8) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], target);
+  } else if (n_anc == 9) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], target);
+  } else if (n_anc == 10) {
+    y<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], anc[9], target);
+  }
+}
+
+__qpu__ void controlled_pauli_z(cudaq::qubit &control, cudaq::qview<> anc,
+                                cudaq::qubit &target) {
+  int n_anc = anc.size();
+  if (n_anc == 0) {
+    z<cudaq::ctrl>(control, target);
+  } else if (n_anc == 1) {
+    z<cudaq::ctrl>(control, anc[0], target);
+  } else if (n_anc == 2) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], target);
+  } else if (n_anc == 3) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], target);
+  } else if (n_anc == 4) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], target);
+  } else if (n_anc == 5) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], target);
+  } else if (n_anc == 6) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   target);
+  } else if (n_anc == 7) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], target);
+  } else if (n_anc == 8) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], target);
+  } else if (n_anc == 9) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], target);
+  } else if (n_anc == 10) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], anc[9], target);
+  }
+}
+
+__qpu__ void controlled_sign_correction(cudaq::qubit &control,
+                                        cudaq::qview<> anc) {
+  int n_anc = anc.size();
+  if (n_anc == 0) {
+    z(control);
+  } else if (n_anc == 1) {
+    z<cudaq::ctrl>(control, anc[0]);
+  } else if (n_anc == 2) {
+    z<cudaq::ctrl>(control, anc[0], anc[1]);
+  } else if (n_anc == 3) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2]);
+  } else if (n_anc == 4) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3]);
+  } else if (n_anc == 5) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4]);
+  } else if (n_anc == 6) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5]);
+  } else if (n_anc == 7) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6]);
+  } else if (n_anc == 8) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7]);
+  } else if (n_anc == 9) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8]);
+  } else if (n_anc == 10) {
+    z<cudaq::ctrl>(control, anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
+                   anc[6], anc[7], anc[8], anc[9]);
+  }
+}
+
+/// @brief Kernel for externally controlled SELECT operation.
+struct controlled_pauli_select_kernel {
+  void operator()(cudaq::qubit &control, cudaq::qview<> anc, cudaq::qview<> sys,
+                  const std::vector<int> &ctrls, const std::vector<int> &ops,
+                  const std::vector<int> &lens,
+                  const std::vector<int> &signs) const __qpu__ {
+    int ptr_ctrl = 0;
+    int ptr_op = 0;
+    int n_anc = anc.size();
+
+    for (std::size_t i = 0; i < lens.size(); ++i) {
+      int n_ops = lens[i];
+      int sign = signs[i];
+
+      for (int b = 0; b < n_anc; ++b) {
+        int bit_val = ctrls[ptr_ctrl++];
+        if (bit_val == 0)
+          x(anc[b]);
+      }
+
+      for (int k = 0; k < n_ops; ++k) {
+        int code = ops[ptr_op++];
+        int q_idx = ops[ptr_op++];
+
+        if (code == 1)
+          controlled_pauli_x(control, anc, sys[q_idx]);
+        else if (code == 2)
+          controlled_pauli_y(control, anc, sys[q_idx]);
+        else if (code == 3)
+          controlled_pauli_z(control, anc, sys[q_idx]);
+      }
+
+      if (sign < 0)
+        controlled_sign_correction(control, anc);
+
+      int back_ptr = ptr_ctrl - 1;
+      for (int b_rev = 0; b_rev < n_anc; ++b_rev) {
+        int anc_idx = (n_anc - 1) - b_rev;
+        int bit_val = ctrls[back_ptr--];
+        if (bit_val == 0)
+          x(anc[anc_idx]);
+      }
+    }
+  }
+};
+
 /// @brief Kernel for SELECT operation - controlled Pauli application
 struct pauli_select_kernel {
   void operator()(cudaq::qview<> anc, cudaq::qview<> sys,
@@ -445,6 +622,20 @@ void pauli_lcu::select(cudaq::qview<> ancilla, cudaq::qview<> system) const {
   pauli_select_kernel{}(ancilla, system, kernel_data.term_controls,
                         kernel_data.term_ops, kernel_data.term_lengths,
                         kernel_data.term_signs);
+}
+
+void pauli_lcu::controlled_select(cudaq::qubit &control, cudaq::qview<> ancilla,
+                                  cudaq::qview<> system) const {
+  if (ancilla.size() != n_anc)
+    throw std::runtime_error(
+        "pauli_lcu::controlled_select: ancilla size mismatch");
+  if (system.size() != n_sys)
+    throw std::runtime_error(
+        "pauli_lcu::controlled_select: system size mismatch");
+
+  controlled_pauli_select_kernel{}(
+      control, ancilla, system, kernel_data.term_controls, kernel_data.term_ops,
+      kernel_data.term_lengths, kernel_data.term_signs);
 }
 
 } // namespace cudaq::solvers
