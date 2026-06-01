@@ -18,6 +18,17 @@ namespace cudaq::solvers {
 /// @brief Direction of the qubitization walk used between QSVT phases.
 enum class qsvt_walk_direction { forward, adjoint };
 
+/// @brief Host-side convention used to interpret a QSP/QSVT phase sequence.
+enum class qsvt_phase_convention { qsvt, qsp };
+
+/// @brief Host-side matrix function transform represented by QSVT metadata.
+enum class qsvt_transform_kind {
+  custom,
+  linear_solve,
+  real_time_hamiltonian_simulation,
+  imaginary_time_hamiltonian_simulation
+};
+
 /// @brief Primitive walk direction codes passed across the QPU boundary.
 /// @details Host-side policy objects expand to these integer codes before a
 /// kernel invocation so kernels do not need to consume richer C++ objects.
@@ -161,6 +172,14 @@ struct qsvt_sequence {
   }
 };
 
+/// @brief Plain QPU-facing data extracted from a host-side QSVT plan.
+/// @details This is a convenience view for host code. Kernels should still take
+/// the individual phase and walk-direction vectors as separate arguments.
+struct qsvt_kernel_data {
+  const std::vector<double> &phases;
+  const std::vector<int> &walk_directions;
+};
+
 /// @brief Host-side QSVT phase sequence.
 ///
 /// QSVT and QSP routines are parameterized by a sequence of phase angles. A
@@ -199,6 +218,19 @@ struct qsvt_sequence_policy {
   int operator[](std::size_t index) const { return walk_directions[index]; }
 };
 
+/// @brief Host-side metadata for a target QSVT matrix-function transform.
+/// @details This describes the transform a future phase-generation routine
+/// should approximate. It does not synthesize QSP/QSVT phases.
+struct qsvt_transform_descriptor {
+  qsvt_transform_kind kind = qsvt_transform_kind::custom;
+  qsvt_phase_convention phase_convention = qsvt_phase_convention::qsvt;
+  double evolution_time = 0.0;
+  double condition_number = 0.0;
+  double target_error = 0.0;
+  double normalization = 1.0;
+  std::size_t degree_hint = 0;
+};
+
 /// @brief Host-side plan for applying a QSVT phase/walk sequence.
 ///
 /// The plan is intentionally a host-side object. CUDA-Q kernels should consume
@@ -225,6 +257,9 @@ struct qsvt_plan {
   }
   const std::vector<int> &walk_direction_data() const {
     return sequence_policy.walk_direction_data();
+  }
+  qsvt_kernel_data kernel_data() const {
+    return {phase_data(), walk_direction_data()};
   }
 };
 
@@ -274,8 +309,35 @@ qsvt_sequence_policy make_alternating_qsvt_sequence_policy(
 /// @brief Construct a host-side QSVT plan from a phase sequence.
 qsvt_plan make_qsvt_plan(std::vector<double> phases);
 
+/// @brief Return true if the transform descriptor is finite and meaningful.
+bool is_valid_qsvt_transform_descriptor(
+    const qsvt_transform_descriptor &descriptor);
+
+/// @brief Validate a transform descriptor.
+/// @throws std::invalid_argument if metadata is not finite or is inconsistent
+/// with the transform kind.
+void validate_qsvt_transform_descriptor(
+    const qsvt_transform_descriptor &descriptor);
+
 /// @brief Construct a host-side QSVT plan from phases and a walk policy.
 qsvt_plan make_qsvt_plan(std::vector<double> phases,
                          qsvt_sequence_policy policy);
+
+/// @brief Describe the inverse transform used by QSVT-based linear solve.
+qsvt_transform_descriptor
+make_linear_solve_qsvt_transform(double condition_number, double target_error,
+                                 std::size_t degree_hint = 0,
+                                 double normalization = 1.0);
+
+/// @brief Describe the exp(-i H t) transform for Hamiltonian simulation.
+qsvt_transform_descriptor make_real_time_hamiltonian_simulation_qsvt_transform(
+    double evolution_time, double target_error, std::size_t degree_hint = 0,
+    double normalization = 1.0);
+
+/// @brief Describe the exp(-H t) transform for imaginary-time evolution.
+qsvt_transform_descriptor
+make_imaginary_time_hamiltonian_simulation_qsvt_transform(
+    double evolution_time, double target_error, std::size_t degree_hint = 0,
+    double normalization = 1.0);
 
 } // namespace cudaq::solvers

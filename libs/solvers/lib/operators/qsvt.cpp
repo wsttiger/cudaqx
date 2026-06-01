@@ -160,4 +160,75 @@ qsvt_plan make_qsvt_plan(std::vector<double> phases,
   return qsvt_plan(std::move(phases), std::move(policy));
 }
 
+bool is_valid_qsvt_transform_descriptor(
+    const qsvt_transform_descriptor &descriptor) {
+  if (!std::isfinite(descriptor.evolution_time) ||
+      !std::isfinite(descriptor.condition_number) ||
+      !std::isfinite(descriptor.target_error) ||
+      !std::isfinite(descriptor.normalization))
+    return false;
+
+  if (descriptor.target_error < 0.0 || descriptor.normalization <= 0.0)
+    return false;
+
+  switch (descriptor.kind) {
+  case qsvt_transform_kind::linear_solve:
+    return descriptor.condition_number >= 1.0;
+  case qsvt_transform_kind::real_time_hamiltonian_simulation:
+  case qsvt_transform_kind::imaginary_time_hamiltonian_simulation:
+    return descriptor.evolution_time >= 0.0;
+  case qsvt_transform_kind::custom:
+    return true;
+  }
+
+  return false;
+}
+
+void validate_qsvt_transform_descriptor(
+    const qsvt_transform_descriptor &descriptor) {
+  if (!is_valid_qsvt_transform_descriptor(descriptor))
+    throw std::invalid_argument("Invalid QSVT transform descriptor.");
+}
+
+qsvt_transform_descriptor
+make_linear_solve_qsvt_transform(double condition_number, double target_error,
+                                 std::size_t degree_hint,
+                                 double normalization) {
+  qsvt_transform_descriptor descriptor;
+  descriptor.kind = qsvt_transform_kind::linear_solve;
+  descriptor.condition_number = condition_number;
+  descriptor.target_error = target_error;
+  descriptor.normalization = normalization;
+  descriptor.degree_hint = degree_hint;
+  validate_qsvt_transform_descriptor(descriptor);
+  return descriptor;
+}
+
+qsvt_transform_descriptor make_real_time_hamiltonian_simulation_qsvt_transform(
+    double evolution_time, double target_error, std::size_t degree_hint,
+    double normalization) {
+  qsvt_transform_descriptor descriptor;
+  descriptor.kind = qsvt_transform_kind::real_time_hamiltonian_simulation;
+  descriptor.evolution_time = evolution_time;
+  descriptor.target_error = target_error;
+  descriptor.normalization = normalization;
+  descriptor.degree_hint = degree_hint;
+  validate_qsvt_transform_descriptor(descriptor);
+  return descriptor;
+}
+
+qsvt_transform_descriptor
+make_imaginary_time_hamiltonian_simulation_qsvt_transform(
+    double evolution_time, double target_error, std::size_t degree_hint,
+    double normalization) {
+  qsvt_transform_descriptor descriptor;
+  descriptor.kind = qsvt_transform_kind::imaginary_time_hamiltonian_simulation;
+  descriptor.evolution_time = evolution_time;
+  descriptor.target_error = target_error;
+  descriptor.normalization = normalization;
+  descriptor.degree_hint = degree_hint;
+  validate_qsvt_transform_descriptor(descriptor);
+  return descriptor;
+}
+
 } // namespace cudaq::solvers

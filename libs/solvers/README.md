@@ -33,12 +33,18 @@ QSVT support is currently a primitive API, not a full polynomial compiler. Host
 code owns validation and policy construction through `qsvt_phase_sequence`,
 `qsvt_sequence_policy`, and `qsvt_plan`. CUDA-Q kernels should consume only the
 primitive data extracted from those objects, such as phase vectors and integer
-walk-direction vectors. The default QSVT plan uses forward qubitization walks;
-callers can also request adjoint or alternating forward/adjoint walk policies.
+walk-direction vectors. `qsvt_plan::kernel_data()` is a host-side convenience
+view for extracting those vectors before a kernel invocation. The default QSVT
+plan uses forward qubitization walks; callers can also request adjoint or
+alternating forward/adjoint walk policies.
 
-Future QSVT work should add phase-generation APIs for target polynomial
-transforms, convention-specific sequence builders, and higher-level algorithms
-that compose these primitives with block encodings.
+The QSVT layer also includes host-side transform descriptors for the primitive
+matrix functions needed by algorithms such as linear solve, real-time
+Hamiltonian simulation (`exp(-i H t)`), and imaginary-time evolution
+(`exp(-H t)`). These descriptors capture validated metadata only; future work
+should add phase-generation APIs for target polynomial transforms,
+convention-specific sequence builders, and higher-level examples that compose
+these primitives with block encodings.
 
 Note: if you would like to use our Generative Quantum Eigensolver API, you will need
 additional dependencies installed. You can install them with

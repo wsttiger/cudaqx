@@ -85,6 +85,54 @@ TEST(QSVTTester, checkSequenceWalkDirectionKernelCompile) {
   EXPECT_NO_THROW(adjoint_sequence_functor_test());
 }
 
+TEST(QSVTTester, checkQubitizationAndQSVTExecution) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = x(0);
+  pauli_lcu encoding(h, 1);
+
+  auto walk_once = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qubitization_walk(signal, system, encoding);
+  };
+  auto walk_counts = cudaq::sample(100, walk_once);
+  EXPECT_FLOAT_EQ(1.0, walk_counts.probability("1"));
+
+  auto one_walk_plan = make_qsvt_plan({0.0, 0.0});
+  auto one_walk_kernel_data = one_walk_plan.kernel_data();
+  auto one_walk_phases = one_walk_kernel_data.phases;
+  auto one_walk_directions = one_walk_kernel_data.walk_directions;
+
+  auto qsvt_one_walk = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsvt_sequence(signal, system, encoding, one_walk_phases,
+                        one_walk_directions);
+  };
+  auto one_walk_counts = cudaq::sample(100, qsvt_one_walk);
+  EXPECT_FLOAT_EQ(1.0, one_walk_counts.probability("1"));
+
+  auto two_walk_plan =
+      make_qsvt_plan({0.0, 0.0, 0.0}, make_alternating_qsvt_sequence_policy(2));
+  auto two_walk_kernel_data = two_walk_plan.kernel_data();
+  auto two_walk_phases = two_walk_kernel_data.phases;
+  auto two_walk_directions = two_walk_kernel_data.walk_directions;
+
+  auto qsvt_two_walks = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsvt_sequence(signal, system, encoding, two_walk_phases,
+                        two_walk_directions);
+  };
+  auto two_walk_counts = cudaq::sample(100, qsvt_two_walks);
+  EXPECT_FLOAT_EQ(1.0, two_walk_counts.probability("0"));
+}
+
 TEST(QSVTTester, checkSequencePolicyKernelCompile) {
   using namespace cudaq::spin;
   using namespace cudaq::solvers;
@@ -127,6 +175,12 @@ TEST(QSVTTester, checkPlanMetadata) {
   EXPECT_EQ(plan.policy().size(), 2);
   EXPECT_EQ(plan.walk_direction_data()[0], qsvt_forward_walk);
   EXPECT_EQ(plan.walk_direction_data()[1], qsvt_forward_walk);
+
+  auto kernel_data = plan.kernel_data();
+  EXPECT_EQ(kernel_data.phases.size(), 3);
+  EXPECT_EQ(kernel_data.walk_directions.size(), 2);
+  EXPECT_DOUBLE_EQ(kernel_data.phases[1], -0.2);
+  EXPECT_EQ(kernel_data.walk_directions[0], qsvt_forward_walk);
 }
 
 TEST(QSVTTester, checkPlanPolicyMetadata) {
@@ -223,6 +277,43 @@ TEST(QSVTTester, checkSequencePolicyFactoryAndValidation) {
   EXPECT_THROW(validate_qsvt_sequence_policy(
                    1, qsvt_sequence_policy(std::vector<int>{2})),
                std::invalid_argument);
+}
+
+TEST(QSVTTester, checkTransformDescriptorFactories) {
+  using namespace cudaq::solvers;
+
+  auto linear_solve = make_linear_solve_qsvt_transform(12.0, 1e-3, 27, 2.0);
+  EXPECT_EQ(linear_solve.kind, qsvt_transform_kind::linear_solve);
+  EXPECT_EQ(linear_solve.phase_convention, qsvt_phase_convention::qsvt);
+  EXPECT_DOUBLE_EQ(linear_solve.condition_number, 12.0);
+  EXPECT_DOUBLE_EQ(linear_solve.target_error, 1e-3);
+  EXPECT_DOUBLE_EQ(linear_solve.normalization, 2.0);
+  EXPECT_EQ(linear_solve.degree_hint, 27);
+  EXPECT_TRUE(is_valid_qsvt_transform_descriptor(linear_solve));
+
+  auto real_time =
+      make_real_time_hamiltonian_simulation_qsvt_transform(0.75, 1e-4, 32, 1.5);
+  EXPECT_EQ(real_time.kind,
+            qsvt_transform_kind::real_time_hamiltonian_simulation);
+  EXPECT_DOUBLE_EQ(real_time.evolution_time, 0.75);
+
+  auto imaginary_time =
+      make_imaginary_time_hamiltonian_simulation_qsvt_transform(1.25, 1e-5, 48);
+  EXPECT_EQ(imaginary_time.kind,
+            qsvt_transform_kind::imaginary_time_hamiltonian_simulation);
+  EXPECT_DOUBLE_EQ(imaginary_time.evolution_time, 1.25);
+
+  qsvt_transform_descriptor invalid_normalization;
+  invalid_normalization.normalization = 0.0;
+  EXPECT_FALSE(is_valid_qsvt_transform_descriptor(invalid_normalization));
+
+  EXPECT_THROW(make_linear_solve_qsvt_transform(0.5, 1e-3),
+               std::invalid_argument);
+  EXPECT_THROW(make_real_time_hamiltonian_simulation_qsvt_transform(-0.1, 1e-3),
+               std::invalid_argument);
+  EXPECT_THROW(
+      make_imaginary_time_hamiltonian_simulation_qsvt_transform(1.0, -1e-3),
+      std::invalid_argument);
 }
 
 TEST(QSVTTester, checkPolynomialDegreeConvention) {
