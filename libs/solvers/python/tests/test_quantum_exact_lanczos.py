@@ -32,6 +32,17 @@ except ImportError:
     HAS_SCIPY = False
 
 
+def run_large_qel_molecule_tests():
+    """Return True when large exact-simulation molecule tests are enabled."""
+    return os.environ.get("CUDAQX_RUN_LARGE_QEL_TESTS", "").lower() in (
+        "1", "true", "yes", "on")
+
+
+requires_large_qel_molecule_tests = pytest.mark.skipif(
+    not run_large_qel_molecule_tests(),
+    reason="Set CUDAQX_RUN_LARGE_QEL_TESTS=1 to run large QEL molecule tests")
+
+
 def is_nvidia_gpu_available():
     """Check if NVIDIA GPU is available using nvidia-smi command."""
     try:
@@ -282,6 +293,7 @@ def test_quantum_exact_lanczos_h2_molecule():
 
 @pytest.mark.skipif(not HAS_SCIPY,
                     reason="SciPy required for eigenvalue solving")
+@requires_large_qel_molecule_tests
 @pytest.mark.skipif(not is_nvidia_gpu_available(),
                     reason="NVIDIA GPU not found")
 def test_quantum_exact_lanczos_lih_molecule():
@@ -372,6 +384,7 @@ def test_quantum_exact_lanczos_lih_molecule():
     print("\n✅ LiH QEL test passed!")
 
 
+@requires_large_qel_molecule_tests
 def test_quantum_exact_lanczos_n2_molecule():
     """Test QEL with N2 Hamiltonian from saved data file."""
     # Import N2 Hamiltonian data (no PySCF/OpenFermion required)
@@ -459,6 +472,7 @@ def test_quantum_exact_lanczos_n2_molecule():
     print("\n✅ N2 QEL test passed!")
 
 
+@requires_large_qel_molecule_tests
 def test_quantum_exact_lanczos_h2o_molecule():
     """Test QEL with H2O using pre-extracted Hamiltonian data."""
     # Import H2O Hamiltonian data
@@ -535,6 +549,7 @@ def test_quantum_exact_lanczos_h2o_molecule():
 
 @pytest.mark.skipif(not HAS_SCIPY,
                     reason="SciPy required for eigenvalue solving")
+@requires_large_qel_molecule_tests
 def test_quantum_exact_lanczos_benzene_molecule():
     """Test QEL on Benzene (C6H6) molecule with (4e, 4o) active space."""
     try:
