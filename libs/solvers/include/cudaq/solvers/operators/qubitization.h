@@ -92,6 +92,25 @@ struct qubitization_walk {
   }
 };
 
+/// @brief Apply repeated qubitization walk steps for a Pauli LCU encoding.
+/// @details Applies the walk primitive power times. The caller is responsible
+/// for preparing the ancilla register before the first walk step when needed.
+__qpu__ inline void apply_qubitization_walk_power(cudaq::qview<> ancilla,
+                                                  cudaq::qview<> system,
+                                                  const pauli_lcu &encoding,
+                                                  int power) {
+  for (int i = 0; i < power; ++i)
+    apply_qubitization_walk(ancilla, system, encoding);
+}
+
+/// @brief Kernel functor wrapper for repeated qubitization walk steps.
+struct qubitization_walk_power {
+  void operator()(cudaq::qview<> ancilla, cudaq::qview<> system,
+                  const pauli_lcu &encoding, int power) const __qpu__ {
+    apply_qubitization_walk_power(ancilla, system, encoding, power);
+  }
+};
+
 /// @brief Build the projector |0><0| on an ancilla register.
 /// @param num_ancilla Number of ancilla qubits in the projector register.
 cudaq::spin_op build_ancilla_zero_projector(std::size_t num_ancilla);

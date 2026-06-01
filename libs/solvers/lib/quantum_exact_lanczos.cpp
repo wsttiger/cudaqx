@@ -25,9 +25,7 @@ struct qel_state_prep_kernel {
                   const pauli_lcu &encoding, int k_half) const __qpu__ {
     // Apply k iterations of SELECT + REFLECT
     encoding.prepare(anc);
-    for (int i = 0; i < k_half; ++i) {
-      qubitization_walk{}(anc, sys, encoding);
-    }
+    qubitization_walk_power{}(anc, sys, encoding, k_half);
   }
 };
 
@@ -37,9 +35,7 @@ struct qel_measure_even_kernel {
                   const pauli_lcu &encoding, int k_half) const __qpu__ {
     // Apply k iterations of SELECT + REFLECT
     encoding.prepare(anc);
-    for (int i = 0; i < k_half; ++i) {
-      qubitization_walk{}(anc, sys, encoding);
-    }
+    qubitization_walk_power{}(anc, sys, encoding, k_half);
     // Unprepare for measurement in |0⟩ basis
     encoding.unprepare(anc);
   }
