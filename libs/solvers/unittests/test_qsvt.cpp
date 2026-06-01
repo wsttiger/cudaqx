@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "cudaq/solvers/operators/qsvt.h"
+#include "cudaq/solvers/operators/qubitization.h"
 
 TEST(QSVTTester, checkSignalPhaseKernelCompile) {
   using namespace cudaq::solvers;
@@ -27,6 +28,31 @@ TEST(QSVTTester, checkSignalPhaseKernelCompile) {
     qsvt_signal_phase{}(signal, -0.5);
   };
   EXPECT_NO_THROW(three_signal_test());
+}
+
+TEST(QSVTTester, checkSequenceKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+  auto phases = make_qsvt_phase_sequence({0.1, -0.2, 0.3});
+
+  auto sequence_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsvt_sequence(signal, system, encoding, phases.data());
+  };
+  EXPECT_NO_THROW(sequence_test());
+
+  auto sequence_functor_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    qsvt_sequence{}(signal, system, encoding, phases.data());
+  };
+  EXPECT_NO_THROW(sequence_functor_test());
 }
 
 TEST(QSVTTester, checkPhaseSequenceMetadata) {

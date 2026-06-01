@@ -8,6 +8,7 @@
 #pragma once
 
 #include "cudaq.h"
+#include "cudaq/solvers/operators/qubitization.h"
 
 #include <cstddef>
 #include <vector>
@@ -64,6 +65,34 @@ __qpu__ inline void apply_qsvt_signal_phase(cudaq::qview<> signal,
 struct qsvt_signal_phase {
   void operator()(cudaq::qview<> signal, double phase) const __qpu__ {
     apply_qsvt_signal_phase(signal, phase);
+  }
+};
+
+/// @brief Apply a QSVT-style phase/walk sequence for a Pauli LCU encoding.
+/// @details Uses the convention phase[0], then repeats W followed by phase[j]
+/// for j = 1..degree, where W is the qubitization walk primitive. This helper
+/// does not validate phases in device code; callers should construct or verify
+/// a qsvt_phase_sequence on the host before invoking it.
+__qpu__ inline void apply_qsvt_sequence(cudaq::qview<> signal,
+                                        cudaq::qview<> system,
+                                        const pauli_lcu &encoding,
+                                        const std::vector<double> &phases) {
+  if (phases.empty())
+    return;
+
+  apply_qsvt_signal_phase(signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    apply_qubitization_walk(signal, system, encoding);
+    apply_qsvt_signal_phase(signal, phases[i]);
+  }
+}
+
+/// @brief Kernel functor wrapper for applying a QSVT-style phase/walk sequence.
+struct qsvt_sequence {
+  void operator()(cudaq::qview<> signal, cudaq::qview<> system,
+                  const pauli_lcu &encoding,
+                  const std::vector<double> &phases) const __qpu__ {
+    apply_qsvt_sequence(signal, system, encoding, phases);
   }
 };
 
