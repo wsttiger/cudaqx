@@ -86,3 +86,25 @@ TEST(QuantumExactLanczos, checkMetadata) {
   EXPECT_EQ(result.hamiltonian_matrix.size(), 16); // 4x4
   EXPECT_EQ(result.overlap_matrix.size(), 16);     // 4x4
 }
+
+TEST(QuantumExactLanczos, checkPrebuiltPauliLCUEncoding) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.7 * z(0) + 0.3 * x(0);
+  pauli_lcu encoding(h, 1);
+
+  heterogeneous_map options;
+  options.insert("krylov_dim", 4);
+
+  auto result = quantum_exact_lanczos(encoding, 0, options);
+
+  EXPECT_EQ(result.krylov_dimension, 4);
+  EXPECT_EQ(result.num_system, encoding.num_system());
+  EXPECT_EQ(result.num_ancilla, encoding.num_ancilla());
+  EXPECT_NEAR(result.normalization, encoding.normalization(), 1e-10);
+  EXPECT_NEAR(result.constant_term, encoding.constant_term(), 1e-10);
+  EXPECT_EQ(result.moments.size(), 8);
+  EXPECT_EQ(result.hamiltonian_matrix.size(), 16);
+  EXPECT_EQ(result.overlap_matrix.size(), 16);
+}

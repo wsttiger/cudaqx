@@ -230,8 +230,7 @@ build_krylov_matrices(const std::vector<double> &moments, int krylov_dim) {
 // MAIN QEL ALGORITHM
 // ============================================================================
 
-qel_result quantum_exact_lanczos(const cudaq::spin_op &hamiltonian,
-                                 std::size_t num_qubits,
+qel_result quantum_exact_lanczos(const pauli_lcu &encoding,
                                  std::size_t n_electrons,
                                  heterogeneous_map options) {
 
@@ -240,24 +239,10 @@ qel_result quantum_exact_lanczos(const cudaq::spin_op &hamiltonian,
   int shots = options.get("shots", -1);
   bool verbose = options.get("verbose", false);
 
-  // Create block encoding
-  pauli_lcu encoding(hamiltonian, num_qubits);
-
   std::size_t n_anc = encoding.num_ancilla();
   std::size_t n_sys = encoding.num_system();
   double one_norm = encoding.normalization();
-
-  // Extract constant term from Hamiltonian
-  double constant_term = 0.0;
-  for (const auto &term : hamiltonian) {
-    auto word = term.get_pauli_word(num_qubits);
-    // Check if this is an identity term (all characters are 'I')
-    bool is_identity = (word.find_first_not_of('I') == std::string::npos);
-    if (is_identity) {
-      constant_term = term.evaluate_coefficient().real();
-      break;
-    }
-  }
+  double constant_term = encoding.constant_term();
 
   if (verbose) {
     std::cout << "\n=== Quantum Exact Lanczos ===" << std::endl;
@@ -336,6 +321,14 @@ qel_result quantum_exact_lanczos(const cudaq::spin_op &hamiltonian,
   // Return result
   return qel_result{H_mat,         S_mat,    moments, krylov_dim,
                     constant_term, one_norm, n_anc,   n_sys};
+}
+
+qel_result quantum_exact_lanczos(const cudaq::spin_op &hamiltonian,
+                                 std::size_t num_qubits,
+                                 std::size_t n_electrons,
+                                 heterogeneous_map options) {
+  return quantum_exact_lanczos(pauli_lcu(hamiltonian, num_qubits), n_electrons,
+                               options);
 }
 
 } // namespace cudaq::solvers

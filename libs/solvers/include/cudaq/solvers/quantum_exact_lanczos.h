@@ -51,6 +51,23 @@ struct qel_result {
   std::size_t num_system;
 };
 
+/// @brief Run QEL with a prebuilt Pauli LCU block encoding.
+/// @details This overload lets callers reuse a previously decomposed and
+/// flattened block encoding. It is useful for composing QEL with other
+/// algorithms that consume the same LCU/block-encoding primitive.
+///
+/// @param encoding Prebuilt Pauli LCU block encoding.
+/// @param n_electrons Number of electrons in the system (for HF initialization)
+/// @param options Additional options for the algorithm. Supported Keys:
+///   - "krylov_dim" (int): Krylov subspace dimension [default: 10]
+///   - "shots" (int): Number of measurement shots (-1 for exact) [default: -1]
+///   - "verbose" (bool): Enable detailed output logging [default: false]
+/// @return qel_result containing the Krylov matrices and moments for
+/// diagonalization
+qel_result
+quantum_exact_lanczos(const pauli_lcu &encoding, std::size_t n_electrons,
+                      heterogeneous_map options = heterogeneous_map());
+
 /// @brief Run the Quantum Exact Lanczos (QEL) algorithm
 /// @details Uses block encoding and amplitude amplification to compute
 /// the ground state energy of a quantum Hamiltonian. The algorithm builds
