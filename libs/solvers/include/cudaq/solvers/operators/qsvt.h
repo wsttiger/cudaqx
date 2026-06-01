@@ -15,6 +15,14 @@
 
 namespace cudaq::solvers {
 
+/// @brief QSVT host/device API boundary.
+///
+/// qsvt_phase_sequence and qsvt_plan are host-side validation and metadata
+/// types. QPU-facing helpers consume qview objects, pauli_lcu encodings,
+/// primitive numeric values, and plain std::vector<double> phase data extracted
+/// from a validated host-side sequence or plan. Do not pass qsvt_plan directly
+/// into __qpu__ kernels.
+
 /// @brief Apply a phase to the all-zero signal/ancilla state.
 /// @details Implements exp(i phase |0><0|) on the signal register by mapping
 /// |0...0> to |1...1>, applying a multi-controlled r1 phase, and unmapping.
