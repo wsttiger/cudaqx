@@ -23,7 +23,9 @@ namespace cudaq::solvers {
 ///   encoding.select(ancilla, system);
 ///   reflect_about_prepare(ancilla, encoding);
 ///
-/// The walk helpers do not prepare the ancilla register. Callers should invoke
+/// The adjoint walk uses the opposite circuit order, reflection followed by
+/// SELECT, since SELECT and the PREPARE-state reflection are self-adjoint. The
+/// walk helpers do not prepare the ancilla register. Callers should invoke
 /// encoding.prepare(ancilla) before the first walk step when the algorithm
 /// requires the PREPARE state as the starting point.
 
@@ -106,6 +108,25 @@ struct qubitization_walk {
   }
 };
 
+/// @brief Apply one adjoint qubitization walk step for a Pauli LCU encoding.
+/// @details Applies reflection about the PREPARE state followed by SELECT. With
+/// the convention W = R_prepare SELECT, this circuit order implements the
+/// adjoint walk W^{-1} = SELECT R_prepare.
+__qpu__ inline void apply_adjoint_qubitization_walk(cudaq::qview<> ancilla,
+                                                    cudaq::qview<> system,
+                                                    const pauli_lcu &encoding) {
+  reflect_about_prepare(ancilla, encoding);
+  encoding.select(ancilla, system);
+}
+
+/// @brief Kernel functor wrapper for one adjoint qubitization walk step.
+struct adjoint_qubitization_walk {
+  void operator()(cudaq::qview<> ancilla, cudaq::qview<> system,
+                  const pauli_lcu &encoding) const __qpu__ {
+    apply_adjoint_qubitization_walk(ancilla, system, encoding);
+  }
+};
+
 /// @brief Apply repeated qubitization walk steps for a Pauli LCU encoding.
 /// @details Applies the walk primitive power times. The caller is responsible
 /// for preparing the ancilla register before the first walk step when needed.
@@ -122,6 +143,26 @@ struct qubitization_walk_power {
   void operator()(cudaq::qview<> ancilla, cudaq::qview<> system,
                   const pauli_lcu &encoding, int power) const __qpu__ {
     apply_qubitization_walk_power(ancilla, system, encoding, power);
+  }
+};
+
+/// @brief Apply repeated adjoint qubitization walk steps.
+/// @details Applies the adjoint walk primitive power times. The caller is
+/// responsible for preparing the ancilla register before the first walk step
+/// when needed.
+__qpu__ inline void
+apply_adjoint_qubitization_walk_power(cudaq::qview<> ancilla,
+                                      cudaq::qview<> system,
+                                      const pauli_lcu &encoding, int power) {
+  for (int i = 0; i < power; ++i)
+    apply_adjoint_qubitization_walk(ancilla, system, encoding);
+}
+
+/// @brief Kernel functor wrapper for repeated adjoint qubitization walk steps.
+struct adjoint_qubitization_walk_power {
+  void operator()(cudaq::qview<> ancilla, cudaq::qview<> system,
+                  const pauli_lcu &encoding, int power) const __qpu__ {
+    apply_adjoint_qubitization_walk_power(ancilla, system, encoding, power);
   }
 };
 
