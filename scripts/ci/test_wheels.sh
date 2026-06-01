@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # ============================================================================ #
-# Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                   #
+# Copyright (c) 2024 - 2026 NVIDIA Corporation & Affiliates.                   #
 # All rights reserved.                                                         #
 #                                                                              #
 # This source code and the accompanying materials are made available under     #
@@ -60,10 +60,6 @@ ${python} -m pip install openfermion
 ${python} -m pip install openfermionpyscf
 ${python} -m pip install onnxscript # for trt decoder tests
 
-# Now install torch.
-cuda_no_dot=$(echo $cuda_version | sed 's/\.//')
-${python} -m pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu${cuda_no_dot}
-
 FIND_LINKS="--find-links /wheels/ --find-links /metapackages/"
 
 # If special CUDA-Q wheels have been built for this test, install them here.
@@ -86,15 +82,22 @@ fi
 # QEC library
 # ======================================
 
-# Install QEC library with tensor network decoder and trt_decoder (requires Python >=3.11)
-echo "Installing QEC library with tensor network decoder and trt_decoder"
-${python} -m pip install ${FIND_LINKS} --extra-index-url https://pypi.nvidia.com/ "cudaq-qec[all]==${cudaqx_version}"
-# Check if CUDA is available
+# Pre-install torch with the correct variant so cudaq-qec[all]'s "torch>=2.9.0"
+# dependency is already satisfied and pip doesn't pull the default (CPU) build.
+cuda_no_dot=$(echo $cuda_version | sed 's/\.//')
 if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-  # CUDA available - run all tests
+  echo "CUDA detected — installing CUDA-matched torch"
+  ${python} -m pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu${cuda_no_dot}
+else
+  ${python} -m pip install torch==2.9.0
+fi
+
+echo "Installing QEC library with all optional dependencies"
+${python} -m pip install ${FIND_LINKS} --extra-index-url https://pypi.nvidia.com/ "cudaq-qec[all]==${cudaqx_version}"
+
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
   ${python} -m pytest -v -s libs/qec/python/tests/
 else
-  # No CUDA - skip TRT decoder tests
   ${python} -m pytest -v -s libs/qec/python/tests/ --ignore=libs/qec/python/tests/test_trt_decoder.py
 fi
 
@@ -147,9 +150,9 @@ for domain in "solvers" "qec"; do
     echo "Testing ${domain} Python examples with Python ${python_version} ..."
     cd examples/${domain}/python
     shopt -s nullglob # don't throw errors if no Python files exist
-    for f in *.py; do \
-        echo Testing $f...; \
-        ${python} $f 
+    for f in *.py; do
+        echo Testing $f...
+        ${python} $f
         res=$?
         if [ $res -ne 0 ]; then
             echo "Python tests failed for ${domain} with Python ${python_version}: $res"

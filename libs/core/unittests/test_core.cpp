@@ -42,7 +42,7 @@ public:
 };
 
 // Extensions must register themselves
-CUDAQ_REGISTER_TYPE(RepeatBackOne)
+CUDAQ_EXT_PT_REGISTER_TYPE(RepeatBackOne)
 
 class RepeatBackTwo : public MyExtensionPoint {
 public:
@@ -51,7 +51,7 @@ public:
   }
   CUDAQ_EXTENSION_CREATOR_FUNCTION(MyExtensionPoint, RepeatBackTwo)
 };
-CUDAQ_REGISTER_TYPE(RepeatBackTwo)
+CUDAQ_EXT_PT_REGISTER_TYPE(RepeatBackTwo)
 
 } // namespace cudaqx::testing
 
@@ -112,7 +112,7 @@ public:
       })
 };
 
-CUDAQ_REGISTER_TYPE(RepeatBackOneWithArgs)
+CUDAQ_EXT_PT_REGISTER_TYPE(RepeatBackOneWithArgs)
 
 class RepeatBackTwoWithArgs : public MyExtensionPointWithArgs {
 public:
@@ -128,7 +128,7 @@ public:
       })
 };
 
-CUDAQ_REGISTER_TYPE(RepeatBackTwoWithArgs)
+CUDAQ_EXT_PT_REGISTER_TYPE(RepeatBackTwoWithArgs)
 
 } // namespace cudaqx::testing
 
@@ -672,9 +672,8 @@ TEST(TensorTest, CopyData) {
 
 TEST(TensorTest, TakeData) {
   std::vector<std::size_t> shape = {2, 2};
-  auto data = new std::complex<double>[4] {
-    {1.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}, { 1.0, 0.0 }
-  };
+  auto data = new std::complex<double>[4]{
+      {1.0, 0.0}, {0.0, 1.0}, {0.0, -1.0}, {1.0, 0.0}};
   cudaqx::tensor t(shape);
 
   t.take(data, shape);
@@ -812,6 +811,21 @@ TEST(HeterogeneousMapTest, RelatedTypes) {
   EXPECT_EQ(map.get<std::size_t>("int_key"), 42);
   EXPECT_EQ(map.get<long>("int_key"), 42);
   EXPECT_EQ(map.get<short>("int_key"), 42);
+}
+
+// Python kwargs store int as std::size_t; get<bool> must accept it
+// (RelatedTypesMap<bool>).
+TEST(HeterogeneousMapTest, GetBoolFromSizeT) {
+  cudaqx::heterogeneous_map map;
+  map.insert("flag", std::size_t(1));
+  map.insert("off", std::size_t(0));
+
+  EXPECT_TRUE(map.get<bool>("flag"));
+  EXPECT_FALSE(map.get<bool>("off"));
+  EXPECT_TRUE(map.get<bool>("flag", false));
+  EXPECT_FALSE(map.get<bool>("off", true));
+  EXPECT_FALSE(map.get<bool>("missing", false));
+  EXPECT_TRUE(map.get<bool>("missing", true));
 }
 
 TEST(HeterogeneousMapTest, CharArrayConversion) {

@@ -1,5 +1,5 @@
 # ============================================================================ #
-# Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                   #
+# Copyright (c) 2024 - 2026 NVIDIA Corporation & Affiliates.                   #
 # All rights reserved.                                                         #
 #                                                                              #
 # This source code and the accompanying materials are made available under     #
@@ -64,6 +64,27 @@ def set_target():
     cudaq.set_target("stim")
     yield
     cudaq.reset_target()
+
+
+@pytest.mark.parametrize(
+    "dem_fn",
+    [
+        qec.dem_from_memory_circuit,
+        qec.x_dem_from_memory_circuit,
+        qec.z_dem_from_memory_circuit,
+    ],
+)
+def test_dem_from_memory_circuit_requires_noise_model(dem_fn):
+    # DEM generation needs noise mechanisms, so omitted/None noise must fail
+    # before the binding dereferences an empty optional noise model.
+    code = qec.get_code('steane')
+    statePrep = qec.operation.prep0
+
+    with pytest.raises(RuntimeError, match="requires a noise model"):
+        dem_fn(code, statePrep, 1)
+
+    with pytest.raises(RuntimeError, match="requires a noise model"):
+        dem_fn(code, statePrep, 1, None)
 
 
 def test_dem_from_memory_circuit():
@@ -160,8 +181,8 @@ def test_decoding_from_dem_from_memory_circuit():
     syndromes = syndromes.reshape((nShots, -1))
     decoder = qec.get_decoder('single_error_lut', dem.detector_error_matrix)
     dr = decoder.decode_batch(syndromes)
-    error_predictions = np.array([e.result for e in dr], dtype=np.uint8)
-    dr_converged = np.array([e.converged for e in dr], dtype=np.uint8)
+    error_predictions = np.asarray(dr.result, dtype=np.uint8)
+    dr_converged = np.asarray(dr.converged, dtype=np.uint8)
 
     data_predictions = (dem.observables_flips_matrix @ error_predictions.T) % 2
     print(f'data_predictions.shape: {data_predictions.shape}')
@@ -249,12 +270,11 @@ def test_decoding_from_surface_code_dem_from_memory_circuit(
     print(f'decoder_name: {decoder_name}')
 
     dr = decoder.decode_batch(syndromes)
-    error_predictions = np.array([e.result for e in dr], dtype=np.uint8)
-    dr_converged = np.array([e.converged for e in dr], dtype=np.uint8)
+    error_predictions = np.asarray(dr.result, dtype=np.uint8)
+    dr_converged = np.asarray(dr.converged, dtype=np.uint8)
     if decoder_name == "tensor_network_decoder":
         # Tensor network decoder returns the observable flips, not the error predictions.
-        data_predictions = np.array([np.round(e.result) for e in dr],
-                                    dtype=np.uint8).T
+        data_predictions = np.round(dr.result).astype(np.uint8).T
     else:
         data_predictions = (
             dem.observables_flips_matrix @ error_predictions.T) % 2
@@ -272,6 +292,49 @@ def test_decoding_from_surface_code_dem_from_memory_circuit(
     nLogicalErrorsWithDecoding = np.sum(data_predictions ^ logical_measurements)
     print(f'nLogicalErrorsWithoutDecoding : {nLogicalErrorsWithoutDecoding}')
     print(f'nLogicalErrorsWithDecoding    : {nLogicalErrorsWithDecoding}')
+    assert nLogicalErrorsWithDecoding < nLogicalErrorsWithoutDecoding
+
+
+def test_pymatching_decode_to_observable_surface_code_dem():
+    """Test PyMatching with O (observables) matrix: decoder returns observable
+    flips directly.cpp)."""
+    cudaq.set_random_seed(13)
+    code = qec.get_code('surface_code', distance=5)
+    Lz = code.get_observables_z()
+    p = 0.003
+    noise = cudaq.NoiseModel()
+    noise.add_all_qubit_channel("x", cudaq.Depolarization2(p), 1)
+    statePrep = qec.operation.prep0
+    nRounds = 5
+    nShots = 2000
+
+    syndromes, data = qec.sample_memory_circuit(code, statePrep, nShots,
+                                                nRounds, noise)
+
+    logical_measurements = (Lz @ data.transpose()) % 2
+    logical_measurements = logical_measurements.flatten()
+
+    syndromes = syndromes.reshape((nShots, nRounds, -1))
+    syndromes = syndromes[:, :, :syndromes.shape[2] // 2]
+    syndromes = syndromes.reshape((nShots, -1))
+
+    dem = qec.z_dem_from_memory_circuit(code, statePrep, nRounds, noise)
+
+    decoder = qec.get_decoder(
+        'pymatching',
+        dem.detector_error_matrix,
+        O=dem.observables_flips_matrix,
+        error_rate_vec=np.array(dem.error_rates),
+    )
+
+    dr = decoder.decode_batch(syndromes)
+    # With decode_to_observables=True, each row is observable flips
+    # (length num_observables), not error predictions.
+    obs_per_shot = np.asarray(dr.result, dtype=np.float64)
+    data_predictions = np.round(obs_per_shot).astype(np.uint8).T
+
+    nLogicalErrorsWithoutDecoding = np.sum(logical_measurements)
+    nLogicalErrorsWithDecoding = np.sum(data_predictions ^ logical_measurements)
     assert nLogicalErrorsWithDecoding < nLogicalErrorsWithoutDecoding
 
 

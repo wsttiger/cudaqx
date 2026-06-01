@@ -6,14 +6,16 @@
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
 
-from typing import Optional, Any, Union
+from __future__ import annotations
+
+from typing import Any
 import cudaq_qec as qec
+import numpy as np
 
 import numpy.typing as npt
 from quimb.tensor import TensorNetwork
+import torch
 from autoray import do, to_backend_dtype
-import cupy
-
 from .tensor_network_utils.contractors import ContractorConfig, optimize_path
 from .tensor_network_utils.tensor_network_factory import (
     tensor_network_from_parity_check, tensor_network_from_single_syndrome,
@@ -102,11 +104,11 @@ class TensorNetworkDecoder:
         self,
         H: npt.NDArray[Any],
         logical_obs: npt.NDArray[Any],
-        noise_model: Union[TensorNetwork, list[float]],
-        check_inds: Optional[list[str]] = None,
-        error_inds: Optional[list[str]] = None,
-        logical_inds: Optional[list[str]] = None,
-        logical_tags: Optional[list[str]] = None,
+        noise_model: TensorNetwork | list[float],
+        check_inds: list[str] | None = None,
+        error_inds: list[str] | None = None,
+        logical_inds: list[str] | None = None,
+        logical_tags: list[str] | None = None,
         contract_noise_model: bool = True,
         dtype: str = "float32",
         device: str = "cuda",
@@ -135,13 +137,7 @@ class TensorNetworkDecoder:
 
         qec.Decoder.__init__(self, H)
 
-        try:
-            gpu_available = cupy.cuda.is_available()
-        except cupy.cuda.runtime.CUDARuntimeError:
-            gpu_available = False
-            print(
-                "CUDA driver error on first check, assuming no GPU or insufficient driver."
-            )
+        gpu_available = torch.cuda.is_available()
 
         if gpu_available and "cuda" in device:
             contractor_name = "cutensornet"
@@ -222,8 +218,8 @@ class TensorNetworkDecoder:
     def replace_logical_observable(
             self,
             logical_obs: npt.NDArray[Any],
-            logical_inds: Optional[list[str]] = None,
-            logical_tags: Optional[list[str]] = None) -> None:
+            logical_inds: list[str] | None = None,
+            logical_tags: list[str] | None = None) -> None:
         """Add logical observables to the tensor network.
         Args:
             logical_obs (np.ndarray): The logical matrix.
@@ -334,7 +330,7 @@ class TensorNetworkDecoder:
         contractor: str,
         device: str,
         backend: str,
-        dtype: Optional[str] = None,
+        dtype: str | None = None,
     ) -> None:
         """Set the contractor for the tensor network.
 
@@ -421,15 +417,17 @@ class TensorNetworkDecoder:
     def decode_batch(
         self,
         syndrome_batch: npt.NDArray[Any],
-    ) -> list["qec.DecoderResult"]:
+    ) -> "qec.BatchDecoderResult":
         """Decode a batch of detection events.
 
         Args:
             syndrome_batch (np.ndarray): A numpy array of shape (batch_size, syndrome_length) where each row is a detection event.
 
         Returns:
-            list[qec.DecoderResult]: list of results for each detection event in the batch.
-                The probabilities that the logical observable flipped for each syndrome.
+            qec.BatchDecoderResult: batched results for each detection event in
+                the batch. The `result` field has shape (batch_size, 1) and
+                contains the probabilities that the logical observable flipped
+                for each syndrome.
         """
 
         assert hasattr(self, "noise_model")
@@ -464,16 +462,20 @@ class TensorNetworkDecoder:
             device_id=self.contractor_config.device_id,
         )
 
-        res = []
+        probabilities = []
         for r in range(syndrome_batch.shape[0]):
-            res.append(qec.DecoderResult())
-            res[r].converged = True
-            res[r].result = [
+            probabilities.append(
                 float(contraction_value[r, 1] /
-                      (contraction_value[r, 1] + contraction_value[r, 0]))
-            ]
+                      (contraction_value[r, 1] + contraction_value[r, 0])))
 
-        return res
+        # Python `decode_batch` override: construct a BatchDecoderResult
+        # directly, bypassing the native decoder aggregation path. This is
+        # the only sanctioned caller of the BatchDecoderResult constructor;
+        # see its docstring for the supported construction surface.
+        return qec.BatchDecoderResult(
+            np.asarray(probabilities, dtype=np.float64).reshape((-1, 1)),
+            np.ones(syndrome_batch.shape[0], dtype=bool),
+        )
 
     def optimize_path(
         self,
@@ -483,8 +485,9 @@ class TensorNetworkDecoder:
         """Optimize the contraction path of the tensor network.
 
         Args:
-            optimize (Optional[cutn.OptimizerOptions], optional): The optimization options to use. 
-                If None or cuquantum.tensornet.OptimizerOptions, we use cuquantum.tensornet.
+            optimize (cuquantum.tensornet.OptimizerOptions | None, optional):
+                The optimization options to use.
+                If None or ``cuquantum.tensornet.OptimizerOptions``, we use cuquantum.tensornet.
                 Else, Quimb interface at 
                 https://quimb.readthedocs.io/en/latest/autoapi/quimb/tensor/tensor_core/index.html#quimb.tensor.tensor_core.TensorNetwork.contraction_info
             batch_size (int, optional): The batch size for the optimization. Defaults to -1, which means no batching.
@@ -493,7 +496,6 @@ class TensorNetworkDecoder:
         """
         assert isinstance(batch_size, int), ("batch_size must be an integer, "
                                              "or -1 to indicate no batching.")
-        from cuquantum.tensornet import OptimizerOptions
 
         is_batch = batch_size > 0
 

@@ -41,13 +41,19 @@ jobs:
     permissions: write-all
     steps:
       - name: Install dependencies
+        id: deps
         run: |
           apt update && apt install -y --no-install-recommends zip unzip patchelf git-lfs
+          cuda_major=$(echo ${{ matrix.cuda_version }} | cut -d . -f1)
+          echo "cuda_major=$cuda_major" >> $GITHUB_OUTPUT
+          # custabilizer-cuXX is pulled in transitively by cuquantum-python-cuXX;
+          # it provides the headers/library that FindcuStabilizer.cmake locates.
+          pip install "cuquantum-python-cu${cuda_major}>=26.3.0"
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release-number == '0.0.0' && 'main' || format('releases/v{0}', inputs.release-number) }}
+          ref: ${{ inputs.release-number == '0.0.0' && github.ref || format('releases/v{0}', inputs.release-number) }}
           set-safe-directory: true
           lfs: true # download assets file(s) for TRT tests
 
@@ -90,6 +96,32 @@ jobs:
           echo "cuda_major=$cuda_major" >> $GITHUB_OUTPUT
 
       # ========================================================================
+      # Build cuda-quantum realtime (base library, no Hololink tools)
+      # ========================================================================
+
+      - name: Get required CUDAQ version
+        id: get-cudaq-version
+        uses: ./.github/actions/get-cudaq-version
+
+      - name: Build cuda-quantum realtime
+        run: |
+          CUDAQ_REPO="${{ steps.get-cudaq-version.outputs.repo }}"
+          CUDAQ_REF="${{ steps.get-cudaq-version.outputs.ref }}"
+          CUDAQ_REALTIME_ROOT=/tmp/cudaq-realtime
+          cd /tmp
+          rm -rf cudaq-realtime-src $CUDAQ_REALTIME_ROOT
+          git clone --filter=blob:none --no-checkout "https://github.com/${CUDAQ_REPO}.git" cudaq-realtime-src
+          cd cudaq-realtime-src
+          git sparse-checkout init --cone
+          git sparse-checkout set realtime
+          git checkout "$CUDAQ_REF"
+          cd realtime && mkdir -p build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=$CUDAQ_REALTIME_ROOT ..
+          ninja && ninja install
+          echo "CUDAQ_REALTIME_ROOT=$CUDAQ_REALTIME_ROOT" >> $GITHUB_ENV
+        shell: bash
+
+      # ========================================================================
       # Build
       # ========================================================================
 
@@ -101,6 +133,7 @@ jobs:
           cuda_version: ${{ matrix.cuda_version }}
           platform: ${{ matrix.runner.arch }}
           install-prefix: /usr/local/cudaq
+          cudaq-prefix: /usr/local/cudaq
 
       - name: Save build artifacts
         run: |
@@ -133,7 +166,7 @@ jobs:
           # Install the correct torch first.
           cuda_no_dot=$(echo ${{ matrix.cuda_version }} | sed 's/\.//')
           pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu${cuda_no_dot}
-          pip install numpy pytest onnxscript cupy-cuda${{ steps.config.outputs.cuda_major }}x cuquantum-cu${{ steps.config.outputs.cuda_major }} lightning ml_collections mpi4py transformers quimb opt_einsum nvidia-cublas cuquantum-python-cu${{ steps.config.outputs.cuda_major }}==25.09.1
+          pip install numpy pytest onnxscript cuquantum-cu${{ steps.config.outputs.cuda_major }} lightning ml_collections mpi4py transformers quimb opt_einsum cotengra nvidia-cublas "cuquantum-python-cu${{ steps.config.outputs.cuda_major }}>=26.3.0"
           # The following tests are needed for docs/sphinx/examples/qec/python/tensor_network_decoder.py.
           if [ "$(uname -m)" == "x86_64" ]; then
               # Stim is not currently available on manylinux ARM wheels, so only
@@ -165,4 +198,3 @@ jobs:
         run: |
           ln -s /usr/local/cudaq /cudaq-install
           bash scripts/ci/test_examples.sh all 
-

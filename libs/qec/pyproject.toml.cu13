@@ -12,7 +12,8 @@ requires-python = ">=3.11"
 readme = "README.md"
 license = "LicenseRef-NVIDIA-Proprietary"
 dependencies = [
-  'cuda-quantum-cu13 >= 0.13',
+  'cuda-quantum-cu13 == 0.14.*',
+  'cuquantum-python-cu13>=26.03.0',
 ]
 classifiers = [
     'Intended Audience :: Science/Research',
@@ -57,8 +58,9 @@ write_to = "_version.py"
 tensor_network_decoder = [
   "quimb",
   "opt_einsum",
+  "cotengra",
   "torch>=2.9.0",
-  "cuquantum-python-cu13==25.09.1"
+  "cuquantum-python-cu13>=26.3.0"
 ]
 trt_decoder = [
   "tensorrt-cu13"
@@ -66,7 +68,8 @@ trt_decoder = [
 all = [
   "quimb",
   "opt_einsum",
+  "cotengra",
   "torch>=2.9.0",
-  "cuquantum-python-cu13==25.09.1",
+  "cuquantum-python-cu13>=26.3.0",
   "tensorrt-cu13"
 ]

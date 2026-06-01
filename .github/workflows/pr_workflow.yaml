@@ -40,8 +40,8 @@ jobs:
           base: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.sha }}
           filters: |
             build-cudaq:
-              - '.github/workflows/cudaq_bump.yml'
               - '.github/actions/get-cudaq-build/**'
+              - '.github/actions/get-cudaq-version/**'
               - '.github/workflows/scripts/build_cudaq.sh'
               - '.cudaq_version'
             build-docs:
@@ -52,19 +52,23 @@ jobs:
               - '**/*.py'
             build-all:
               - '.github/actions/build-lib/action.yaml'
-              - '.github/actions/build-lib/build_all.yaml'
+              - '.github/actions/build-lib/build_all.sh'
+              - '.github/actions/build-lib/setup_custabilizer.sh'
               - '.github/workflows/all_libs.yaml'
               - 'cmake/Modules/**'
               - '**/CMakeLists.txt'
             build-qec:
               - '.github/actions/build-lib/action.yaml'
               - '.github/actions/build-lib/build_qec.sh'
+              - '.github/actions/build-lib/setup_custabilizer.sh'
               - '.github/workflows/lib_qec.yaml'
               - 'cmake/Modules/**'
               - 'libs/core/**/*.cpp'
               - 'libs/core/**/*.h'
               - 'libs/core/**/CMakeLists.txt'
               - 'libs/qec/**/*.cpp'
+              - 'libs/qec/**/*.cu'
+              - 'libs/qec/**/*.cuh'
               - 'libs/qec/**/*.h'
               - 'libs/qec/**/*.in'
               - 'libs/qec/**/*.py'
@@ -97,7 +101,7 @@ jobs:
         platform: ['amd64', 'arm64']
         cuda_version: ['12.6', '13.0']
     runs-on: ${{ startsWith(github.repository, 'NVIDIA/cudaqx') && format('linux-{0}-cpu32', matrix.platform) || 'ubuntu-latest' }}
-    container: ghcr.io/nvidia/cuda-quantum-devdeps:ext-${{ matrix.platform }}-cu${{ matrix.cuda_version }}-gcc11-main
+    container: ghcr.io/nvidia/cuda-quantum-devcontainer:${{ matrix.platform }}-cu${{ matrix.cuda_version }}-gcc12-main
     permissions:
       actions: write
       contents: read

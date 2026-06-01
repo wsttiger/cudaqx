@@ -7,8 +7,9 @@
  ******************************************************************************/
 
 #include "sliding_window.h"
-#include "common/Logger.h"
+#include "common/FmtCore.h"
 #include "cudaq/qec/pcm_utils.h"
+#include "cudaq/runtime/logger/logger.h"
 #include <cassert>
 #include <vector>
 
@@ -292,6 +293,10 @@ decoder_result sliding_window::decode(const std::vector<float_t> &syndrome) {
 
 std::vector<decoder_result> sliding_window::decode_batch(
     const std::vector<std::vector<float_t>> &syndromes) {
+  if (syndromes.empty()) {
+    CUDAQ_DBG("Returning empty decoder_result (no syndrome)");
+    return {};
+  }
   if (syndromes[0].size() == this->syndrome_size) {
     CUDAQ_DBG("Decoding whole block");
     // Decode the whole thing, iterating over windows manually.
@@ -477,6 +482,6 @@ std::size_t sliding_window::get_num_syndromes_per_round() const {
   return num_syndromes_per_round;
 }
 
-CUDAQ_REGISTER_TYPE(sliding_window)
+CUDAQ_EXT_PT_REGISTER_TYPE(sliding_window)
 
 } // namespace cudaq::qec

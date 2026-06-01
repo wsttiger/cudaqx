@@ -1,4 +1,5 @@
 name: Build a CUDAQX library
+description: Configure, build, and optionally cache a CUDA-QX library
 
 inputs:
   lib:
@@ -21,7 +22,11 @@ inputs:
     required: true
   install-prefix:
     description: 'Install prefix'
-    default: '~/.cudaqx'
+    default: '$HOME/.cudaqx'
+    required: false
+  cudaq-prefix:
+    description: 'CUDA-Q install prefix'
+    default: '/cudaq-install'
     required: false
 outputs:
   build-dir:
@@ -41,7 +46,7 @@ runs:
     - name: Compilation cache key
       id: ccache-key
       run: |
-        echo "main=ccache-${{ inputs.lib }}-cu${{ inputs.cuda_version }}-gcc11-${{ inputs.platform }}" >> $GITHUB_OUTPUT
+        echo "main=ccache-${{ inputs.lib }}-cu${{ inputs.cuda_version }}-gcc12-${{ inputs.platform }}" >> $GITHUB_OUTPUT
         if [[ -n "${{ inputs.pr-number }}" ]]; then
           echo "pr=-pr${{ inputs.pr-number }}" >> $GITHUB_OUTPUT
         fi
@@ -57,13 +62,17 @@ runs:
         restore-keys: |
           ${{ steps.ccache-key.outputs.main }}
 
+    - name: Install GitHub CLI
+      run: bash .github/workflows/scripts/install_git_cli.sh
+      shell: bash
+
     - name: Build library
       id: build-lib
       env:
         CCACHE_DIR: /ccache-${{ inputs.lib }}
       run: |
         build_dir=build_${{ inputs.lib }}
-        .github/actions/build-lib/build_${{ inputs.lib }}.sh $build_dir ${{ inputs.install-prefix }}
+        .github/actions/build-lib/build_${{ inputs.lib }}.sh "$build_dir" "${{ inputs.install-prefix }}" "${{ inputs.cudaq-prefix }}"
         echo "build_dir=$build_dir" >> $GITHUB_OUTPUT
       shell: bash
 
@@ -86,4 +95,3 @@ runs:
       with:
         path: /ccache-${{ inputs.lib }}
         key: ${{ steps.ccache-key.outputs.main }}${{ steps.ccache-key.outputs.pr }}
-

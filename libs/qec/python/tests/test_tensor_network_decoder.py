@@ -10,6 +10,9 @@ import sys
 import pytest
 
 import numpy as np
+
+torch = pytest.importorskip(
+    "torch", reason="torch not installed; skipping TN decoder tests")
 import cudaq_qec as qec
 
 if sys.version_info >= (3, 11):
@@ -20,8 +23,7 @@ if sys.version_info >= (3, 11):
         prepare_syndrome_data_batch, tensor_network_from_syndrome_batch,
         tensor_network_from_logical_observable)
     from cudaq_qec.plugins.decoders.tensor_network_utils.contractors import (
-        optimize_path, cutn_contractor, ContractorConfig, contractor,
-        cutn_contractor)
+        optimize_path, cutn_contractor, ContractorConfig, contractor)
     from cudaq_qec.plugins.decoders.tensor_network_utils.noise_models import factorized_noise_model, error_pairs_noise_model
 
 pytestmark = pytest.mark.skipif(sys.version_info < (3, 11),
@@ -29,13 +31,7 @@ pytestmark = pytest.mark.skipif(sys.version_info < (3, 11),
 
 
 def is_nvidia_gpu_available():
-    import cupy
-    try:
-        return cupy.cuda.is_available()
-    except cupy.cuda.runtime.CUDARuntimeError:
-        # The nvidia-smi command is not found, indicating no NVIDIA GPU drivers
-        return False
-    return False
+    return torch.cuda.is_available()
 
 
 def make_simple_code():
@@ -144,7 +140,7 @@ def test_decoder_decode_single():
     res = decoder.decode(syndrome)
     assert hasattr(res, "converged")
     assert hasattr(res, "result")
-    assert isinstance(res.result, list)
+    assert isinstance(res.result, np.ndarray)
     assert 0.0 <= res.result[0] <= 1.0
 
 
@@ -156,12 +152,14 @@ def test_decoder_decode_batch():
                               noise_model=noise)
     batch = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
     res = decoder.decode_batch(batch)
-    print([r.result for r in res])
-    assert isinstance(res, list)
-    assert all(hasattr(r, "converged") and hasattr(r, "result") for r in res)
-    assert all(
-        isinstance(r.result, list) and 0.0 <= np.round(r.result[0]) <= 1.0
-        for r in res)
+    print(res.result)
+    assert isinstance(res, qec.BatchDecoderResult)
+    assert isinstance(res.result, np.ndarray)
+    assert res.result.shape == (3, 1)
+    assert res.converged.shape == (3,)
+    assert np.all(res.converged)
+    assert np.all((0.0 <= np.round(res.result[:, 0])) &
+                  (np.round(res.result[:, 0]) <= 1.0))
 
 
 def test_decoder_set_contractor_invalid():
@@ -183,7 +181,6 @@ def test_TensorNetworkDecoder_optimize_path_all_variants():
     from cuquantum import tensornet as cutn
     from opt_einsum.contract import PathInfo
     from cuquantum.tensornet.configuration import OptimizerInfo
-    import cupy
 
     # Simple code setup
     H = np.array([[1, 1, 0], [0, 1, 1]], dtype=np.uint8)
@@ -232,7 +229,6 @@ def test_decoder_batch_vs_single_and_expected_results_with_contractors():
     noise = np.random.uniform(0.01, 0.2, size=n_errors).tolist()
 
     import cudaq_qec as qec
-    import cupy
     import logging
     from cudaq_qec.plugins.decoders.tensor_network_decoder import TensorNetworkDecoder
 
@@ -297,20 +293,19 @@ def test_decoder_batch_vs_single_and_expected_results_with_contractors():
         # Decode the batch
         try:
             res_batch = decoder.decode_batch(batch)
-            assert isinstance(res_batch, list)
-            assert all(isinstance(r, qec.DecoderResult) for r in res_batch)
-            assert all(r.converged for r in res_batch)
+            assert isinstance(res_batch, qec.BatchDecoderResult)
+            assert np.all(res_batch.converged)
         except Exception as e:
             logging.error(f"Test failed due to: {e}")
             pytest.fail(f"Operation failed: {e}")
 
         if dtype == "float32":
-            batch_results = [np.float32(r.result[0]) for r in res_batch]
+            batch_results = res_batch.result[:, 0].astype(np.float32)
             expected_cast = np.array(expected, dtype=np.float32)
             rtol = 1e-5
             atol = 1e-5
         else:
-            batch_results = [np.float64(r.result[0]) for r in res_batch]
+            batch_results = res_batch.result[:, 0].astype(np.float64)
             expected_cast = np.array(expected, dtype=np.float64)
             rtol = 1e-5
             atol = 1e-5
@@ -454,7 +449,6 @@ def test_optimize_path_numpy_variants():
     from quimb.tensor import TensorNetwork, Tensor
     from cuquantum import tensornet as cutn
     from opt_einsum.contract import PathInfo
-    import cupy
 
     tn = TensorNetwork([
         Tensor(np.ones((2, 2)), inds=("a", "b")),

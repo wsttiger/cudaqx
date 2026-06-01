@@ -14,8 +14,8 @@
 #include "cudaq/solvers/operators/molecule/fermion_compiler.h"
 #include "cudaq/solvers/operators/molecule/molecule_package_driver.h"
 
-#include "common/Logger.h"
 #include "common/RestClient.h"
+#include "cudaq/runtime/logger/logger.h"
 
 #include <filesystem>
 #include <fmt/core.h>
@@ -191,6 +191,6 @@ public:
                                  num_electrons,   numOrb, energies};
   }
 };
-CUDAQ_REGISTER_TYPE(RESTPySCFDriver)
+CUDAQ_EXT_PT_REGISTER_TYPE(RESTPySCFDriver)
 
 } // namespace cudaq::solvers

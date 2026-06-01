@@ -197,6 +197,7 @@ void stabilizer_grid::print_stabilizer_coords() const {
 }
 
 void stabilizer_grid::print_stabilizer_indices() const {
+  auto orig_flags = std::cout.flags();
   int width = std::to_string(z_stab_indices.size()).length() + 2;
   for (size_t row = 0; row < grid_length; ++row) {
     for (size_t col = 0; col < grid_length; ++col) {
@@ -221,6 +222,7 @@ void stabilizer_grid::print_stabilizer_indices() const {
     std::cout << "\n";
   }
   std::cout << "\n";
+  std::cout.flags(orig_flags);
 }
 
 void stabilizer_grid::print_stabilizer_maps() const {
@@ -248,6 +250,7 @@ void stabilizer_grid::print_stabilizer_maps() const {
 }
 
 void stabilizer_grid::print_data_grid() const {
+  auto orig_flags = std::cout.flags();
   int width = std::to_string(distance).length() + 2;
 
   for (size_t row = 0; row < distance; ++row) {
@@ -258,6 +261,7 @@ void stabilizer_grid::print_data_grid() const {
     std::cout << "\n";
   }
   std::cout << "\n";
+  std::cout.flags(orig_flags);
 }
 
 void stabilizer_grid::print_stabilizer_grid() const {
@@ -401,6 +405,6 @@ std::size_t surface_code::get_num_z_stabilizers() const {
 }
 
 /// @brief Register the surace_code type
-CUDAQ_REGISTER_TYPE(surface_code)
+CUDAQ_EXT_PT_REGISTER_TYPE(surface_code)
 
 } // namespace cudaq::qec::surface_code

@@ -5,23 +5,35 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-from typing import Any, Optional, Union
+"""Static noise-model tensor-network builders.
+
+:func:`factorized_noise_model` and :func:`error_pairs_noise_model` return
+:class:`quimb.tensor.TensorNetwork` objects whose open indices match the
+error indices of the parent decoder.  The networks are combined with the
+code / logical / syndrome tensor networks inside
+:class:`TensorNetworkDecoder`.
+
+For differentiable noise learning (:class:`NMOptimizer`,
+:func:`make_compiled_step`), see :mod:`.nm_optimizer`.
+"""
+from __future__ import annotations
+
 import numpy as np
 from quimb import oset
-from quimb.tensor import TensorNetwork, Tensor
+from quimb.tensor import Tensor, TensorNetwork
 
 
 def factorized_noise_model(
         error_indices: list[str],
-        error_probabilities: Union[list[float], np.ndarray],
-        tensors_tags: Optional[list[str]] = None) -> TensorNetwork:
+        error_probabilities: list[float] | np.ndarray,
+        tensors_tags: list[str] | None = None) -> TensorNetwork:
     """
     Construct a factorized (product state) noise model as a tensor network.
 
     Args:
         error_indices (list[str]): list of error index names.
         error_probabilities (Union[list[float], np.ndarray]): list or array of error probabilities for each error index.
-        tensors_tags (Optional[list[str]], optional): list of tags for each tensor. If None, default tags are used.
+        tensors_tags (list[str] | None, optional): list of tags for each tensor. If None, default tags are used.
 
     Returns:
         TensorNetwork: The tensor network representing the factorized noise model.
@@ -60,14 +72,14 @@ def factorized_noise_model(
 def error_pairs_noise_model(
         error_index_pairs: list[tuple[str, str]],
         error_probabilities: list[np.ndarray],
-        tensors_tags: Optional[list[str]] = None) -> TensorNetwork:
+        tensors_tags: list[str] | None = None) -> TensorNetwork:
     """
     Construct a noise model as a tensor network for correlated error pairs.
 
     Args:
         error_index_pairs (list[tuple[str, str]]): list of pairs of error index names.
         error_probabilities (list[np.ndarray]): list of 2x2 probability matrices for each error pair.
-        tensors_tags (Optional[list[str]], optional): list of tags for each tensor. If None, default tags are used.
+        tensors_tags (list[str] | None, optional): list of tags for each tensor. If None, default tags are used.
 
     Returns:
         TensorNetwork: The tensor network representing the error pairs noise model.

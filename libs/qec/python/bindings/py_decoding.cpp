@@ -8,36 +8,21 @@
 
 #include "py_decoding.h"
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
-#include "cudaq/python/PythonCppInterop.h"
+#include "cudaq/python/PythonCppInteropDecls.h"
 
 #include "cudaq/qis/qubit_qis.h"
-namespace py = pybind11;
+
+namespace nb = nanobind;
 
 namespace cudaq::qec::decoding {
 
-// Convert a Python iterable of bool/int/measure_result into
-// std::vector<cudaq::measure_result>
-static std::vector<cudaq::measure_result>
-to_measure_result_vector(const py::handle &iterable) {
-  std::vector<cudaq::measure_result> results;
-  for (const auto &item : iterable) {
-    if (py::isinstance<cudaq::measure_result>(item)) {
-      results.emplace_back(py::cast<cudaq::measure_result>(item));
-      continue;
-    }
-
-    bool b = py::cast<bool>(item);
-    results.emplace_back(cudaq::measure_result{b});
-  }
-  return results;
-}
-
-void bindDecoding(py::module &mod) {
-  auto qecmod = py::hasattr(mod, "qecrt")
-                    ? mod.attr("qecrt").cast<py::module_>()
+void bindDecoding(nb::module_ &mod) {
+  auto qecmod = nb::hasattr(mod, "qecrt")
+                    ? nb::cast<nb::module_>(mod.attr("qecrt"))
                     : mod.def_submodule("qecrt");
 
   // We split the bindings of device kernels into 2 phases:
@@ -47,23 +32,40 @@ void bindDecoding(py::module &mod) {
   // `load_device_kernels` function call. As the quake code is populated into
   // the quake registry after an appropriate library is loaded, we need to
   // ensure that the quake code is registered after the library is loaded.
-  py::module_ qecSubMod = [&]() {
+  nb::module_ qecSubMod = [&]() {
     const char *subModName = "qec";
-    if (py::hasattr(mod, subModName))
-      return mod.attr(subModName).cast<py::module_>();
+    if (nb::hasattr(mod, subModName))
+      return nb::cast<nb::module_>(mod.attr(subModName));
     else
       return mod.def_submodule(subModName);
   }();
-  const std::string qecModName = qecSubMod.attr("__name__").cast<std::string>();
+  const std::string qecModName =
+      nb::cast<std::string>(qecSubMod.attr("__name__"));
   // Define these kernels as part of the qec submodule
   qecSubMod.def(
       "reset_decoder", [](std::uint64_t) {},
       R"pbdoc(Reset the decoder with the given ID.)pbdoc");
   qecSubMod.def(
       "enqueue_syndromes",
-      [](std::uint64_t, std::vector<cudaq::measure_result>, std::uint64_t) {},
+      [](std::uint64_t, std::vector<bool>, std::uint64_t) {},
       R"pbdoc(Reset the decoder with the given ID.)pbdoc"
       R"pbdoc(Enqueue a vector of syndrome bit for realtime decoding.
+                Parameters
+                - decoder_id: The ID of the decoder.
+                - syndromes: A vector of syndrome bits (0 or 1).
+                - tag: An optional tag for the enqueue operation.
+                        )pbdoc");
+  // Mirrors the C++ `enqueue_syndromes_test(uint64_t, vector<bool>, uint64_t)`
+  // entry point. The Python device kernel must pre-discriminate any
+  // `list[measure_handle]` via `cudaq.to_bools(...)` before the call. Used by
+  // app examples that already own bool-typed syndrome bits (file replay or
+  // explicit kernel-side discrimination) where the production
+  // `enqueue_syndromes(vector<measure_result>)` shape is the wrong fit.
+  qecSubMod.def(
+      "enqueue_syndromes_test",
+      [](std::uint64_t, std::vector<bool>, std::uint64_t) {},
+      R"pbdoc(Test-only entry point for enqueueing pre-discriminated syndrome
+              bits. Production code should use `enqueue_syndromes` instead.
                 Parameters
                 - decoder_id: The ID of the decoder.
                 - syndromes: A vector of syndrome bits (0 or 1).
@@ -84,8 +86,11 @@ void bindDecoding(py::module &mod) {
         cudaq::python::getMangledArgsString<std::uint64_t>());
     cudaq::python::registerDeviceKernel(
         qecModName, "enqueue_syndromes",
-        cudaq::python::getMangledArgsString<std::uint64_t,
-                                            std::vector<cudaq::measure_result>,
+        cudaq::python::getMangledArgsString<std::uint64_t, std::vector<bool>,
+                                            std::uint64_t>());
+    cudaq::python::registerDeviceKernel(
+        qecModName, "enqueue_syndromes_test",
+        cudaq::python::getMangledArgsString<std::uint64_t, std::vector<bool>,
                                             std::uint64_t>());
     cudaq::python::registerDeviceKernel(
         qecModName, "get_corrections",

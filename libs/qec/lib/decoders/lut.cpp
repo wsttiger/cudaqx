@@ -6,8 +6,8 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "common/Logger.h"
 #include "cudaq/qec/decoder.h"
+#include "cudaq/runtime/logger/logger.h"
 #include <algorithm>
 #include <cassert>
 #include <map>
@@ -239,7 +239,7 @@ public:
       })
 };
 
-CUDAQ_REGISTER_TYPE(multi_error_lut)
+CUDAQ_EXT_PT_REGISTER_TYPE(multi_error_lut)
 
 class single_error_lut : public multi_error_lut {
 public:
@@ -257,6 +257,6 @@ public:
       })
 };
 
-CUDAQ_REGISTER_TYPE(single_error_lut)
+CUDAQ_EXT_PT_REGISTER_TYPE(single_error_lut)
 
 } // namespace cudaq::qec

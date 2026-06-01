@@ -1,5 +1,5 @@
 # ============================================================================ #
-# Copyright (c) 2025 NVIDIA Corporation & Affiliates.                          #
+# Copyright (c) 2025 - 2026 NVIDIA Corporation & Affiliates.                   #
 # All rights reserved.                                                         #
 #                                                                              #
 # This source code and the accompanying materials are made available under     #
@@ -20,7 +20,7 @@ def setTarget():
     cudaq.set_target(old_target)
 
 
-@pytest.mark.parametrize("decoder_name", ["single_error_lut"])
+@pytest.mark.parametrize("decoder_name", ["single_error_lut", "pymatching"])
 @pytest.mark.parametrize("batched", [True, False])
 @pytest.mark.parametrize("num_rounds", [5, 10])
 @pytest.mark.parametrize("num_windows", [1, 2, 3])
@@ -62,24 +62,23 @@ def test_sliding_window_1(decoder_name, batched, num_rounds, num_windows):
         straddle_end_round=True,
         error_rate_vec=np.array(dem.error_rates),
         inner_decoder_name=decoder_name,
-        inner_decoder_params={'dummy_param': 1})
+        inner_decoder_params={
+            'dummy_param': 1,
+            'merge_strategy': 'smallest_weight'
+        })
 
     if batched:
         full_results = full_decoder.decode_batch(syndromes)
         sw_results = sw_as_full_decoder.decode_batch(syndromes)
-        num_mismatches = 0
-        for r1, r2 in zip(full_results, sw_results):
-            if r1.result != r2.result:
-                num_mismatches += 1
+        num_mismatches = np.count_nonzero(
+            np.any(full_results.result != sw_results.result, axis=1))
         assert num_mismatches == 0
 
     else:
-        full_results = []
-        sw_results = []
         num_mismatches = 0
         for syndrome in syndromes:
             r1 = full_decoder.decode(syndrome)
             r2 = sw_as_full_decoder.decode(syndrome)
-            if r1.result != r2.result:
+            if not np.array_equal(r1.result, r2.result):
                 num_mismatches += 1
         assert num_mismatches == 0
