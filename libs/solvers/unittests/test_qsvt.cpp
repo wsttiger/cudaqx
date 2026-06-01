@@ -57,6 +57,34 @@ TEST(QSVTTester, checkSequenceKernelCompile) {
   EXPECT_NO_THROW(sequence_functor_test());
 }
 
+TEST(QSVTTester, checkSequenceWalkDirectionKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+  auto plan = make_qsvt_plan({0.1, -0.2, 0.3});
+  auto phase_data = plan.phase_data();
+
+  auto adjoint_sequence_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsvt_sequence(signal, system, encoding, phase_data,
+                        qsvt_walk_direction::adjoint);
+  };
+  EXPECT_NO_THROW(adjoint_sequence_test());
+
+  auto adjoint_sequence_functor_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    qsvt_sequence{}(signal, system, encoding, phase_data,
+                    qsvt_walk_direction::adjoint);
+  };
+  EXPECT_NO_THROW(adjoint_sequence_functor_test());
+}
+
 TEST(QSVTTester, checkPlanMetadata) {
   using namespace cudaq::solvers;
 

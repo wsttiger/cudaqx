@@ -15,6 +15,9 @@
 
 namespace cudaq::solvers {
 
+/// @brief Direction of the qubitization walk used between QSVT phases.
+enum class qsvt_walk_direction { forward, adjoint };
+
 /// @brief QSVT host/device API boundary.
 ///
 /// qsvt_phase_sequence and qsvt_plan are host-side validation and metadata
@@ -77,22 +80,35 @@ struct qsvt_signal_phase {
 };
 
 /// @brief Apply a QSVT-style phase/walk sequence for a Pauli LCU encoding.
-/// @details Uses the convention phase[0], then repeats W followed by phase[j]
-/// for j = 1..degree, where W is the qubitization walk primitive. This helper
-/// does not validate phases in device code; callers should construct or verify
-/// a qsvt_phase_sequence on the host before invoking it.
+/// @details Uses the convention phase[0], then repeats a qubitization walk
+/// followed by phase[j] for j = 1..degree. This helper does not validate phases
+/// in device code; callers should construct or verify a qsvt_phase_sequence on
+/// the host before invoking it.
 __qpu__ inline void apply_qsvt_sequence(cudaq::qview<> signal,
                                         cudaq::qview<> system,
                                         const pauli_lcu &encoding,
-                                        const std::vector<double> &phases) {
+                                        const std::vector<double> &phases,
+                                        qsvt_walk_direction direction) {
   if (phases.empty())
     return;
 
   apply_qsvt_signal_phase(signal, phases[0]);
   for (std::size_t i = 1; i < phases.size(); ++i) {
-    apply_qubitization_walk(signal, system, encoding);
+    if (direction == qsvt_walk_direction::forward)
+      apply_qubitization_walk(signal, system, encoding);
+    else
+      apply_adjoint_qubitization_walk(signal, system, encoding);
     apply_qsvt_signal_phase(signal, phases[i]);
   }
+}
+
+/// @brief Apply a QSVT-style phase/walk sequence with forward walks.
+__qpu__ inline void apply_qsvt_sequence(cudaq::qview<> signal,
+                                        cudaq::qview<> system,
+                                        const pauli_lcu &encoding,
+                                        const std::vector<double> &phases) {
+  apply_qsvt_sequence(signal, system, encoding, phases,
+                      qsvt_walk_direction::forward);
 }
 
 /// @brief Kernel functor wrapper for applying a QSVT-style phase/walk sequence.
@@ -101,6 +117,12 @@ struct qsvt_sequence {
                   const pauli_lcu &encoding,
                   const std::vector<double> &phases) const __qpu__ {
     apply_qsvt_sequence(signal, system, encoding, phases);
+  }
+
+  void operator()(cudaq::qview<> signal, cudaq::qview<> system,
+                  const pauli_lcu &encoding, const std::vector<double> &phases,
+                  qsvt_walk_direction direction) const __qpu__ {
+    apply_qsvt_sequence(signal, system, encoding, phases, direction);
   }
 };
 
