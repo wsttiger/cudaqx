@@ -30,6 +30,25 @@ TEST(QSVTTester, checkSignalPhaseKernelCompile) {
   EXPECT_NO_THROW(three_signal_test());
 }
 
+TEST(QSVTTester, checkControlledSignalPhaseKernelCompile) {
+  using namespace cudaq::solvers;
+
+  auto controlled_phase_test = []() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(2);
+    x(control);
+    apply_controlled_qsvt_signal_phase(control, signal, 0.25);
+  };
+  EXPECT_NO_THROW(controlled_phase_test());
+
+  auto controlled_phase_functor_test = []() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(3);
+    controlled_qsvt_signal_phase{}(control, signal, -0.5);
+  };
+  EXPECT_NO_THROW(controlled_phase_functor_test());
+}
+
 TEST(QSVTTester, checkSequenceKernelCompile) {
   using namespace cudaq::spin;
   using namespace cudaq::solvers;
@@ -131,6 +150,97 @@ TEST(QSVTTester, checkQubitizationAndQSVTExecution) {
   };
   auto two_walk_counts = cudaq::sample(100, qsvt_two_walks);
   EXPECT_FLOAT_EQ(1.0, two_walk_counts.probability("0"));
+}
+
+TEST(QSVTTester, checkControlledSequenceKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+  auto plan = make_qsvt_plan({0.1, -0.2, 0.3});
+  auto kernel_data = plan.kernel_data();
+  auto phase_data = kernel_data.phases;
+  auto walk_direction_data = kernel_data.walk_directions;
+
+  auto controlled_sequence_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsvt_sequence(control, signal, system, encoding,
+                                   phase_data);
+  };
+  EXPECT_NO_THROW(controlled_sequence_test());
+
+  auto controlled_adjoint_sequence_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsvt_sequence(control, signal, system, encoding,
+                                   phase_data, qsvt_walk_direction::adjoint);
+  };
+  EXPECT_NO_THROW(controlled_adjoint_sequence_test());
+
+  auto controlled_policy_sequence_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsvt_sequence(control, signal, system, encoding,
+                                   phase_data, walk_direction_data);
+  };
+  EXPECT_NO_THROW(controlled_policy_sequence_test());
+
+  auto controlled_sequence_functor_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    controlled_qsvt_sequence{}(control, signal, system, encoding, phase_data,
+                               walk_direction_data);
+  };
+  EXPECT_NO_THROW(controlled_sequence_functor_test());
+}
+
+TEST(QSVTTester, checkControlledQSVTExecution) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = x(0);
+  pauli_lcu encoding(h, 1);
+  auto plan = make_qsvt_plan({0.0, 0.0});
+  auto kernel_data = plan.kernel_data();
+  auto phase_data = kernel_data.phases;
+  auto walk_direction_data = kernel_data.walk_directions;
+
+  auto control_off = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_controlled_qsvt_sequence(control, signal, system, encoding,
+                                   phase_data, walk_direction_data);
+  };
+  auto off_counts = cudaq::sample(100, control_off);
+  EXPECT_FLOAT_EQ(1.0, off_counts.probability("00"));
+
+  auto control_on = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsvt_sequence(control, signal, system, encoding,
+                                   phase_data, walk_direction_data);
+  };
+  auto on_counts = cudaq::sample(100, control_on);
+  EXPECT_FLOAT_EQ(1.0, on_counts.probability("11"));
 }
 
 TEST(QSVTTester, checkSequencePolicyKernelCompile) {
