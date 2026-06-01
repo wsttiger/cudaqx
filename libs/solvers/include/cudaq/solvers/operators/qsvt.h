@@ -391,6 +391,33 @@ struct qsvt_plan {
   }
 };
 
+/// @brief Host-side QSVT plan associated with a target matrix transform.
+/// @details This retains transform metadata for bookkeeping while exposing the
+/// same QPU-facing phase and walk-direction data as qsvt_plan. Kernels should
+/// consume kernel_data(), phase_data(), or walk_direction_data(), not this
+/// host-side object directly.
+struct qsvt_transform_plan {
+  qsvt_transform_descriptor transform_descriptor;
+  qsvt_plan sequence_plan;
+
+  qsvt_transform_plan(qsvt_transform_descriptor input_descriptor,
+                      qsvt_plan input_plan);
+
+  const qsvt_transform_descriptor &descriptor() const {
+    return transform_descriptor;
+  }
+  const qsvt_plan &plan() const { return sequence_plan; }
+  std::size_t num_phases() const { return sequence_plan.num_phases(); }
+  std::size_t degree() const { return sequence_plan.degree(); }
+  const std::vector<double> &phase_data() const {
+    return sequence_plan.phase_data();
+  }
+  const std::vector<int> &walk_direction_data() const {
+    return sequence_plan.walk_direction_data();
+  }
+  qsvt_kernel_data kernel_data() const { return sequence_plan.kernel_data(); }
+};
+
 /// @brief Return true if a QSVT phase sequence is non-empty and finite.
 bool is_valid_qsvt_phase_sequence(const std::vector<double> &phases);
 
@@ -462,13 +489,15 @@ qsvt_plan make_qsvt_plan(std::vector<double> phases,
 /// @details The transform descriptor is host-side metadata for validation and
 /// bookkeeping. Phase synthesis is intentionally out of scope; callers provide
 /// an explicit phase sequence.
-qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
-                                   std::vector<double> phases);
+qsvt_transform_plan
+make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                         std::vector<double> phases);
 
 /// @brief Construct a QSVT transform plan with an explicit walk policy.
-qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
-                                   std::vector<double> phases,
-                                   qsvt_sequence_policy policy);
+qsvt_transform_plan
+make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                         std::vector<double> phases,
+                         qsvt_sequence_policy policy);
 
 /// @brief Describe the inverse transform used by QSVT-based linear solve.
 qsvt_transform_descriptor

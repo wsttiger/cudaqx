@@ -431,12 +431,16 @@ TEST(QSVTTester, checkTransformPlanFactories) {
 
   auto real_time =
       make_real_time_hamiltonian_simulation_qsvt_transform(0.75, 1e-4, 2);
-  auto plan = make_qsvt_transform_plan(real_time, {0.1, -0.2, 0.3});
+  auto transform_plan = make_qsvt_transform_plan(real_time, {0.1, -0.2, 0.3});
 
-  EXPECT_EQ(plan.degree(), 2);
-  EXPECT_EQ(plan.num_phases(), 3);
-  EXPECT_DOUBLE_EQ(plan.phase_data()[1], -0.2);
-  EXPECT_EQ(plan.walk_direction_data()[0], qsvt_forward_walk);
+  EXPECT_EQ(transform_plan.descriptor().kind,
+            qsvt_transform_kind::real_time_hamiltonian_simulation);
+  EXPECT_EQ(transform_plan.degree(), 2);
+  EXPECT_EQ(transform_plan.num_phases(), 3);
+  EXPECT_DOUBLE_EQ(transform_plan.phase_data()[1], -0.2);
+  EXPECT_EQ(transform_plan.walk_direction_data()[0], qsvt_forward_walk);
+  EXPECT_EQ(transform_plan.plan().degree(), 2);
+  EXPECT_EQ(transform_plan.kernel_data().walk_directions.size(), 2);
 
   auto policy =
       make_alternating_qsvt_sequence_policy(2, qsvt_walk_direction::adjoint);

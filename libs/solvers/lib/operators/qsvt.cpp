@@ -52,6 +52,14 @@ qsvt_plan::qsvt_plan(std::vector<double> input_phases,
     : qsvt_plan(qsvt_phase_sequence(std::move(input_phases)),
                 std::move(input_policy)) {}
 
+qsvt_transform_plan::qsvt_transform_plan(
+    qsvt_transform_descriptor input_descriptor, qsvt_plan input_plan)
+    : transform_descriptor(std::move(input_descriptor)),
+      sequence_plan(std::move(input_plan)) {
+  validate_qsvt_transform_phase_sequence(transform_descriptor,
+                                         sequence_plan.phase_data());
+}
+
 bool is_valid_qsvt_phase_sequence(const std::vector<double> &phases) {
   if (phases.empty())
     return false;
@@ -203,17 +211,20 @@ void validate_qsvt_transform_phase_sequence(
         "degree hint.");
 }
 
-qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
-                                   std::vector<double> phases) {
+qsvt_transform_plan
+make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                         std::vector<double> phases) {
   validate_qsvt_transform_phase_sequence(descriptor, phases);
-  return qsvt_plan(std::move(phases));
+  return qsvt_transform_plan(descriptor, qsvt_plan(std::move(phases)));
 }
 
-qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
-                                   std::vector<double> phases,
-                                   qsvt_sequence_policy policy) {
+qsvt_transform_plan
+make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                         std::vector<double> phases,
+                         qsvt_sequence_policy policy) {
   validate_qsvt_transform_phase_sequence(descriptor, phases);
-  return qsvt_plan(std::move(phases), std::move(policy));
+  return qsvt_transform_plan(descriptor,
+                             qsvt_plan(std::move(phases), std::move(policy)));
 }
 
 qsvt_transform_descriptor
