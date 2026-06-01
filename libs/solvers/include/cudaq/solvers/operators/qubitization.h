@@ -1,0 +1,92 @@
+/****************************************************************-*- C++ -*-****
+ * Copyright (c) 2024 - 2025 NVIDIA Corporation & Affiliates.                  *
+ * All rights reserved.                                                        *
+ *                                                                             *
+ * This source code and the accompanying materials are made available under    *
+ * the terms of the Apache License 2.0 which accompanies this distribution.    *
+ ******************************************************************************/
+#pragma once
+
+#include "cudaq.h"
+#include "cudaq/solvers/operators/block_encoding.h"
+#include <cstddef>
+
+namespace cudaq::solvers {
+
+/// @brief Reflect about the all-zero state on an ancilla register.
+/// @details Applies X on all ancillas, a multi-controlled Z, then X again.
+/// This stays inline because it is used inside generated CUDA-Q kernels.
+__qpu__ inline void reflect_about_zero(cudaq::qview<> ancilla) {
+  for (std::size_t i = 0; i < ancilla.size(); ++i)
+    x(ancilla[i]);
+
+  std::size_t num_ancilla = ancilla.size();
+  if (num_ancilla == 0) {
+    return;
+  } else if (num_ancilla == 1) {
+    z(ancilla[0]);
+  } else if (num_ancilla == 2) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1]);
+  } else if (num_ancilla == 3) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2]);
+  } else if (num_ancilla == 4) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3]);
+  } else if (num_ancilla == 5) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4]);
+  } else if (num_ancilla == 6) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5]);
+  } else if (num_ancilla == 7) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6]);
+  } else if (num_ancilla == 8) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6], ancilla[7]);
+  } else if (num_ancilla == 9) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6], ancilla[7], ancilla[8]);
+  } else if (num_ancilla == 10) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6], ancilla[7], ancilla[8], ancilla[9]);
+  }
+
+  for (std::size_t i = 0; i < ancilla.size(); ++i)
+    x(ancilla[i]);
+}
+
+/// @brief Reflect about the state prepared by a Pauli LCU PREPARE circuit.
+/// @details Implements PREPARE dagger, zero-state reflection, PREPARE.
+__qpu__ inline void reflect_about_prepare(cudaq::qview<> ancilla,
+                                          const pauli_lcu &encoding) {
+  encoding.unprepare(ancilla);
+  reflect_about_zero(ancilla);
+  encoding.prepare(ancilla);
+}
+
+/// @brief Kernel functor wrapper for reflect_about_prepare.
+/// @details This makes the primitive convenient to pass into existing CUDA-Q
+/// kernel call sites that use functor-style kernels.
+struct prepare_reflection {
+  void operator()(cudaq::qview<> ancilla,
+                  const pauli_lcu &encoding) const __qpu__ {
+    reflect_about_prepare(ancilla, encoding);
+  }
+};
+
+/// @brief Build the projector |0><0| on an ancilla register.
+/// @param num_ancilla Number of ancilla qubits in the projector register.
+cudaq::spin_op build_ancilla_zero_projector(std::size_t num_ancilla);
+
+/// @brief Build the reflection observable R = 2|0><0| - I.
+/// @param num_ancilla Number of ancilla qubits in the projector register.
+cudaq::spin_op
+build_qubitization_reflection_observable(std::size_t num_ancilla);
+
+/// @brief Build the observable corresponding to the Pauli LCU SELECT operator.
+/// @details The observable is expressed over the combined ancilla-system
+/// register, with system qubit indices offset by encoding.num_ancilla(). It is
+/// used by QEL odd-moment estimation and is a reusable inspection/measurement
+/// primitive for Pauli LCU encodings.
+cudaq::spin_op build_lcu_select_observable(const pauli_lcu &encoding);
+
+} // namespace cudaq::solvers

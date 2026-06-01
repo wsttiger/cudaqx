@@ -50,6 +50,11 @@ target_link_libraries(test_block_encoding PRIVATE GTest::gtest_main cudaq-solver
 add_dependencies(CUDAQXSolversUnitTests test_block_encoding)
 gtest_discover_tests(test_block_encoding)
 
+add_executable(test_qubitization test_qubitization.cpp)
+target_link_libraries(test_qubitization PRIVATE GTest::gtest_main cudaq-solvers cudaq::cudaq)
+add_dependencies(CUDAQXSolversUnitTests test_qubitization)
+gtest_discover_tests(test_qubitization)
+
 add_executable(test_quantum_exact_lanczos test_quantum_exact_lanczos.cpp)
 target_link_libraries(test_quantum_exact_lanczos PRIVATE GTest::gtest_main cudaq-solvers cudaq::cudaq)
 add_dependencies(CUDAQXSolversUnitTests test_quantum_exact_lanczos)

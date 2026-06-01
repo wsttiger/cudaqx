@@ -7,6 +7,7 @@
  ******************************************************************************/
 
 #include "cudaq/solvers/quantum_exact_lanczos.h"
+#include "cudaq/solvers/operators/qubitization.h"
 #include <cmath>
 #include <iostream>
 #include <numeric>
@@ -18,55 +19,6 @@ namespace cudaq::solvers {
 // QUANTUM KERNELS FOR QEL
 // ============================================================================
 
-/// @brief Reflection operator for amplitude amplification
-/// @details Implements: PREPARE† → X → Multi-controlled-Z → X → PREPARE
-struct qel_reflection_kernel {
-  void operator()(cudaq::qview<> anc, const pauli_lcu &encoding) const __qpu__ {
-    // PREPARE†
-    encoding.unprepare(anc);
-
-    // X on all ancilla
-    for (std::size_t i = 0; i < anc.size(); ++i) {
-      x(anc[i]);
-    }
-
-    // Multi-controlled Z (controlled by all but last, target is last)
-    std::size_t n_anc = anc.size();
-    if (n_anc == 1) {
-      z(anc[0]);
-    } else if (n_anc == 2) {
-      z<cudaq::ctrl>(anc[0], anc[1]);
-    } else if (n_anc == 3) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2]);
-    } else if (n_anc == 4) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3]);
-    } else if (n_anc == 5) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4]);
-    } else if (n_anc == 6) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5]);
-    } else if (n_anc == 7) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6]);
-    } else if (n_anc == 8) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
-                     anc[7]);
-    } else if (n_anc == 9) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
-                     anc[7], anc[8]);
-    } else if (n_anc == 10) {
-      z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
-                     anc[7], anc[8], anc[9]);
-    }
-
-    // X on all ancilla (uncompute)
-    for (std::size_t i = 0; i < anc.size(); ++i) {
-      x(anc[i]);
-    }
-
-    // PREPARE
-    encoding.prepare(anc);
-  }
-};
-
 /// @brief State preparation for odd moment measurement
 struct qel_state_prep_kernel {
   void operator()(cudaq::qview<> anc, cudaq::qview<> sys,
@@ -75,7 +27,7 @@ struct qel_state_prep_kernel {
     encoding.prepare(anc);
     for (int i = 0; i < k_half; ++i) {
       encoding.select(anc, sys);
-      qel_reflection_kernel{}(anc, encoding);
+      prepare_reflection{}(anc, encoding);
     }
   }
 };
@@ -88,116 +40,12 @@ struct qel_measure_even_kernel {
     encoding.prepare(anc);
     for (int i = 0; i < k_half; ++i) {
       encoding.select(anc, sys);
-      qel_reflection_kernel{}(anc, encoding);
+      prepare_reflection{}(anc, encoding);
     }
     // Unprepare for measurement in |0⟩ basis
     encoding.unprepare(anc);
   }
 };
-
-// ============================================================================
-// OBSERVABLE CONSTRUCTION
-// ============================================================================
-
-/// @brief Build projector |0⟩⟨0| on ancilla qubits
-cudaq::spin_op build_ancilla_projector(std::size_t n_anc) {
-  // P_0 = (I + Z) / 2 for each qubit
-  cudaq::spin_op projector = 0.5 * (cudaq::spin::i(0) + cudaq::spin::z(0));
-  for (std::size_t q = 1; q < n_anc; ++q) {
-    projector *= 0.5 * (cudaq::spin::i(q) + cudaq::spin::z(q));
-  }
-
-  return projector;
-}
-
-/// @brief Build R observable for even moments: R = 2*P_0 - I
-cudaq::spin_op build_R_observable(std::size_t n_anc) {
-  auto P_zero = build_ancilla_projector(n_anc);
-  return 2.0 * P_zero - cudaq::spin::i(0);
-}
-
-/// @brief Build U observable for odd moments
-/// @details U = Σᵢ sign(cᵢ) * P_i ⊗ Pᵢ where P_i projects onto ancilla state
-/// |i⟩
-cudaq::spin_op build_U_observable(const pauli_lcu &encoding) {
-  std::size_t n_anc = encoding.num_ancilla();
-  std::size_t n_sys = encoding.num_system();
-
-  const auto &controls = encoding.get_term_controls();
-  const auto &ops = encoding.get_term_ops();
-  const auto &lengths = encoding.get_term_lengths();
-  const auto &signs = encoding.get_term_signs();
-
-  cudaq::spin_op U_op;
-  bool first_term = true;
-
-  int ctrl_ptr = 0;
-  int ops_ptr = 0;
-
-  for (std::size_t term_idx = 0; term_idx < lengths.size(); ++term_idx) {
-    // Build ancilla projector for this term's index
-    cudaq::spin_op anc_proj;
-    bool first_anc = true;
-
-    for (std::size_t b = 0; b < n_anc; ++b) {
-      int bit_val = controls[ctrl_ptr++];
-      cudaq::spin_op proj_bit =
-          (bit_val == 0)
-              ? 0.5 * (cudaq::spin::i(b) + cudaq::spin::z(b))  // |0⟩⟨0|
-              : 0.5 * (cudaq::spin::i(b) - cudaq::spin::z(b)); // |1⟩⟨1|
-
-      if (first_anc) {
-        anc_proj = proj_bit;
-        first_anc = false;
-      } else {
-        anc_proj = anc_proj * proj_bit;
-      }
-    }
-
-    // Build system Pauli operator
-    cudaq::spin_op sys_pauli;
-    bool first_pauli = true;
-
-    int n_ops = lengths[term_idx];
-    for (int k = 0; k < n_ops; ++k) {
-      int code = ops[ops_ptr++];
-      int qubit = ops[ops_ptr++] + n_anc; // Offset by ancilla qubits
-
-      cudaq::spin_op pauli_op;
-      if (code == 1)
-        pauli_op = cudaq::spin::x(qubit);
-      else if (code == 2)
-        pauli_op = cudaq::spin::y(qubit);
-      else if (code == 3)
-        pauli_op = cudaq::spin::z(qubit);
-
-      if (first_pauli) {
-        sys_pauli = pauli_op;
-        first_pauli = false;
-      } else {
-        sys_pauli = sys_pauli * pauli_op;
-      }
-    }
-
-    // If no Pauli operators, use identity
-    if (first_pauli) {
-      sys_pauli = cudaq::spin::i(n_anc);
-    }
-
-    // Combine with sign
-    double sign = signs[term_idx];
-    cudaq::spin_op term = sign * anc_proj * sys_pauli;
-
-    if (first_term) {
-      U_op = term;
-      first_term = false;
-    } else {
-      U_op = U_op + term;
-    }
-  }
-
-  return U_op;
-}
 
 // ============================================================================
 // KRYLOV MATRIX CONSTRUCTION
@@ -255,8 +103,8 @@ qel_result quantum_exact_lanczos(const pauli_lcu &encoding,
   }
 
   // Build observables
-  auto R_op = build_R_observable(n_anc);
-  auto U_op = build_U_observable(encoding);
+  auto R_op = build_qubitization_reflection_observable(n_anc);
+  auto U_op = build_lcu_select_observable(encoding);
 
   // Collect moments
   std::vector<double> moments;
