@@ -7,10 +7,65 @@
  ******************************************************************************/
 #pragma once
 
+#include "cudaq.h"
+
 #include <cstddef>
 #include <vector>
 
 namespace cudaq::solvers {
+
+/// @brief Apply a phase to the all-zero signal/ancilla state.
+/// @details Implements exp(i phase |0><0|) on the signal register by mapping
+/// |0...0> to |1...1>, applying a multi-controlled r1 phase, and unmapping.
+/// This helper intentionally uses explicit arities to match CUDA-Q controlled
+/// gate lowering constraints used by the Pauli LCU primitives.
+__qpu__ inline void apply_qsvt_signal_phase(cudaq::qview<> signal,
+                                            double phase) {
+  for (std::size_t i = 0; i < signal.size(); ++i)
+    x(signal[i]);
+
+  std::size_t num_signal = signal.size();
+  if (num_signal == 0) {
+    return;
+  } else if (num_signal == 1) {
+    r1(phase, signal[0]);
+  } else if (num_signal == 2) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1]);
+  } else if (num_signal == 3) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2]);
+  } else if (num_signal == 4) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3]);
+  } else if (num_signal == 5) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3],
+                    signal[4]);
+  } else if (num_signal == 6) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3],
+                    signal[4], signal[5]);
+  } else if (num_signal == 7) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3],
+                    signal[4], signal[5], signal[6]);
+  } else if (num_signal == 8) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3],
+                    signal[4], signal[5], signal[6], signal[7]);
+  } else if (num_signal == 9) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3],
+                    signal[4], signal[5], signal[6], signal[7], signal[8]);
+  } else if (num_signal == 10) {
+    r1<cudaq::ctrl>(phase, signal[0], signal[1], signal[2], signal[3],
+                    signal[4], signal[5], signal[6], signal[7], signal[8],
+                    signal[9]);
+  }
+
+  for (std::size_t i = 0; i < signal.size(); ++i)
+    x(signal[i]);
+}
+
+/// @brief Kernel functor wrapper for a QSVT signal phase.
+struct qsvt_signal_phase {
+  void operator()(cudaq::qview<> signal, double phase) const __qpu__ {
+    apply_qsvt_signal_phase(signal, phase);
+  }
+};
 
 /// @brief Host-side QSVT phase sequence.
 ///

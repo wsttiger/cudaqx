@@ -13,6 +13,22 @@
 
 #include "cudaq/solvers/operators/qsvt.h"
 
+TEST(QSVTTester, checkSignalPhaseKernelCompile) {
+  using namespace cudaq::solvers;
+
+  auto one_signal_test = []() __qpu__ {
+    cudaq::qvector<> signal(1);
+    apply_qsvt_signal_phase(signal, 0.25);
+  };
+  EXPECT_NO_THROW(one_signal_test());
+
+  auto three_signal_test = []() __qpu__ {
+    cudaq::qvector<> signal(3);
+    qsvt_signal_phase{}(signal, -0.5);
+  };
+  EXPECT_NO_THROW(three_signal_test());
+}
+
 TEST(QSVTTester, checkPhaseSequenceMetadata) {
   using namespace cudaq::solvers;
 
