@@ -13,6 +13,20 @@
 
 namespace cudaq::solvers {
 
+/// @brief Pauli LCU qubitization primitive conventions.
+///
+/// These helpers use snake_case names and expose concrete primitives rather
+/// than an inheritance hierarchy. For a Pauli LCU encoding, the walk primitive
+/// applies SELECT first and then reflects about the PREPARE state. In operator
+/// order this is W = R_prepare SELECT, matching the circuit order:
+///
+///   encoding.select(ancilla, system);
+///   reflect_about_prepare(ancilla, encoding);
+///
+/// The walk helpers do not prepare the ancilla register. Callers should invoke
+/// encoding.prepare(ancilla) before the first walk step when the algorithm
+/// requires the PREPARE state as the starting point.
+
 /// @brief Reflect about the all-zero state on an ancilla register.
 /// @details Applies X on all ancillas, a multi-controlled Z, then X again.
 /// This stays inline because it is used inside generated CUDA-Q kernels.
