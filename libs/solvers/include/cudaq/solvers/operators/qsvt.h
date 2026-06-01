@@ -115,6 +115,25 @@ struct qsvt_phase_sequence {
   double operator[](std::size_t index) const { return phases[index]; }
 };
 
+/// @brief Host-side plan for applying a QSVT phase/walk sequence.
+///
+/// The plan is intentionally a host-side object. CUDA-Q kernels should consume
+/// plain data extracted from the plan, such as phase_data(), rather than taking
+/// qsvt_plan directly as a kernel argument.
+struct qsvt_plan {
+  qsvt_phase_sequence phase_sequence;
+
+  explicit qsvt_plan(qsvt_phase_sequence input_phases);
+  explicit qsvt_plan(std::vector<double> input_phases);
+
+  std::size_t num_phases() const { return phase_sequence.size(); }
+  std::size_t degree() const { return phase_sequence.degree(); }
+  const qsvt_phase_sequence &phases() const { return phase_sequence; }
+  const std::vector<double> &phase_data() const {
+    return phase_sequence.data();
+  }
+};
+
 /// @brief Return true if a QSVT phase sequence is non-empty and finite.
 bool is_valid_qsvt_phase_sequence(const std::vector<double> &phases);
 
@@ -130,5 +149,8 @@ std::size_t qsvt_polynomial_degree(std::size_t num_phases);
 
 /// @brief Construct and validate a QSVT phase sequence.
 qsvt_phase_sequence make_qsvt_phase_sequence(std::vector<double> phases);
+
+/// @brief Construct a host-side QSVT plan from a phase sequence.
+qsvt_plan make_qsvt_plan(std::vector<double> phases);
 
 } // namespace cudaq::solvers

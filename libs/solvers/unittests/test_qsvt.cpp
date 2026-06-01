@@ -37,12 +37,14 @@ TEST(QSVTTester, checkSequenceKernelCompile) {
   cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
   pauli_lcu encoding(h, 1);
   auto phases = make_qsvt_phase_sequence({0.1, -0.2, 0.3});
+  qsvt_plan plan(phases);
+  auto phase_data = plan.phase_data();
 
   auto sequence_test = [&]() __qpu__ {
     cudaq::qvector<> signal(encoding.num_ancilla());
     cudaq::qvector<> system(encoding.num_system());
     encoding.prepare(signal);
-    apply_qsvt_sequence(signal, system, encoding, phases.data());
+    apply_qsvt_sequence(signal, system, encoding, phase_data);
   };
   EXPECT_NO_THROW(sequence_test());
 
@@ -50,9 +52,30 @@ TEST(QSVTTester, checkSequenceKernelCompile) {
     cudaq::qvector<> signal(encoding.num_ancilla());
     cudaq::qvector<> system(encoding.num_system());
     encoding.prepare(signal);
-    qsvt_sequence{}(signal, system, encoding, phases.data());
+    qsvt_sequence{}(signal, system, encoding, phase_data);
   };
   EXPECT_NO_THROW(sequence_functor_test());
+}
+
+TEST(QSVTTester, checkPlanMetadata) {
+  using namespace cudaq::solvers;
+
+  qsvt_plan plan(std::vector<double>{0.1, -0.2, 0.3});
+
+  EXPECT_EQ(plan.num_phases(), 3);
+  EXPECT_EQ(plan.degree(), 2);
+  EXPECT_EQ(plan.phases().size(), 3);
+  EXPECT_DOUBLE_EQ(plan.phase_data()[1], -0.2);
+}
+
+TEST(QSVTTester, checkPlanFactoryAndValidation) {
+  using namespace cudaq::solvers;
+
+  auto plan = make_qsvt_plan({0.25});
+  EXPECT_EQ(plan.num_phases(), 1);
+  EXPECT_EQ(plan.degree(), 0);
+
+  EXPECT_THROW(qsvt_plan(qsvt_phase_sequence{}), std::invalid_argument);
 }
 
 TEST(QSVTTester, checkPhaseSequenceMetadata) {

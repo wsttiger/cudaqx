@@ -23,6 +23,14 @@ std::size_t qsvt_phase_sequence::degree() const {
   return qsvt_polynomial_degree(phases.size());
 }
 
+qsvt_plan::qsvt_plan(qsvt_phase_sequence input_phases)
+    : phase_sequence(std::move(input_phases)) {
+  validate_qsvt_phase_sequence(phase_sequence.data());
+}
+
+qsvt_plan::qsvt_plan(std::vector<double> input_phases)
+    : qsvt_plan(qsvt_phase_sequence(std::move(input_phases))) {}
+
 bool is_valid_qsvt_phase_sequence(const std::vector<double> &phases) {
   if (phases.empty())
     return false;
@@ -56,6 +64,10 @@ std::size_t qsvt_polynomial_degree(std::size_t num_phases) {
 
 qsvt_phase_sequence make_qsvt_phase_sequence(std::vector<double> phases) {
   return qsvt_phase_sequence(std::move(phases));
+}
+
+qsvt_plan make_qsvt_plan(std::vector<double> phases) {
+  return qsvt_plan(std::move(phases));
 }
 
 } // namespace cudaq::solvers
