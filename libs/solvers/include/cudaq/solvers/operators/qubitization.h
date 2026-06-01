@@ -230,6 +230,49 @@ struct controlled_adjoint_qubitization_walk {
   }
 };
 
+/// @brief Apply repeated controlled qubitization walk steps.
+/// @details Applies the controlled walk primitive power times. The caller is
+/// responsible for preparing the ancilla register before the first controlled
+/// walk step when needed.
+__qpu__ inline void apply_controlled_qubitization_walk_power(
+    cudaq::qubit &control, cudaq::qview<> ancilla, cudaq::qview<> system,
+    const pauli_lcu &encoding, int power) {
+  for (int i = 0; i < power; ++i)
+    apply_controlled_qubitization_walk(control, ancilla, system, encoding);
+}
+
+/// @brief Kernel functor wrapper for repeated controlled walk steps.
+struct controlled_qubitization_walk_power {
+  void operator()(cudaq::qubit &control, cudaq::qview<> ancilla,
+                  cudaq::qview<> system, const pauli_lcu &encoding,
+                  int power) const __qpu__ {
+    apply_controlled_qubitization_walk_power(control, ancilla, system, encoding,
+                                             power);
+  }
+};
+
+/// @brief Apply repeated controlled adjoint qubitization walk steps.
+/// @details Applies the controlled adjoint walk primitive power times. The
+/// caller is responsible for preparing the ancilla register before the first
+/// controlled walk step when needed.
+__qpu__ inline void apply_controlled_adjoint_qubitization_walk_power(
+    cudaq::qubit &control, cudaq::qview<> ancilla, cudaq::qview<> system,
+    const pauli_lcu &encoding, int power) {
+  for (int i = 0; i < power; ++i)
+    apply_controlled_adjoint_qubitization_walk(control, ancilla, system,
+                                               encoding);
+}
+
+/// @brief Kernel functor wrapper for repeated controlled adjoint walk steps.
+struct controlled_adjoint_qubitization_walk_power {
+  void operator()(cudaq::qubit &control, cudaq::qview<> ancilla,
+                  cudaq::qview<> system, const pauli_lcu &encoding,
+                  int power) const __qpu__ {
+    apply_controlled_adjoint_qubitization_walk_power(control, ancilla, system,
+                                                     encoding, power);
+  }
+};
+
 /// @brief Apply repeated qubitization walk steps for a Pauli LCU encoding.
 /// @details Applies the walk primitive power times. The caller is responsible
 /// for preparing the ancilla register before the first walk step when needed.
