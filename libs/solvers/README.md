@@ -18,6 +18,28 @@ not require a GPU to use, but some components are GPU-accelerated.
 - Quantum approximate optimization algorithm (QAOA)
 - Hamiltonian simulation routines
 
+## FTQC Primitives
+
+The solvers library also contains early fault-tolerant quantum computing
+primitives built around Pauli LCU block encodings. These are intended to be
+composable building blocks rather than complete applications:
+
+- Pauli LCU decomposition and block-encoding helpers
+- PREPARE, SELECT, and unprepare primitives for `cudaq::spin_op` inputs
+- Qubitization reflections, forward walks, adjoint walks, and walk powers
+- QSVT signal phases, validated phase sequences, and phase/walk sequence plans
+
+QSVT support is currently a primitive API, not a full polynomial compiler. Host
+code owns validation and policy construction through `qsvt_phase_sequence`,
+`qsvt_sequence_policy`, and `qsvt_plan`. CUDA-Q kernels should consume only the
+primitive data extracted from those objects, such as phase vectors and integer
+walk-direction vectors. The default QSVT plan uses forward qubitization walks;
+callers can also request adjoint or alternating forward/adjoint walk policies.
+
+Future QSVT work should add phase-generation APIs for target polynomial
+transforms, convention-specific sequence builders, and higher-level algorithms
+that compose these primitives with block encodings.
+
 Note: if you would like to use our Generative Quantum Eigensolver API, you will need
 additional dependencies installed. You can install them with
 `pip install cudaq-solvers[gqe]`.

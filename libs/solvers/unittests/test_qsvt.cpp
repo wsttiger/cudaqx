@@ -85,6 +85,36 @@ TEST(QSVTTester, checkSequenceWalkDirectionKernelCompile) {
   EXPECT_NO_THROW(adjoint_sequence_functor_test());
 }
 
+TEST(QSVTTester, checkSequencePolicyKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+  auto policy =
+      make_alternating_qsvt_sequence_policy(3, qsvt_walk_direction::adjoint);
+  auto plan = make_qsvt_plan({0.1, -0.2, 0.3, -0.4}, policy);
+  auto phase_data = plan.phase_data();
+  auto walk_direction_data = plan.walk_direction_data();
+
+  auto sequence_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsvt_sequence(signal, system, encoding, phase_data,
+                        walk_direction_data);
+  };
+  EXPECT_NO_THROW(sequence_test());
+
+  auto sequence_functor_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    qsvt_sequence{}(signal, system, encoding, phase_data, walk_direction_data);
+  };
+  EXPECT_NO_THROW(sequence_functor_test());
+}
+
 TEST(QSVTTester, checkPlanMetadata) {
   using namespace cudaq::solvers;
 
@@ -94,6 +124,22 @@ TEST(QSVTTester, checkPlanMetadata) {
   EXPECT_EQ(plan.degree(), 2);
   EXPECT_EQ(plan.phases().size(), 3);
   EXPECT_DOUBLE_EQ(plan.phase_data()[1], -0.2);
+  EXPECT_EQ(plan.policy().size(), 2);
+  EXPECT_EQ(plan.walk_direction_data()[0], qsvt_forward_walk);
+  EXPECT_EQ(plan.walk_direction_data()[1], qsvt_forward_walk);
+}
+
+TEST(QSVTTester, checkPlanPolicyMetadata) {
+  using namespace cudaq::solvers;
+
+  auto policy = make_alternating_qsvt_sequence_policy(3);
+  auto plan = make_qsvt_plan({0.1, -0.2, 0.3, -0.4}, policy);
+
+  EXPECT_EQ(plan.degree(), 3);
+  EXPECT_EQ(plan.policy().degree(), 3);
+  EXPECT_EQ(plan.walk_direction_data()[0], qsvt_forward_walk);
+  EXPECT_EQ(plan.walk_direction_data()[1], qsvt_adjoint_walk);
+  EXPECT_EQ(plan.walk_direction_data()[2], qsvt_forward_walk);
 }
 
 TEST(QSVTTester, checkPlanFactoryAndValidation) {
@@ -104,6 +150,11 @@ TEST(QSVTTester, checkPlanFactoryAndValidation) {
   EXPECT_EQ(plan.degree(), 0);
 
   EXPECT_THROW(qsvt_plan(qsvt_phase_sequence{}), std::invalid_argument);
+  EXPECT_THROW(make_qsvt_plan({0.1, 0.2}, make_qsvt_sequence_policy(2)),
+               std::invalid_argument);
+  EXPECT_NO_THROW(make_qsvt_plan(
+      {0.1, 0.2, 0.3},
+      make_qsvt_sequence_policy(2, qsvt_walk_direction::adjoint)));
 }
 
 TEST(QSVTTester, checkPhaseSequenceMetadata) {
@@ -143,6 +194,35 @@ TEST(QSVTTester, checkPhaseSequenceValidation) {
   EXPECT_THROW(
       validate_qsvt_phase_sequence({std::numeric_limits<double>::quiet_NaN()}),
       std::invalid_argument);
+}
+
+TEST(QSVTTester, checkSequencePolicyFactoryAndValidation) {
+  using namespace cudaq::solvers;
+
+  auto adjoint_policy =
+      make_qsvt_sequence_policy(3, qsvt_walk_direction::adjoint);
+  EXPECT_EQ(adjoint_policy.size(), 3);
+  EXPECT_EQ(adjoint_policy.walk_direction_data()[0], qsvt_adjoint_walk);
+  EXPECT_EQ(adjoint_policy.walk_direction_data()[2], qsvt_adjoint_walk);
+
+  auto custom_policy = make_qsvt_sequence_policy(
+      {qsvt_walk_direction::forward, qsvt_walk_direction::adjoint});
+  EXPECT_EQ(custom_policy.size(), 2);
+  EXPECT_EQ(custom_policy.walk_direction_data()[0], qsvt_forward_walk);
+  EXPECT_EQ(custom_policy.walk_direction_data()[1], qsvt_adjoint_walk);
+
+  auto alternating_policy =
+      make_alternating_qsvt_sequence_policy(4, qsvt_walk_direction::adjoint);
+  EXPECT_EQ(alternating_policy.walk_direction_data()[0], qsvt_adjoint_walk);
+  EXPECT_EQ(alternating_policy.walk_direction_data()[1], qsvt_forward_walk);
+  EXPECT_EQ(alternating_policy.walk_direction_data()[2], qsvt_adjoint_walk);
+  EXPECT_EQ(alternating_policy.walk_direction_data()[3], qsvt_forward_walk);
+
+  EXPECT_TRUE(is_valid_qsvt_sequence_policy(2, custom_policy));
+  EXPECT_FALSE(is_valid_qsvt_sequence_policy(3, custom_policy));
+  EXPECT_THROW(validate_qsvt_sequence_policy(
+                   1, qsvt_sequence_policy(std::vector<int>{2})),
+               std::invalid_argument);
 }
 
 TEST(QSVTTester, checkPolynomialDegreeConvention) {

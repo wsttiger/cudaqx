@@ -18,13 +18,20 @@ namespace cudaq::solvers {
 /// @brief Direction of the qubitization walk used between QSVT phases.
 enum class qsvt_walk_direction { forward, adjoint };
 
+/// @brief Primitive walk direction codes passed across the QPU boundary.
+/// @details Host-side policy objects expand to these integer codes before a
+/// kernel invocation so kernels do not need to consume richer C++ objects.
+inline constexpr int qsvt_forward_walk = 0;
+inline constexpr int qsvt_adjoint_walk = 1;
+
 /// @brief QSVT host/device API boundary.
 ///
-/// qsvt_phase_sequence and qsvt_plan are host-side validation and metadata
-/// types. QPU-facing helpers consume qview objects, pauli_lcu encodings,
-/// primitive numeric values, and plain std::vector<double> phase data extracted
-/// from a validated host-side sequence or plan. Do not pass qsvt_plan directly
-/// into __qpu__ kernels.
+/// qsvt_phase_sequence, qsvt_sequence_policy, and qsvt_plan are host-side
+/// validation and metadata types. QPU-facing helpers consume qview objects,
+/// pauli_lcu encodings, primitive numeric values, plain std::vector<double>
+/// phase data, and plain std::vector<int> walk direction data extracted from a
+/// validated host-side sequence or plan. Do not pass qsvt_plan directly into
+/// __qpu__ kernels.
 
 /// @brief Apply a phase to the all-zero signal/ancilla state.
 /// @details Implements exp(i phase |0><0|) on the signal register by mapping
@@ -102,6 +109,28 @@ __qpu__ inline void apply_qsvt_sequence(cudaq::qview<> signal,
   }
 }
 
+/// @brief Apply a QSVT-style phase/walk sequence with per-step directions.
+/// @details walk_directions contains one primitive direction code per walk,
+/// so its host-validated size should be phases.size() - 1. This QPU helper
+/// intentionally does not validate policy shape in device code.
+__qpu__ inline void
+apply_qsvt_sequence(cudaq::qview<> signal, cudaq::qview<> system,
+                    const pauli_lcu &encoding,
+                    const std::vector<double> &phases,
+                    const std::vector<int> &walk_directions) {
+  if (phases.empty())
+    return;
+
+  apply_qsvt_signal_phase(signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    if (walk_directions[i - 1] == qsvt_adjoint_walk)
+      apply_adjoint_qubitization_walk(signal, system, encoding);
+    else
+      apply_qubitization_walk(signal, system, encoding);
+    apply_qsvt_signal_phase(signal, phases[i]);
+  }
+}
+
 /// @brief Apply a QSVT-style phase/walk sequence with forward walks.
 __qpu__ inline void apply_qsvt_sequence(cudaq::qview<> signal,
                                         cudaq::qview<> system,
@@ -124,6 +153,12 @@ struct qsvt_sequence {
                   qsvt_walk_direction direction) const __qpu__ {
     apply_qsvt_sequence(signal, system, encoding, phases, direction);
   }
+
+  void operator()(cudaq::qview<> signal, cudaq::qview<> system,
+                  const pauli_lcu &encoding, const std::vector<double> &phases,
+                  const std::vector<int> &walk_directions) const __qpu__ {
+    apply_qsvt_sequence(signal, system, encoding, phases, walk_directions);
+  }
 };
 
 /// @brief Host-side QSVT phase sequence.
@@ -145,22 +180,51 @@ struct qsvt_phase_sequence {
   double operator[](std::size_t index) const { return phases[index]; }
 };
 
+/// @brief Host-side QSVT walk sequence policy.
+/// @details Stores one primitive walk direction code for each walk between
+/// phases. A degree-d QSVT sequence has d walks and d + 1 phases. Kernels
+/// consume walk_direction_data() rather than this host-side policy object.
+struct qsvt_sequence_policy {
+  std::vector<int> walk_directions;
+
+  qsvt_sequence_policy() = default;
+  explicit qsvt_sequence_policy(std::vector<int> input_walk_directions);
+
+  bool empty() const { return walk_directions.empty(); }
+  std::size_t size() const { return walk_directions.size(); }
+  std::size_t degree() const { return walk_directions.size(); }
+  const std::vector<int> &walk_direction_data() const {
+    return walk_directions;
+  }
+  int operator[](std::size_t index) const { return walk_directions[index]; }
+};
+
 /// @brief Host-side plan for applying a QSVT phase/walk sequence.
 ///
 /// The plan is intentionally a host-side object. CUDA-Q kernels should consume
-/// plain data extracted from the plan, such as phase_data(), rather than taking
-/// qsvt_plan directly as a kernel argument.
+/// plain data extracted from the plan, such as phase_data() and
+/// walk_direction_data(), rather than taking qsvt_plan directly as a kernel
+/// argument.
 struct qsvt_plan {
   qsvt_phase_sequence phase_sequence;
+  qsvt_sequence_policy sequence_policy;
 
   explicit qsvt_plan(qsvt_phase_sequence input_phases);
+  qsvt_plan(qsvt_phase_sequence input_phases,
+            qsvt_sequence_policy input_policy);
   explicit qsvt_plan(std::vector<double> input_phases);
+  qsvt_plan(std::vector<double> input_phases,
+            qsvt_sequence_policy input_policy);
 
   std::size_t num_phases() const { return phase_sequence.size(); }
   std::size_t degree() const { return phase_sequence.degree(); }
   const qsvt_phase_sequence &phases() const { return phase_sequence; }
+  const qsvt_sequence_policy &policy() const { return sequence_policy; }
   const std::vector<double> &phase_data() const {
     return phase_sequence.data();
+  }
+  const std::vector<int> &walk_direction_data() const {
+    return sequence_policy.walk_direction_data();
   }
 };
 
@@ -177,10 +241,41 @@ void validate_qsvt_phase_sequence(const std::vector<double> &phases);
 /// @throws std::invalid_argument if num_phases is zero.
 std::size_t qsvt_polynomial_degree(std::size_t num_phases);
 
+/// @brief Return the primitive code for a QSVT walk direction.
+int qsvt_walk_direction_code(qsvt_walk_direction direction);
+
+/// @brief Return true if the sequence policy matches a requested degree.
+bool is_valid_qsvt_sequence_policy(std::size_t degree,
+                                   const qsvt_sequence_policy &policy);
+
+/// @brief Validate a QSVT sequence policy against a requested degree.
+/// @throws std::invalid_argument if the policy length does not match degree or
+/// contains an unknown primitive walk direction code.
+void validate_qsvt_sequence_policy(std::size_t degree,
+                                   const qsvt_sequence_policy &policy);
+
 /// @brief Construct and validate a QSVT phase sequence.
 qsvt_phase_sequence make_qsvt_phase_sequence(std::vector<double> phases);
 
+/// @brief Construct a uniform QSVT walk sequence policy.
+qsvt_sequence_policy make_qsvt_sequence_policy(
+    std::size_t degree,
+    qsvt_walk_direction direction = qsvt_walk_direction::forward);
+
+/// @brief Construct a custom QSVT walk sequence policy.
+qsvt_sequence_policy
+make_qsvt_sequence_policy(std::vector<qsvt_walk_direction> directions);
+
+/// @brief Construct an alternating QSVT walk sequence policy.
+qsvt_sequence_policy make_alternating_qsvt_sequence_policy(
+    std::size_t degree,
+    qsvt_walk_direction first_direction = qsvt_walk_direction::forward);
+
 /// @brief Construct a host-side QSVT plan from a phase sequence.
 qsvt_plan make_qsvt_plan(std::vector<double> phases);
+
+/// @brief Construct a host-side QSVT plan from phases and a walk policy.
+qsvt_plan make_qsvt_plan(std::vector<double> phases,
+                         qsvt_sequence_policy policy);
 
 } // namespace cudaq::solvers
