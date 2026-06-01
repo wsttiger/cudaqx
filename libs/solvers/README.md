@@ -22,29 +22,58 @@ not require a GPU to use, but some components are GPU-accelerated.
 
 The solvers library also contains early fault-tolerant quantum computing
 primitives built around Pauli LCU block encodings. These are intended to be
-composable building blocks rather than complete applications:
+composable building blocks rather than complete applications.
 
-- Pauli LCU decomposition and block-encoding helpers
-- PREPARE, SELECT, and unprepare primitives for `cudaq::spin_op` inputs
-- Qubitization reflections, forward walks, adjoint walks, and walk powers
-- QSVT signal phases, validated phase sequences, and phase/walk sequence plans
+| Layer | Host-side pieces | QPU-facing primitives |
+| --- | --- | --- |
+| Pauli LCU block encoding | `lcu_decomposition`, `pauli_lcu_kernel_data`, `pauli_lcu` metadata | `prepare`, `unprepare`, `select`, `controlled_select`, `apply` |
+| Qubitization | PREPARE-state conventions and observable builders | zero/PREPARE reflections, forward and adjoint walks, controlled walks, walk powers, controlled walk powers |
+| QSVT/QSP sequencing | `qsvt_phase_sequence`, `qsvt_sequence_policy`, `qsvt_plan`, `qsvt_transform_descriptor` | signal phases, controlled signal phases, QSVT phase/walk sequences, controlled QSVT sequences |
 
-QSVT support is currently a primitive API, not a full polynomial compiler. Host
-code owns validation and policy construction through `qsvt_phase_sequence`,
-`qsvt_sequence_policy`, and `qsvt_plan`. CUDA-Q kernels should consume only the
-primitive data extracted from those objects, such as phase vectors and integer
-walk-direction vectors. `qsvt_plan::kernel_data()` is a host-side convenience
-view for extracting those vectors before a kernel invocation. The default QSVT
-plan uses forward qubitization walks; callers can also request adjoint or
-alternating forward/adjoint walk policies.
+Host-side objects validate metadata, define conventions, and own data-layout
+decisions. CUDA-Q kernels should consume only QPU-facing data extracted from
+those host objects: registers, `pauli_lcu` encodings, primitive scalar values,
+`std::vector<double>` phase data, and `std::vector<int>` walk-direction data.
+`qsvt_plan::kernel_data()` is the convenience view for extracting the phase and
+walk-direction vectors before a kernel invocation.
 
-The QSVT layer also includes host-side transform descriptors for the primitive
+A typical QSVT call pattern is:
+
+```c++
+cudaq::spin_op h = /* Pauli operator */;
+cudaq::solvers::pauli_lcu encoding(h, num_qubits);
+auto plan = cudaq::solvers::make_qsvt_plan(
+    phases, cudaq::solvers::make_alternating_qsvt_sequence_policy(degree));
+auto kernel_data = plan.kernel_data();
+auto phase_data = kernel_data.phases;
+auto walk_direction_data = kernel_data.walk_directions;
+
+auto kernel = [&]() __qpu__ {
+  cudaq::qubit control;
+  cudaq::qvector<> signal(encoding.num_ancilla());
+  cudaq::qvector<> system(encoding.num_system());
+
+  encoding.prepare(signal);
+  cudaq::solvers::apply_controlled_qsvt_sequence(
+      control, signal, system, encoding, phase_data, walk_direction_data);
+};
+```
+
+The QSVT layer includes host-side transform descriptors for the primitive
 matrix functions needed by algorithms such as linear solve, real-time
 Hamiltonian simulation (`exp(-i H t)`), and imaginary-time evolution
-(`exp(-H t)`). These descriptors capture validated metadata only; future work
-should add phase-generation APIs for target polynomial transforms,
-convention-specific sequence builders, and higher-level examples that compose
-these primitives with block encodings.
+(`exp(-H t)`). These descriptors capture validated metadata only; they do not
+synthesize QSP/QSVT phases.
+
+Current limitations:
+
+- Block encodings are currently Pauli LCU encodings for `cudaq::spin_op` inputs.
+- Pauli LCU decomposition currently supports real coefficients.
+- Controlled gate lowering uses explicit arities in the primitive kernels.
+- QSVT phase synthesis is not implemented yet; callers provide phase sequences.
+- Transform descriptors are metadata for future phase-generation APIs.
+- Domain-level workflows such as linear solve or Hamiltonian simulation should
+  live in examples until the underlying primitive APIs stabilize.
 
 Note: if you would like to use our Generative Quantum Eigensolver API, you will need
 additional dependencies installed. You can install them with
