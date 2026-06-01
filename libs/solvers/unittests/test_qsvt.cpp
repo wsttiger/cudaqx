@@ -426,6 +426,36 @@ TEST(QSVTTester, checkTransformDescriptorFactories) {
       std::invalid_argument);
 }
 
+TEST(QSVTTester, checkTransformPlanFactories) {
+  using namespace cudaq::solvers;
+
+  auto real_time =
+      make_real_time_hamiltonian_simulation_qsvt_transform(0.75, 1e-4, 2);
+  auto plan = make_qsvt_transform_plan(real_time, {0.1, -0.2, 0.3});
+
+  EXPECT_EQ(plan.degree(), 2);
+  EXPECT_EQ(plan.num_phases(), 3);
+  EXPECT_DOUBLE_EQ(plan.phase_data()[1], -0.2);
+  EXPECT_EQ(plan.walk_direction_data()[0], qsvt_forward_walk);
+
+  auto policy =
+      make_alternating_qsvt_sequence_policy(2, qsvt_walk_direction::adjoint);
+  auto policy_plan =
+      make_qsvt_transform_plan(real_time, {0.1, -0.2, 0.3}, policy);
+  EXPECT_EQ(policy_plan.walk_direction_data()[0], qsvt_adjoint_walk);
+  EXPECT_EQ(policy_plan.walk_direction_data()[1], qsvt_forward_walk);
+
+  qsvt_transform_descriptor custom;
+  EXPECT_NO_THROW(validate_qsvt_transform_phase_sequence(custom, {0.25}));
+  EXPECT_THROW(make_qsvt_transform_plan(real_time, {0.1, -0.2}),
+               std::invalid_argument);
+
+  qsvt_transform_descriptor invalid;
+  invalid.normalization = 0.0;
+  EXPECT_THROW(validate_qsvt_transform_phase_sequence(invalid, {0.25}),
+               std::invalid_argument);
+}
+
 TEST(QSVTTester, checkPolynomialDegreeConvention) {
   using namespace cudaq::solvers;
 

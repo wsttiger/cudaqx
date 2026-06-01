@@ -447,9 +447,28 @@ bool is_valid_qsvt_transform_descriptor(
 void validate_qsvt_transform_descriptor(
     const qsvt_transform_descriptor &descriptor);
 
+/// @brief Validate explicit phases against a transform descriptor.
+/// @details This validates descriptor metadata, phase finiteness, and the
+/// descriptor degree hint when one is provided. It does not synthesize phases.
+void validate_qsvt_transform_phase_sequence(
+    const qsvt_transform_descriptor &descriptor,
+    const std::vector<double> &phases);
+
 /// @brief Construct a host-side QSVT plan from phases and a walk policy.
 qsvt_plan make_qsvt_plan(std::vector<double> phases,
                          qsvt_sequence_policy policy);
+
+/// @brief Construct a QSVT plan for a described transform from explicit phases.
+/// @details The transform descriptor is host-side metadata for validation and
+/// bookkeeping. Phase synthesis is intentionally out of scope; callers provide
+/// an explicit phase sequence.
+qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                                   std::vector<double> phases);
+
+/// @brief Construct a QSVT transform plan with an explicit walk policy.
+qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                                   std::vector<double> phases,
+                                   qsvt_sequence_policy policy);
 
 /// @brief Describe the inverse transform used by QSVT-based linear solve.
 qsvt_transform_descriptor

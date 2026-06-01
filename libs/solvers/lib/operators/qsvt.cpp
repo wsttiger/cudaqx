@@ -190,6 +190,32 @@ void validate_qsvt_transform_descriptor(
     throw std::invalid_argument("Invalid QSVT transform descriptor.");
 }
 
+void validate_qsvt_transform_phase_sequence(
+    const qsvt_transform_descriptor &descriptor,
+    const std::vector<double> &phases) {
+  validate_qsvt_transform_descriptor(descriptor);
+  validate_qsvt_phase_sequence(phases);
+
+  if (descriptor.degree_hint != 0 &&
+      qsvt_polynomial_degree(phases.size()) != descriptor.degree_hint)
+    throw std::invalid_argument(
+        "QSVT transform phase sequence degree does not match the descriptor "
+        "degree hint.");
+}
+
+qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                                   std::vector<double> phases) {
+  validate_qsvt_transform_phase_sequence(descriptor, phases);
+  return qsvt_plan(std::move(phases));
+}
+
+qsvt_plan make_qsvt_transform_plan(const qsvt_transform_descriptor &descriptor,
+                                   std::vector<double> phases,
+                                   qsvt_sequence_policy policy) {
+  validate_qsvt_transform_phase_sequence(descriptor, phases);
+  return qsvt_plan(std::move(phases), std::move(policy));
+}
+
 qsvt_transform_descriptor
 make_linear_solve_qsvt_transform(double condition_number, double target_error,
                                  std::size_t degree_hint,
