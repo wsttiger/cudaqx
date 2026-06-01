@@ -21,6 +21,7 @@ add_library(cudaq-solvers SHARED
   operators/graph/clique.cpp
   operators/block_encoding.cpp
   operators/qubitization.cpp
+  operators/qsvt.cpp
   quantum_exact_lanczos.cpp
   operators/operator_pools/operator_pool.cpp
   operators/operator_pools/spin_complement_gsd.cpp
