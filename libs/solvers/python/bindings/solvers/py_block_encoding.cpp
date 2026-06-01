@@ -6,27 +6,43 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include <pybind11/numpy.h>
-#include <pybind11/operators.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+
+#include <sstream>
 
 #include "bindings/utils/type_casters.h"
 #include "cuda-qx/core/kwargs_utils.h"
+#include "cudaq/python/PythonCppInterop.h"
 #include "cudaq/solvers/operators/block_encoding.h"
 #include "cudaq/solvers/quantum_exact_lanczos.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 using namespace cudaqx;
+
+namespace {
+template <typename T>
+nb::object numpy_array(const std::vector<T> &values) {
+  auto np = nb::module_::import_("numpy");
+  return np.attr("array")(values);
+}
+
+nb::object numpy_matrix(const std::vector<double> &values, int dim) {
+  auto np = nb::module_::import_("numpy");
+  return np.attr("array")(values).attr("reshape")(nb::make_tuple(dim, dim));
+}
+} // namespace
 
 namespace cudaq::solvers {
 
-void bindBlockEncoding(py::module &mod) {
+void bindBlockEncoding(nb::module_ &mod) {
 
   // ============================================================================
   // PAULI LCU BLOCK ENCODING
   // ============================================================================
 
-  py::class_<pauli_lcu>(
+  nb::class_<pauli_lcu>(
       mod, "PauliLCU",
       R"(Block encoding using Pauli Linear Combination of Unitaries.
 
@@ -56,8 +72,8 @@ Example:
     >>>     anc = cudaq.qvector(encoding.num_ancilla)
     >>>     sys = cudaq.qvector(encoding.num_system)
     >>>     encoding.apply(anc, sys))")
-      .def(py::init<const cudaq::spin_op &, std::size_t>(),
-           py::arg("hamiltonian"), py::arg("num_qubits"),
+      .def(nb::init<const cudaq::spin_op &, std::size_t>(),
+           nb::arg("hamiltonian"), nb::arg("num_qubits"),
            R"(Initialize Pauli LCU block encoding.
 
 Args:
@@ -67,13 +83,13 @@ Args:
 Raises:
     RuntimeError: If Hamiltonian contains complex coefficients
     RuntimeError: If Hamiltonian has no terms)")
-      .def_property_readonly("num_ancilla", &pauli_lcu::num_ancilla,
-                             "Number of ancilla qubits: ⌈log₂(# terms)⌉")
-      .def_property_readonly("num_system", &pauli_lcu::num_system,
-                             "Number of system qubits")
-      .def_property_readonly("normalization", &pauli_lcu::normalization,
-                             "Normalization constant: α = ||H||₁ (1-norm)")
-      .def("prepare", &pauli_lcu::prepare, py::arg("ancilla"),
+      .def_prop_ro("num_ancilla", &pauli_lcu::num_ancilla,
+                   "Number of ancilla qubits: ⌈log₂(# terms)⌉")
+      .def_prop_ro("num_system", &pauli_lcu::num_system,
+                   "Number of system qubits")
+      .def_prop_ro("normalization", &pauli_lcu::normalization,
+                   "Normalization constant: α = ||H||₁ (1-norm)")
+      .def("prepare", &pauli_lcu::prepare, nb::arg("ancilla"),
            R"(Apply the PREPARE operation to ancilla qubits.
           
 Prepares a superposition state on the ancilla qubits that
@@ -81,12 +97,12 @@ encodes the coefficients of the Hamiltonian terms.
 
 Args:
     ancilla: View of ancilla qubits)")
-      .def("unprepare", &pauli_lcu::unprepare, py::arg("ancilla"),
+      .def("unprepare", &pauli_lcu::unprepare, nb::arg("ancilla"),
            R"(Apply the PREPARE† (adjoint/uncomputation) operation.
 
 Args:
     ancilla: View of ancilla qubits)")
-      .def("select", &pauli_lcu::select, py::arg("ancilla"), py::arg("system"),
+      .def("select", &pauli_lcu::select, nb::arg("ancilla"), nb::arg("system"),
            R"(Apply the SELECT operation.
           
 Applies the appropriate Hamiltonian term conditioned on the
@@ -95,7 +111,7 @@ ancilla register state.
 Args:
     ancilla: View of ancilla qubits (control register)
     system: View of system qubits (target register))")
-      .def("apply", &pauli_lcu::apply, py::arg("ancilla"), py::arg("system"),
+      .def("apply", &pauli_lcu::apply, nb::arg("ancilla"), nb::arg("system"),
            R"(Apply the full block encoding: PREPARE → SELECT → PREPARE†.
 
 Args:
@@ -103,37 +119,30 @@ Args:
     system: View of system qubits)")
       .def(
           "get_angles",
-          [](const pauli_lcu &self) {
-            const auto &angles = self.get_angles();
-            return py::array_t<double>(angles.size(), angles.data());
-          },
+          [](const pauli_lcu &self) { return numpy_array(self.get_angles()); },
           "Get state preparation angles as NumPy array (for debugging)")
       .def(
           "get_term_controls",
           [](const pauli_lcu &self) {
-            const auto &controls = self.get_term_controls();
-            return py::array_t<int>(controls.size(), controls.data());
+            return numpy_array(self.get_term_controls());
           },
           "Get binary control patterns as NumPy array (for debugging)")
       .def(
           "get_term_ops",
           [](const pauli_lcu &self) {
-            const auto &ops = self.get_term_ops();
-            return py::array_t<int>(ops.size(), ops.data());
+            return numpy_array(self.get_term_ops());
           },
           "Get flattened Pauli operations as NumPy array (for debugging)")
       .def(
           "get_term_lengths",
           [](const pauli_lcu &self) {
-            const auto &lengths = self.get_term_lengths();
-            return py::array_t<int>(lengths.size(), lengths.data());
+            return numpy_array(self.get_term_lengths());
           },
           "Get number of operators per term as NumPy array (for debugging)")
       .def(
           "get_term_signs",
           [](const pauli_lcu &self) {
-            const auto &signs = self.get_term_signs();
-            return py::array_t<int>(signs.size(), signs.data());
+            return numpy_array(self.get_term_signs());
           },
           "Get sign of each coefficient as NumPy array (for debugging)");
 
@@ -141,7 +150,7 @@ Args:
   // QUANTUM EXACT LANCZOS RESULT
   // ============================================================================
 
-  py::class_<qel_result>(mod, "QELResult",
+  nb::class_<qel_result>(mod, "QELResult",
                          R"(Result from Quantum Exact Lanczos algorithm.
 
 Contains Krylov matrices that can be diagonalized to extract eigenvalues.
@@ -169,55 +178,37 @@ Example:
     >>> # Convert to physical energies
     >>> energies = eigenvalues * result.normalization + result.constant_term
     >>> ground_state = energies.min())")
-      .def(py::init<>())
-      .def_readwrite(
-          "hamiltonian_matrix", &qel_result::hamiltonian_matrix,
-          "Krylov H matrix (flattened, row-major, krylov_dim × krylov_dim)")
-      .def_readwrite(
-          "overlap_matrix", &qel_result::overlap_matrix,
-          "Krylov S matrix (flattened, row-major, krylov_dim × krylov_dim)")
-      .def_readwrite("moments", &qel_result::moments,
-                     "Collected moments: μₖ = ⟨ψ|Tₖ(H)|ψ⟩")
-      .def_readwrite("krylov_dimension", &qel_result::krylov_dimension,
-                     "Dimension of the Krylov subspace")
-      .def_readwrite("constant_term", &qel_result::constant_term,
-                     "Constant term from Hamiltonian (add to eigenvalues)")
-      .def_readwrite("normalization", &qel_result::normalization,
-                     "Normalization constant α = ||H||₁")
-      .def_readwrite("num_ancilla", &qel_result::num_ancilla,
-                     "Number of ancilla qubits used")
-      .def_readwrite("num_system", &qel_result::num_system,
-                     "Number of system qubits")
+      .def(nb::init<>())
+      .def_rw("hamiltonian_matrix", &qel_result::hamiltonian_matrix,
+              "Krylov H matrix (flattened, row-major, krylov_dim × krylov_dim)")
+      .def_rw("overlap_matrix", &qel_result::overlap_matrix,
+              "Krylov S matrix (flattened, row-major, krylov_dim × krylov_dim)")
+      .def_rw("moments", &qel_result::moments,
+              "Collected moments: μₖ = ⟨ψ|Tₖ(H)|ψ⟩")
+      .def_rw("krylov_dimension", &qel_result::krylov_dimension,
+              "Dimension of the Krylov subspace")
+      .def_rw("constant_term", &qel_result::constant_term,
+              "Constant term from Hamiltonian (add to eigenvalues)")
+      .def_rw("normalization", &qel_result::normalization,
+              "Normalization constant α = ||H||₁")
+      .def_rw("num_ancilla", &qel_result::num_ancilla,
+              "Number of ancilla qubits used")
+      .def_rw("num_system", &qel_result::num_system, "Number of system qubits")
       .def(
           "get_hamiltonian_matrix",
           [](const qel_result &self) {
-            int dim = self.krylov_dimension;
-            auto np_array = py::array_t<double>({dim, dim});
-            auto buf = np_array.request();
-            double *ptr = static_cast<double *>(buf.ptr);
-            std::copy(self.hamiltonian_matrix.begin(),
-                      self.hamiltonian_matrix.end(), ptr);
-            return np_array;
+            return numpy_matrix(self.hamiltonian_matrix, self.krylov_dimension);
           },
           "Get Hamiltonian matrix as 2D NumPy array")
       .def(
           "get_overlap_matrix",
           [](const qel_result &self) {
-            int dim = self.krylov_dimension;
-            auto np_array = py::array_t<double>({dim, dim});
-            auto buf = np_array.request();
-            double *ptr = static_cast<double *>(buf.ptr);
-            std::copy(self.overlap_matrix.begin(), self.overlap_matrix.end(),
-                      ptr);
-            return np_array;
+            return numpy_matrix(self.overlap_matrix, self.krylov_dimension);
           },
           "Get overlap matrix as 2D NumPy array")
       .def(
           "get_moments",
-          [](const qel_result &self) {
-            return py::array_t<double>(self.moments.size(),
-                                       self.moments.data());
-          },
+          [](const qel_result &self) { return numpy_array(self.moments); },
           "Get moments as NumPy array")
       .def("__repr__", [](const qel_result &self) {
         std::ostringstream oss;
@@ -236,7 +227,7 @@ Example:
   mod.def(
       "quantum_exact_lanczos",
       [](const cudaq::spin_op &hamiltonian, std::size_t num_qubits,
-         std::size_t n_electrons, py::kwargs options) {
+         std::size_t n_electrons, nb::kwargs options) {
         heterogeneous_map opts;
         opts.insert("krylov_dim", getValueOr<int>(options, "krylov_dim", 10));
         opts.insert("shots", getValueOr<int>(options, "shots", -1));
@@ -245,7 +236,8 @@ Example:
         return quantum_exact_lanczos(hamiltonian, num_qubits, n_electrons,
                                      opts);
       },
-      py::arg("hamiltonian"), py::arg("num_qubits"), py::arg("n_electrons"),
+      nb::arg("hamiltonian"), nb::arg("num_qubits"), nb::arg("n_electrons"),
+      nb::arg("**kwargs"),
       R"(Run Quantum Exact Lanczos algorithm to compute ground state energy.
 
 Uses block encoding and amplitude amplification to build a Krylov subspace

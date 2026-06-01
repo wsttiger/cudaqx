@@ -31,5 +31,4 @@ NB_MODULE(_pycudaqx_solvers_the_suffix_matters_cudaq_solvers, mod) {
   // positive, not a genuine reference-counting bug. See the identical comment
   // in libs/qec/python/bindings/cudaqx_qec.cpp for the full explanation.
   nanobind::set_leak_warnings(false);
-
 }

@@ -8,11 +8,13 @@
 
 #pragma once
 
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
+
+namespace nb = nanobind;
 
 namespace cudaq::solvers {
 
 /// @brief Bind block encoding and quantum exact lanczos functionality to Python
-void bindBlockEncoding(pybind11::module &mod);
+void bindBlockEncoding(nb::module_ &mod);
 
 } // namespace cudaq::solvers
