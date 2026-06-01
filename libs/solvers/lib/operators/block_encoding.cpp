@@ -11,6 +11,8 @@
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace cudaq::solvers {
 
@@ -217,15 +219,37 @@ struct pauli_select_kernel {
 // CLASSICAL UTILITIES
 // ============================================================================
 
-std::vector<double>
-pauli_lcu::compute_angles(const std::vector<double> &probs) {
+namespace {
+
+std::size_t ceil_log2(std::size_t value) {
+  if (value <= 1)
+    return 0;
+
+  std::size_t power = 1;
+  std::size_t log = 0;
+  while (power < value) {
+    power <<= 1;
+    ++log;
+  }
+  return log;
+}
+
+bool is_identity_word(const cudaq::pauli_word &word) {
+  const auto word_str = word.str();
+  for (char pauli : word_str)
+    if (pauli != 'I')
+      return false;
+  return true;
+}
+
+std::vector<double> compute_prepare_angles(const std::vector<double> &probs) {
   if (probs.empty())
     return {};
 
   std::size_t n_leaves = probs.size();
   if ((n_leaves & (n_leaves - 1)) != 0)
     throw std::runtime_error(
-        "compute_angles: probability vector size must be a power of 2");
+        "compute_prepare_angles: probability vector size must be a power of 2");
 
   int n_qubits = std::log2(n_leaves);
   std::vector<double> angles;
@@ -250,7 +274,7 @@ pauli_lcu::compute_angles(const std::vector<double> &probs) {
         for (int k = step; k < 2 * step; ++k)
           p_1 += probs[start_idx + k];
 
-        // Compute rotation angle: θ = 2*arcsin(sqrt(p_right / p_total))
+        // Compute rotation angle: theta = 2*arcsin(sqrt(p_right / p_total))
         angles.push_back(2.0 * std::asin(std::sqrt(p_1 / total_p)));
       }
     }
@@ -259,71 +283,91 @@ pauli_lcu::compute_angles(const std::vector<double> &probs) {
   return angles;
 }
 
-// ============================================================================
-// PAULI LCU IMPLEMENTATION
-// ============================================================================
+} // namespace
 
-pauli_lcu::pauli_lcu(const cudaq::spin_op &hamiltonian,
-                     std::size_t num_qubits) {
-  n_sys = num_qubits;
+lcu_decomposition decompose_lcu(const cudaq::spin_op &hamiltonian,
+                                std::size_t num_qubits,
+                                double coefficient_threshold) {
+  if (coefficient_threshold < 0.0)
+    throw std::runtime_error(
+        "decompose_lcu: coefficient threshold must be non-negative");
 
-  // Count terms and compute 1-norm
-  std::vector<double> coeffs;
-  std::vector<cudaq::pauli_word> words;
+  lcu_decomposition lcu;
+  lcu.num_system_qubits = num_qubits;
+  lcu.coefficient_threshold = coefficient_threshold;
 
-  alpha = 0.0;
-  std::size_t num_terms = 0;
-
-  // Extract terms from spin_op
   for (const auto &term : hamiltonian) {
     auto coeff = term.evaluate_coefficient();
     double abs_coeff = std::abs(coeff);
 
-    // Skip very small terms (numerical noise)
-    if (abs_coeff < 1e-12)
+    if (abs_coeff < coefficient_threshold)
       continue;
 
-    // For now, we only support real Hamiltonians
     if (std::abs(coeff.imag()) > 1e-10)
       throw std::runtime_error(
-          "pauli_lcu: complex Hamiltonians not yet supported");
+          "decompose_lcu: complex Hamiltonians not yet supported");
 
-    coeffs.push_back(coeff.real());
-    words.push_back(term.get_pauli_word(num_qubits));
-    alpha += abs_coeff;
-    num_terms++;
+    auto word = term.get_pauli_word(num_qubits);
+    double real_coeff = coeff.real();
+    bool identity_term = is_identity_word(word);
+
+    lcu.coefficients.push_back(real_coeff);
+    lcu.absolute_coefficients.push_back(abs_coeff);
+    lcu.signs.push_back((real_coeff < 0.0) ? -1 : 1);
+    lcu.identity_terms.push_back(identity_term ? 1 : 0);
+    lcu.pauli_words.push_back(word);
+    lcu.normalization += abs_coeff;
+    if (identity_term)
+      lcu.constant_term += real_coeff;
   }
 
-  if (num_terms == 0)
-    throw std::runtime_error("pauli_lcu: Hamiltonian has no terms");
+  lcu.num_terms = lcu.coefficients.size();
+  if (lcu.num_terms == 0)
+    throw std::runtime_error(
+        "decompose_lcu: Hamiltonian has no retained terms");
 
-  // Determine number of ancilla qubits needed
-  n_anc = static_cast<std::size_t>(std::ceil(std::log2(num_terms)));
+  lcu.num_ancilla_qubits = ceil_log2(lcu.num_terms);
+  lcu.padded_num_terms = 1ULL << lcu.num_ancilla_qubits;
 
-  // Normalize coefficients to probabilities
-  std::vector<double> probs;
-  for (double c : coeffs)
-    probs.push_back(std::abs(c) / alpha);
+  for (double abs_coeff : lcu.absolute_coefficients)
+    lcu.probabilities.push_back(abs_coeff / lcu.normalization);
 
-  // Pad to power of 2 for binary tree
-  std::size_t padded_size = 1ULL << n_anc;
-  while (probs.size() < padded_size)
-    probs.push_back(0.0);
+  return lcu;
+}
 
-  // Compute state preparation angles
-  state_prep_angles = compute_angles(probs);
+pauli_lcu_kernel_data make_pauli_lcu_kernel_data(const lcu_decomposition &lcu) {
+  if (lcu.num_terms == 0)
+    throw std::runtime_error(
+        "make_pauli_lcu_kernel_data: LCU decomposition has no terms");
+  if (lcu.coefficients.size() != lcu.num_terms ||
+      lcu.pauli_words.size() != lcu.num_terms ||
+      lcu.probabilities.size() != lcu.num_terms ||
+      lcu.signs.size() != lcu.num_terms)
+    throw std::runtime_error(
+        "make_pauli_lcu_kernel_data: inconsistent LCU decomposition metadata");
 
-  // Flatten terms for SELECT kernel
-  for (std::size_t idx = 0; idx < num_terms; ++idx) {
+  pauli_lcu_kernel_data data;
+  data.num_system_qubits = lcu.num_system_qubits;
+  data.num_terms = lcu.num_terms;
+  data.padded_num_terms = lcu.padded_num_terms;
+  data.num_ancilla_qubits = lcu.num_ancilla_qubits;
+
+  auto padded_probabilities = lcu.probabilities;
+  while (padded_probabilities.size() < lcu.padded_num_terms)
+    padded_probabilities.push_back(0.0);
+
+  data.state_prep_angles = compute_prepare_angles(padded_probabilities);
+
+  for (std::size_t idx = 0; idx < lcu.num_terms; ++idx) {
     // Binary representation of index for control pattern
-    for (std::size_t b = 0; b < n_anc; ++b) {
+    for (std::size_t b = 0; b < data.num_ancilla_qubits; ++b) {
       // MSB to LSB ordering
-      int bit_val = (idx >> (n_anc - 1 - b)) & 1;
-      term_controls.push_back(bit_val);
+      int bit_val = (idx >> (data.num_ancilla_qubits - 1 - b)) & 1;
+      data.term_controls.push_back(bit_val);
     }
 
     // Parse Pauli word string: format is "XYZII..." where position i is qubit i
-    std::string word_str = words[idx].str();
+    std::string word_str = lcu.pauli_words[idx].str();
     std::vector<std::pair<int, int>> ops_for_term; // (code, qubit_idx)
 
     // Each character position corresponds to a qubit
@@ -345,13 +389,34 @@ pauli_lcu::pauli_lcu(const cudaq::spin_op &hamiltonian,
 
     // Flatten ops
     for (const auto &[code, q_idx] : ops_for_term) {
-      term_ops.push_back(code);
-      term_ops.push_back(q_idx);
+      data.term_ops.push_back(code);
+      data.term_ops.push_back(q_idx);
     }
 
-    term_lengths.push_back(ops_for_term.size());
-    term_signs.push_back((coeffs[idx] < 0) ? -1 : 1);
+    data.term_lengths.push_back(static_cast<int>(ops_for_term.size()));
+    data.term_signs.push_back(lcu.signs[idx]);
   }
+
+  return data;
+}
+
+std::vector<double>
+pauli_lcu::compute_angles(const std::vector<double> &probs) {
+  return compute_prepare_angles(probs);
+}
+
+// ============================================================================
+// PAULI LCU IMPLEMENTATION
+// ============================================================================
+
+pauli_lcu::pauli_lcu(const cudaq::spin_op &hamiltonian, std::size_t num_qubits)
+    : pauli_lcu(decompose_lcu(hamiltonian, num_qubits)) {}
+
+pauli_lcu::pauli_lcu(const lcu_decomposition &lcu)
+    : kernel_data(make_pauli_lcu_kernel_data(lcu)), decomposition(lcu) {
+  n_sys = kernel_data.num_system_qubits;
+  n_anc = kernel_data.num_ancilla_qubits;
+  alpha = decomposition.normalization;
 }
 
 // ============================================================================
@@ -361,13 +426,14 @@ pauli_lcu::pauli_lcu(const cudaq::spin_op &hamiltonian,
 void pauli_lcu::prepare(cudaq::qview<> ancilla) const {
   if (ancilla.size() != n_anc)
     throw std::runtime_error("pauli_lcu::prepare: ancilla size mismatch");
-  pauli_prepare_kernel{}(ancilla, state_prep_angles);
+  pauli_prepare_kernel{}(ancilla, kernel_data.state_prep_angles);
 }
 
 void pauli_lcu::unprepare(cudaq::qview<> ancilla) const {
   if (ancilla.size() != n_anc)
     throw std::runtime_error("pauli_lcu::unprepare: ancilla size mismatch");
-  cudaq::adjoint(pauli_prepare_kernel{}, ancilla, state_prep_angles);
+  cudaq::adjoint(pauli_prepare_kernel{}, ancilla,
+                 kernel_data.state_prep_angles);
 }
 
 void pauli_lcu::select(cudaq::qview<> ancilla, cudaq::qview<> system) const {
@@ -376,8 +442,9 @@ void pauli_lcu::select(cudaq::qview<> ancilla, cudaq::qview<> system) const {
   if (system.size() != n_sys)
     throw std::runtime_error("pauli_lcu::select: system size mismatch");
 
-  pauli_select_kernel{}(ancilla, system, term_controls, term_ops, term_lengths,
-                        term_signs);
+  pauli_select_kernel{}(ancilla, system, kernel_data.term_controls,
+                        kernel_data.term_ops, kernel_data.term_lengths,
+                        kernel_data.term_signs);
 }
 
 } // namespace cudaq::solvers

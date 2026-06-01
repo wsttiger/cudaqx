@@ -8,10 +8,62 @@
 #pragma once
 
 #include "cudaq.h"
+#include "cudaq/qis/pauli_word.h"
 #include <cstddef>
 #include <vector>
 
 namespace cudaq::solvers {
+
+///  Host-side data needed to build a Pauli LCU block encoding.
+///
+/// This type separates extraction and normalization of Hamiltonian terms from
+/// QPU kernel generation. It intentionally does not impose an inheritance
+/// hierarchy on block encodings; it is just the concrete data model consumed by
+/// pauli_lcu.
+struct lcu_decomposition {
+  std::vector<double> coefficients;
+  std::vector<double> absolute_coefficients;
+  std::vector<double> probabilities;
+  std::vector<int> signs;
+  std::vector<int> identity_terms;
+  std::vector<cudaq::pauli_word> pauli_words;
+  std::size_t num_system_qubits = 0;
+  std::size_t num_terms = 0;
+  std::size_t padded_num_terms = 0;
+  std::size_t num_ancilla_qubits = 0;
+  double normalization = 0.0;
+
+  /// @brief Sum of retained identity-only terms.
+  ///
+  /// The current pauli_lcu implementation still includes identity terms in the
+  /// encoding so existing QEL behavior is unchanged. This field makes the
+  /// constant part explicit for future algorithms that want to account for it
+  /// outside the encoded operator.
+  double constant_term = 0.0;
+
+  double coefficient_threshold = 1e-12;
+};
+
+/// @brief Host-side layout consumed by the Pauli LCU PREPARE/SELECT kernels.
+struct pauli_lcu_kernel_data {
+  std::vector<double> state_prep_angles;
+  std::vector<int> term_controls;
+  std::vector<int> term_ops;
+  std::vector<int> term_lengths;
+  std::vector<int> term_signs;
+  std::size_t num_system_qubits = 0;
+  std::size_t num_terms = 0;
+  std::size_t padded_num_terms = 0;
+  std::size_t num_ancilla_qubits = 0;
+};
+
+/// @brief Decompose a spin_op into host-side Pauli LCU data.
+lcu_decomposition decompose_lcu(const cudaq::spin_op &hamiltonian,
+                                std::size_t num_qubits,
+                                double coefficient_threshold = 1e-12);
+
+/// @brief Build the flattened Pauli LCU kernel layout from a decomposition.
+pauli_lcu_kernel_data make_pauli_lcu_kernel_data(const lcu_decomposition &lcu);
 
 /// @brief Block encoding implementation using Pauli LCU (Linear Combination of
 /// Unitaries)
@@ -34,16 +86,14 @@ namespace cudaq::solvers {
 class pauli_lcu {
 private:
   // Flattened data for GPU kernels
-  std::vector<double> state_prep_angles; // Rotation angles for PREPARE tree
-  std::vector<int> term_controls;        // Binary control values per term
-  std::vector<int> term_ops;     // Flattened [code, qubit, code, qubit, ...]
-  std::vector<int> term_lengths; // Number of Pauli ops per term
-  std::vector<int> term_signs;   // Sign (+1 or -1) per term
+  pauli_lcu_kernel_data kernel_data;
 
   // Metadata
   std::size_t n_anc; // Number of ancilla qubits
   std::size_t n_sys; // Number of system qubits
   double alpha;      // Normalization (1-norm)
+
+  lcu_decomposition decomposition;
 
   /// @brief Compute rotation angles for state preparation tree
   /// @param probs Probability distribution (must be power of 2 length)
@@ -55,6 +105,9 @@ public:
   /// @param hamiltonian The target Hamiltonian as a spin_op
   /// @param num_qubits Number of system qubits (must match Hamiltonian support)
   explicit pauli_lcu(const cudaq::spin_op &hamiltonian, std::size_t num_qubits);
+
+  ///  Construct a Pauli LCU block encoding from host-side LCU data
+  explicit pauli_lcu(const lcu_decomposition &lcu);
 
   /// @brief Get the number of ancilla qubits
   /// @return Number of ancilla qubits
@@ -68,6 +121,17 @@ public:
   /// @details The block encoding satisfies ||H|| ≤ α = ||H||₁
   /// @return Normalization constant (1-norm)
   double normalization() const { return alpha; }
+
+  ///  Get the constant identity component detected during decomposition
+  double constant_term() const { return decomposition.constant_term; }
+
+  ///  Get the number of retained LCU terms before padding
+  std::size_t term_count() const { return decomposition.num_terms; }
+
+  ///  Get the number of LCU leaves after power-of-two padding
+  std::size_t padded_term_count() const {
+    return decomposition.padded_num_terms;
+  }
 
   /// @brief Apply PREPARE: encode coefficients into ancilla superposition
   /// @details Prepares a superposition state on the ancilla qubits that
@@ -98,19 +162,33 @@ public:
   }
 
   /// @brief Get the state preparation angles (for debugging/testing)
-  const std::vector<double> &get_angles() const { return state_prep_angles; }
+  const std::vector<double> &get_angles() const {
+    return kernel_data.state_prep_angles;
+  }
 
   /// @brief Get the flattened term controls (for debugging/testing)
-  const std::vector<int> &get_term_controls() const { return term_controls; }
+  const std::vector<int> &get_term_controls() const {
+    return kernel_data.term_controls;
+  }
 
   /// @brief Get the flattened term ops (for debugging/testing)
-  const std::vector<int> &get_term_ops() const { return term_ops; }
+  const std::vector<int> &get_term_ops() const { return kernel_data.term_ops; }
 
   /// @brief Get the term lengths (for debugging/testing)
-  const std::vector<int> &get_term_lengths() const { return term_lengths; }
+  const std::vector<int> &get_term_lengths() const {
+    return kernel_data.term_lengths;
+  }
 
   /// @brief Get the term signs (for debugging/testing)
-  const std::vector<int> &get_term_signs() const { return term_signs; }
+  const std::vector<int> &get_term_signs() const {
+    return kernel_data.term_signs;
+  }
+
+  /// @brief Get the host-side LCU decomposition (for inspection/testing)
+  const lcu_decomposition &get_decomposition() const { return decomposition; }
+
+  /// @brief Get the flattened Pauli LCU kernel layout (for inspection/testing)
+  const pauli_lcu_kernel_data &get_kernel_data() const { return kernel_data; }
 };
 
 } // namespace cudaq::solvers

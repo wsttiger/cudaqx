@@ -77,6 +77,71 @@ TEST(BlockEncodingTester, checkPauliLCU_SimpleXYZ) {
   EXPECT_EQ(lengths[2], 2); // Z0Z1 has 2 Paulis
 }
 
+TEST(BlockEncodingTester, checkLCUDecompositionMetadata) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 2.0 * i(0) + 0.5 * x(0) - 0.25 * z(0);
+
+  auto lcu = decompose_lcu(h, 1);
+  EXPECT_EQ(lcu.num_system_qubits, 1);
+  EXPECT_EQ(lcu.num_terms, 3);
+  EXPECT_EQ(lcu.padded_num_terms, 4);
+  EXPECT_EQ(lcu.num_ancilla_qubits, 2);
+  EXPECT_NEAR(lcu.normalization, 2.75, 1e-10);
+  EXPECT_NEAR(lcu.constant_term, 2.0, 1e-10);
+
+  ASSERT_EQ(lcu.absolute_coefficients.size(), 3);
+  ASSERT_EQ(lcu.probabilities.size(), 3);
+  ASSERT_EQ(lcu.signs.size(), 3);
+  ASSERT_EQ(lcu.identity_terms.size(), 3);
+  EXPECT_NEAR(lcu.absolute_coefficients[0], 2.0, 1e-10);
+  EXPECT_NEAR(lcu.probabilities[0], 2.0 / 2.75, 1e-10);
+  EXPECT_EQ(lcu.signs[0], 1);
+  EXPECT_EQ(lcu.signs[2], -1);
+  EXPECT_EQ(lcu.identity_terms[0], 1);
+  EXPECT_EQ(lcu.identity_terms[1], 0);
+
+  auto kernel_data = make_pauli_lcu_kernel_data(lcu);
+  EXPECT_EQ(kernel_data.num_system_qubits, 1);
+  EXPECT_EQ(kernel_data.num_terms, 3);
+  EXPECT_EQ(kernel_data.padded_num_terms, 4);
+  EXPECT_EQ(kernel_data.num_ancilla_qubits, 2);
+  EXPECT_EQ(kernel_data.state_prep_angles.size(), 3);
+  EXPECT_EQ(kernel_data.term_lengths.size(), 3);
+  EXPECT_EQ(kernel_data.term_signs.size(), 3);
+  EXPECT_EQ(kernel_data.term_signs[2], -1);
+
+  pauli_lcu encoding(lcu);
+  EXPECT_EQ(encoding.num_system(), 1);
+  EXPECT_EQ(encoding.num_ancilla(), 2);
+  EXPECT_EQ(encoding.term_count(), 3);
+  EXPECT_EQ(encoding.padded_term_count(), 4);
+  EXPECT_NEAR(encoding.normalization(), 2.75, 1e-10);
+  EXPECT_NEAR(encoding.constant_term(), 2.0, 1e-10);
+  EXPECT_EQ(encoding.get_kernel_data().term_signs[2], -1);
+}
+
+TEST(BlockEncodingTester, checkLCUDecompositionThreshold) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 1e-14 * x(0) + 0.5 * z(0);
+
+  auto lcu = decompose_lcu(h, 1);
+  EXPECT_EQ(lcu.num_terms, 1);
+  EXPECT_EQ(lcu.padded_num_terms, 1);
+  EXPECT_EQ(lcu.num_ancilla_qubits, 0);
+  EXPECT_NEAR(lcu.normalization, 0.5, 1e-10);
+  ASSERT_EQ(lcu.probabilities.size(), 1);
+  EXPECT_NEAR(lcu.probabilities[0], 1.0, 1e-10);
+
+  auto kernel_data = make_pauli_lcu_kernel_data(lcu);
+  EXPECT_EQ(kernel_data.state_prep_angles.size(), 0);
+  EXPECT_EQ(kernel_data.term_controls.size(), 0);
+  EXPECT_EQ(kernel_data.term_lengths.size(), 1);
+}
+
 TEST(BlockEncodingTester, checkKernelExecution) {
   using namespace cudaq::spin;
   using namespace cudaq::solvers;
