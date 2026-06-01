@@ -31,6 +31,30 @@ TEST(QubitizationTester, checkReflectionKernelsCompile) {
   EXPECT_NO_THROW(prepared_reflection_test());
 }
 
+TEST(QubitizationTester, checkWalkKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+
+  auto walk_test = [&]() __qpu__ {
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    apply_qubitization_walk(anc, sys, encoding);
+  };
+  EXPECT_NO_THROW(walk_test());
+
+  auto walk_functor_test = [&]() __qpu__ {
+    cudaq::qvector<> anc(encoding.num_ancilla());
+    cudaq::qvector<> sys(encoding.num_system());
+    encoding.prepare(anc);
+    qubitization_walk{}(anc, sys, encoding);
+  };
+  EXPECT_NO_THROW(walk_functor_test());
+}
+
 TEST(QubitizationTester, checkObservableBuilders) {
   using namespace cudaq::spin;
   using namespace cudaq::solvers;

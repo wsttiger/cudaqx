@@ -73,6 +73,25 @@ struct prepare_reflection {
   }
 };
 
+/// @brief Apply one qubitization walk step for a Pauli LCU encoding.
+/// @details Applies SELECT followed by reflection about the PREPARE state.
+/// The caller is responsible for preparing the ancilla register before the
+/// first walk step when the algorithm requires it.
+__qpu__ inline void apply_qubitization_walk(cudaq::qview<> ancilla,
+                                            cudaq::qview<> system,
+                                            const pauli_lcu &encoding) {
+  encoding.select(ancilla, system);
+  reflect_about_prepare(ancilla, encoding);
+}
+
+/// @brief Kernel functor wrapper for one qubitization walk step.
+struct qubitization_walk {
+  void operator()(cudaq::qview<> ancilla, cudaq::qview<> system,
+                  const pauli_lcu &encoding) const __qpu__ {
+    apply_qubitization_walk(ancilla, system, encoding);
+  }
+};
+
 /// @brief Build the projector |0><0| on an ancilla register.
 /// @param num_ancilla Number of ancilla qubits in the projector register.
 cudaq::spin_op build_ancilla_zero_projector(std::size_t num_ancilla);

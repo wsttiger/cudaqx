@@ -26,8 +26,7 @@ struct qel_state_prep_kernel {
     // Apply k iterations of SELECT + REFLECT
     encoding.prepare(anc);
     for (int i = 0; i < k_half; ++i) {
-      encoding.select(anc, sys);
-      prepare_reflection{}(anc, encoding);
+      qubitization_walk{}(anc, sys, encoding);
     }
   }
 };
@@ -39,8 +38,7 @@ struct qel_measure_even_kernel {
     // Apply k iterations of SELECT + REFLECT
     encoding.prepare(anc);
     for (int i = 0; i < k_half; ++i) {
-      encoding.select(anc, sys);
-      prepare_reflection{}(anc, encoding);
+      qubitization_walk{}(anc, sys, encoding);
     }
     // Unprepare for measurement in |0⟩ basis
     encoding.unprepare(anc);
