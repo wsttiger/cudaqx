@@ -73,6 +73,23 @@ void validate_qsvt_response_samples(const std::vector<double> &sample_points) {
     validate_qsvt_response_x(x);
 }
 
+void validate_qsvt_sample_range(double min_x, double max_x,
+                                std::size_t num_points) {
+  validate_qsvt_response_x(min_x);
+  validate_qsvt_response_x(max_x);
+
+  if (min_x > max_x)
+    throw std::invalid_argument(
+        "QSVT sample point range must satisfy min_x <= max_x.");
+  if (num_points == 0)
+    throw std::invalid_argument(
+        "QSVT sample point generation requires at least one point.");
+}
+
+double qsvt_sample_midpoint(double min_x, double max_x) {
+  return 0.5 * (min_x + max_x);
+}
+
 } // namespace
 
 qsvt_phase_sequence::qsvt_phase_sequence(std::vector<double> input_phases)
@@ -351,6 +368,47 @@ qsvt_response_error estimate_qsvt_response_error(
     const std::vector<double> &sample_points) {
   return estimate_qsvt_response_error(plan.phase_data(), target, sample_points,
                                       plan.descriptor().phase_convention);
+}
+
+std::vector<double> make_uniform_qsvt_sample_points(double min_x, double max_x,
+                                                    std::size_t num_points) {
+  validate_qsvt_sample_range(min_x, max_x, num_points);
+
+  if (num_points == 1)
+    return {qsvt_sample_midpoint(min_x, max_x)};
+
+  std::vector<double> points;
+  points.reserve(num_points);
+  const double step = (max_x - min_x) / static_cast<double>(num_points - 1);
+  for (std::size_t i = 0; i < num_points; ++i)
+    points.push_back(min_x + step * static_cast<double>(i));
+
+  points.back() = max_x;
+  return points;
+}
+
+std::vector<double> make_chebyshev_qsvt_sample_points(double min_x,
+                                                      double max_x,
+                                                      std::size_t num_points) {
+  validate_qsvt_sample_range(min_x, max_x, num_points);
+
+  if (num_points == 1)
+    return {qsvt_sample_midpoint(min_x, max_x)};
+
+  std::vector<double> points;
+  points.reserve(num_points);
+  const double midpoint = qsvt_sample_midpoint(min_x, max_x);
+  const double half_width = 0.5 * (max_x - min_x);
+  constexpr double pi = 3.141592653589793238462643383279502884;
+  for (std::size_t i = 0; i < num_points; ++i) {
+    const double theta = pi * static_cast<double>(num_points - 1 - i) /
+                         static_cast<double>(num_points - 1);
+    points.push_back(midpoint + half_width * std::cos(theta));
+  }
+
+  points.front() = min_x;
+  points.back() = max_x;
+  return points;
 }
 
 void validate_qsvt_transform_phase_sequence(

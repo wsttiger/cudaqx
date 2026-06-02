@@ -547,6 +547,19 @@ qsvt_response_error estimate_qsvt_response_error(
     const std::function<std::complex<double>(double)> &target,
     const std::vector<double> &sample_points);
 
+/// @brief Construct uniformly spaced sample points over [min_x, max_x].
+/// @details Multi-point grids include both endpoints. A single-point grid uses
+/// the interval midpoint.
+std::vector<double> make_uniform_qsvt_sample_points(double min_x, double max_x,
+                                                    std::size_t num_points);
+
+/// @brief Construct Chebyshev extrema sample points over [min_x, max_x].
+/// @details Multi-point grids are ordered from min_x to max_x and include both
+/// endpoints. A single-point grid uses the interval midpoint.
+std::vector<double> make_chebyshev_qsvt_sample_points(double min_x,
+                                                      double max_x,
+                                                      std::size_t num_points);
+
 /// @brief Validate explicit phases against a transform descriptor.
 /// @details This validates descriptor metadata, phase finiteness, and the
 /// descriptor degree hint when one is provided. It does not synthesize phases.

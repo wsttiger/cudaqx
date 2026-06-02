@@ -459,10 +459,46 @@ TEST(QSVTTester, checkResponseEvaluator) {
       std::invalid_argument);
 }
 
+TEST(QSVTTester, checkSamplePointFactories) {
+  using namespace cudaq::solvers;
+
+  auto uniform = make_uniform_qsvt_sample_points(-1.0, 1.0, 5);
+  ASSERT_EQ(uniform.size(), 5);
+  EXPECT_NEAR(-1.0, uniform.front(), 1e-12);
+  EXPECT_NEAR(-0.5, uniform[1], 1e-12);
+  EXPECT_NEAR(0.0, uniform[2], 1e-12);
+  EXPECT_NEAR(1.0, uniform.back(), 1e-12);
+
+  auto uniform_midpoint = make_uniform_qsvt_sample_points(-0.25, 0.75, 1);
+  ASSERT_EQ(uniform_midpoint.size(), 1);
+  EXPECT_NEAR(0.25, uniform_midpoint.front(), 1e-12);
+
+  auto chebyshev = make_chebyshev_qsvt_sample_points(-1.0, 1.0, 5);
+  ASSERT_EQ(chebyshev.size(), 5);
+  EXPECT_NEAR(-1.0, chebyshev.front(), 1e-12);
+  EXPECT_NEAR(-std::sqrt(0.5), chebyshev[1], 1e-12);
+  EXPECT_NEAR(0.0, chebyshev[2], 1e-12);
+  EXPECT_NEAR(std::sqrt(0.5), chebyshev[3], 1e-12);
+  EXPECT_NEAR(1.0, chebyshev.back(), 1e-12);
+
+  auto shifted_chebyshev = make_chebyshev_qsvt_sample_points(0.0, 1.0, 3);
+  ASSERT_EQ(shifted_chebyshev.size(), 3);
+  EXPECT_NEAR(0.0, shifted_chebyshev.front(), 1e-12);
+  EXPECT_NEAR(0.5, shifted_chebyshev[1], 1e-12);
+  EXPECT_NEAR(1.0, shifted_chebyshev.back(), 1e-12);
+
+  EXPECT_THROW(make_uniform_qsvt_sample_points(0.5, -0.5, 4),
+               std::invalid_argument);
+  EXPECT_THROW(make_uniform_qsvt_sample_points(-1.1, 1.0, 4),
+               std::invalid_argument);
+  EXPECT_THROW(make_chebyshev_qsvt_sample_points(-1.0, 1.0, 0),
+               std::invalid_argument);
+}
+
 TEST(QSVTTester, checkResponseErrorEstimator) {
   using namespace cudaq::solvers;
 
-  std::vector<double> sample_points{-1.0, -0.5, 0.0, 0.5, 1.0};
+  auto sample_points = make_uniform_qsvt_sample_points(-1.0, 1.0, 5);
   auto identity_target = [](double x) { return std::complex<double>(x, 0.0); };
   auto zero_target = [](double) { return std::complex<double>(0.0, 0.0); };
 
