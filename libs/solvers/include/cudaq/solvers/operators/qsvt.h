@@ -10,6 +10,7 @@
 #include "cudaq.h"
 #include "cudaq/solvers/operators/qubitization.h"
 
+#include <complex>
 #include <cstddef>
 #include <vector>
 
@@ -34,6 +35,16 @@ enum class qsvt_transform_kind {
 /// kernel invocation so kernels do not need to consume richer C++ objects.
 inline constexpr int qsvt_forward_walk = 0;
 inline constexpr int qsvt_adjoint_walk = 1;
+
+/// @brief Host-side response of a QSP/QSVT phase sequence at a scalar x.
+/// @details The value is the upper-left matrix element of the abstract
+/// two-dimensional signal model. magnitude and probability are convenience
+/// diagnostics derived from that complex value.
+struct qsvt_response {
+  std::complex<double> value;
+  double magnitude = 0.0;
+  double probability = 0.0;
+};
 
 /// @brief QSVT host/device API boundary.
 ///
@@ -473,6 +484,29 @@ bool is_valid_qsvt_transform_descriptor(
 /// with the transform kind.
 void validate_qsvt_transform_descriptor(
     const qsvt_transform_descriptor &descriptor);
+
+/// @brief Evaluate the abstract QSVT/QSP scalar response for explicit phases.
+/// @details This is a host-side diagnostic and validation helper. It evaluates
+/// the upper-left matrix element of the two-dimensional signal model at
+/// @p x in [-1, 1]. The qsvt convention uses projector phases
+/// diag(exp(i phi), 1), matching apply_qsvt_signal_phase. The qsp convention
+/// uses Z-rotation phases diag(exp(i phi), exp(-i phi)).
+qsvt_response evaluate_qsvt_response(
+    const std::vector<double> &phases, double x,
+    qsvt_phase_convention convention = qsvt_phase_convention::qsvt);
+
+/// @brief Evaluate the scalar response for a validated phase sequence.
+qsvt_response evaluate_qsvt_response(
+    const qsvt_phase_sequence &phases, double x,
+    qsvt_phase_convention convention = qsvt_phase_convention::qsvt);
+
+/// @brief Evaluate the scalar response for a QSVT sequence plan.
+qsvt_response evaluate_qsvt_response(
+    const qsvt_plan &plan, double x,
+    qsvt_phase_convention convention = qsvt_phase_convention::qsvt);
+
+/// @brief Evaluate the scalar response using a transform plan convention.
+qsvt_response evaluate_qsvt_response(const qsvt_transform_plan &plan, double x);
 
 /// @brief Validate explicit phases against a transform descriptor.
 /// @details This validates descriptor metadata, phase finiteness, and the

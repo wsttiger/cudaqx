@@ -8,11 +8,55 @@
 
 #include "cudaq/solvers/operators/qsvt.h"
 
+#include <algorithm>
 #include <cmath>
+#include <complex>
 #include <stdexcept>
 #include <utility>
 
 namespace cudaq::solvers {
+
+namespace {
+
+using complex = std::complex<double>;
+
+struct qsvt_response_matrix {
+  complex a00 = 1.0;
+  complex a01 = 0.0;
+  complex a10 = 0.0;
+  complex a11 = 1.0;
+};
+
+qsvt_response_matrix multiply(const qsvt_response_matrix &lhs,
+                              const qsvt_response_matrix &rhs) {
+  return {lhs.a00 * rhs.a00 + lhs.a01 * rhs.a10,
+          lhs.a00 * rhs.a01 + lhs.a01 * rhs.a11,
+          lhs.a10 * rhs.a00 + lhs.a11 * rhs.a10,
+          lhs.a10 * rhs.a01 + lhs.a11 * rhs.a11};
+}
+
+qsvt_response_matrix phase_response_matrix(double phase,
+                                           qsvt_phase_convention convention) {
+  const complex positive_phase = std::polar(1.0, phase);
+  if (convention == qsvt_phase_convention::qsp)
+    return {positive_phase, 0.0, 0.0, std::polar(1.0, -phase)};
+
+  return {positive_phase, 0.0, 0.0, 1.0};
+}
+
+qsvt_response_matrix walk_response_matrix(double x) {
+  const double y = std::sqrt(std::max(0.0, 1.0 - x * x));
+  const complex off_diagonal(0.0, y);
+  return {x, off_diagonal, off_diagonal, x};
+}
+
+void validate_qsvt_response_input(const std::vector<double> &phases, double x) {
+  validate_qsvt_phase_sequence(phases);
+  if (!std::isfinite(x) || x < -1.0 || x > 1.0)
+    throw std::invalid_argument("QSVT response x value must be in [-1, 1].");
+}
+
+} // namespace
 
 qsvt_phase_sequence::qsvt_phase_sequence(std::vector<double> input_phases)
     : phases(std::move(input_phases)) {
@@ -196,6 +240,42 @@ void validate_qsvt_transform_descriptor(
     const qsvt_transform_descriptor &descriptor) {
   if (!is_valid_qsvt_transform_descriptor(descriptor))
     throw std::invalid_argument("Invalid QSVT transform descriptor.");
+}
+
+qsvt_response evaluate_qsvt_response(const std::vector<double> &phases,
+                                     double x,
+                                     qsvt_phase_convention convention) {
+  validate_qsvt_response_input(phases, x);
+
+  qsvt_response_matrix response = phase_response_matrix(phases[0], convention);
+  const qsvt_response_matrix walk = walk_response_matrix(x);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    response = multiply(walk, response);
+    response = multiply(phase_response_matrix(phases[i], convention), response);
+  }
+
+  qsvt_response result;
+  result.value = response.a00;
+  result.magnitude = std::abs(result.value);
+  result.probability = std::norm(result.value);
+  return result;
+}
+
+qsvt_response evaluate_qsvt_response(const qsvt_phase_sequence &phases,
+                                     double x,
+                                     qsvt_phase_convention convention) {
+  return evaluate_qsvt_response(phases.data(), x, convention);
+}
+
+qsvt_response evaluate_qsvt_response(const qsvt_plan &plan, double x,
+                                     qsvt_phase_convention convention) {
+  return evaluate_qsvt_response(plan.phase_data(), x, convention);
+}
+
+qsvt_response evaluate_qsvt_response(const qsvt_transform_plan &plan,
+                                     double x) {
+  return evaluate_qsvt_response(plan.phase_data(), x,
+                                plan.descriptor().phase_convention);
 }
 
 void validate_qsvt_transform_phase_sequence(

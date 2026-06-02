@@ -6,6 +6,8 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
+#include <cmath>
+#include <complex>
 #include <gtest/gtest.h>
 #include <limits>
 #include <stdexcept>
@@ -424,6 +426,60 @@ TEST(QSVTTester, checkTransformDescriptorFactories) {
   EXPECT_THROW(
       make_imaginary_time_hamiltonian_simulation_qsvt_transform(1.0, -1e-3),
       std::invalid_argument);
+}
+
+TEST(QSVTTester, checkResponseEvaluator) {
+  using namespace cudaq::solvers;
+
+  auto phase_only = evaluate_qsvt_response({0.25}, 0.3);
+  EXPECT_NEAR(std::cos(0.25), phase_only.value.real(), 1e-12);
+  EXPECT_NEAR(std::sin(0.25), phase_only.value.imag(), 1e-12);
+  EXPECT_NEAR(1.0, phase_only.magnitude, 1e-12);
+  EXPECT_NEAR(1.0, phase_only.probability, 1e-12);
+
+  auto one_walk = evaluate_qsvt_response({0.0, 0.0}, 0.25);
+  EXPECT_NEAR(0.25, one_walk.value.real(), 1e-12);
+  EXPECT_NEAR(0.0, one_walk.value.imag(), 1e-12);
+  EXPECT_NEAR(0.25, one_walk.magnitude, 1e-12);
+  EXPECT_NEAR(0.0625, one_walk.probability, 1e-12);
+
+  auto two_walks = evaluate_qsvt_response({0.0, 0.0, 0.0}, 0.25);
+  EXPECT_NEAR(2.0 * 0.25 * 0.25 - 1.0, two_walks.value.real(), 1e-12);
+  EXPECT_NEAR(0.0, two_walks.value.imag(), 1e-12);
+
+  qsvt_phase_sequence phases({0.0, 0.0});
+  EXPECT_NEAR(0.5, evaluate_qsvt_response(phases, 0.5).value.real(), 1e-12);
+
+  auto plan = make_qsvt_plan({0.0, 0.0, 0.0});
+  EXPECT_NEAR(-0.5, evaluate_qsvt_response(plan, 0.5).value.real(), 1e-12);
+
+  EXPECT_THROW(evaluate_qsvt_response({0.0}, 1.1), std::invalid_argument);
+  EXPECT_THROW(
+      evaluate_qsvt_response({0.0}, std::numeric_limits<double>::quiet_NaN()),
+      std::invalid_argument);
+}
+
+TEST(QSVTTester, checkResponseEvaluatorConventions) {
+  using namespace cudaq::solvers;
+
+  std::vector<double> phases{0.2, -0.3, 0.4};
+  auto qsvt_response =
+      evaluate_qsvt_response(phases, 0.5, qsvt_phase_convention::qsvt);
+  auto qsp_response =
+      evaluate_qsvt_response(phases, 0.5, qsvt_phase_convention::qsp);
+
+  EXPECT_GT(std::abs(qsvt_response.value - qsp_response.value), 1e-6);
+
+  auto descriptor = make_real_time_hamiltonian_simulation_qsvt_transform(
+      0.75, 1e-4, phases.size() - 1);
+  descriptor.phase_convention = qsvt_phase_convention::qsp;
+  auto transform_plan = make_qsvt_transform_plan(descriptor, phases);
+  auto transform_response = evaluate_qsvt_response(transform_plan, 0.5);
+
+  EXPECT_NEAR(qsp_response.value.real(), transform_response.value.real(),
+              1e-12);
+  EXPECT_NEAR(qsp_response.value.imag(), transform_response.value.imag(),
+              1e-12);
 }
 
 TEST(QSVTTester, checkTransformPlanFactories) {
