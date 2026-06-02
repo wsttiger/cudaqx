@@ -50,10 +50,27 @@ qsvt_response_matrix walk_response_matrix(double x) {
   return {x, off_diagonal, off_diagonal, x};
 }
 
-void validate_qsvt_response_input(const std::vector<double> &phases, double x) {
-  validate_qsvt_phase_sequence(phases);
+bool is_finite_complex(const std::complex<double> &value) {
+  return std::isfinite(value.real()) && std::isfinite(value.imag());
+}
+
+void validate_qsvt_response_x(double x) {
   if (!std::isfinite(x) || x < -1.0 || x > 1.0)
     throw std::invalid_argument("QSVT response x value must be in [-1, 1].");
+}
+
+void validate_qsvt_response_input(const std::vector<double> &phases, double x) {
+  validate_qsvt_phase_sequence(phases);
+  validate_qsvt_response_x(x);
+}
+
+void validate_qsvt_response_samples(const std::vector<double> &sample_points) {
+  if (sample_points.empty())
+    throw std::invalid_argument(
+        "QSVT response error estimation requires at least one sample point.");
+
+  for (double x : sample_points)
+    validate_qsvt_response_x(x);
 }
 
 } // namespace
@@ -276,6 +293,64 @@ qsvt_response evaluate_qsvt_response(const qsvt_transform_plan &plan,
                                      double x) {
   return evaluate_qsvt_response(plan.phase_data(), x,
                                 plan.descriptor().phase_convention);
+}
+
+qsvt_response_error estimate_qsvt_response_error(
+    const std::vector<double> &phases,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points,
+    qsvt_phase_convention convention) {
+  validate_qsvt_phase_sequence(phases);
+  validate_qsvt_response_samples(sample_points);
+
+  qsvt_response_error summary;
+  summary.num_samples = sample_points.size();
+
+  double sum_squared_error = 0.0;
+  for (double x : sample_points) {
+    const auto response = evaluate_qsvt_response(phases, x, convention);
+    const auto target_value = target(x);
+    if (!is_finite_complex(target_value))
+      throw std::invalid_argument(
+          "QSVT response error target returned a non-finite value.");
+
+    const double error = std::abs(response.value - target_value);
+    sum_squared_error += error * error;
+    if (error > summary.max_abs_error) {
+      summary.max_abs_error = error;
+      summary.max_error_x = x;
+    }
+  }
+
+  summary.rms_error =
+      std::sqrt(sum_squared_error / static_cast<double>(summary.num_samples));
+  return summary;
+}
+
+qsvt_response_error estimate_qsvt_response_error(
+    const qsvt_phase_sequence &phases,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points,
+    qsvt_phase_convention convention) {
+  return estimate_qsvt_response_error(phases.data(), target, sample_points,
+                                      convention);
+}
+
+qsvt_response_error estimate_qsvt_response_error(
+    const qsvt_plan &plan,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points,
+    qsvt_phase_convention convention) {
+  return estimate_qsvt_response_error(plan.phase_data(), target, sample_points,
+                                      convention);
+}
+
+qsvt_response_error estimate_qsvt_response_error(
+    const qsvt_transform_plan &plan,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points) {
+  return estimate_qsvt_response_error(plan.phase_data(), target, sample_points,
+                                      plan.descriptor().phase_convention);
 }
 
 void validate_qsvt_transform_phase_sequence(

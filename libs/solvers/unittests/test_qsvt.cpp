@@ -459,6 +459,55 @@ TEST(QSVTTester, checkResponseEvaluator) {
       std::invalid_argument);
 }
 
+TEST(QSVTTester, checkResponseErrorEstimator) {
+  using namespace cudaq::solvers;
+
+  std::vector<double> sample_points{-1.0, -0.5, 0.0, 0.5, 1.0};
+  auto identity_target = [](double x) { return std::complex<double>(x, 0.0); };
+  auto zero_target = [](double) { return std::complex<double>(0.0, 0.0); };
+
+  auto exact_error =
+      estimate_qsvt_response_error({0.0, 0.0}, identity_target, sample_points);
+  EXPECT_EQ(exact_error.num_samples, sample_points.size());
+  EXPECT_NEAR(0.0, exact_error.max_abs_error, 1e-12);
+  EXPECT_NEAR(0.0, exact_error.rms_error, 1e-12);
+
+  auto mismatch_error =
+      estimate_qsvt_response_error({0.0, 0.0}, zero_target, sample_points);
+  EXPECT_NEAR(1.0, mismatch_error.max_abs_error, 1e-12);
+  EXPECT_NEAR(std::sqrt(0.5), mismatch_error.rms_error, 1e-12);
+  EXPECT_NEAR(-1.0, mismatch_error.max_error_x, 1e-12);
+
+  qsvt_phase_sequence phases({0.0, 0.0});
+  EXPECT_NEAR(
+      0.0,
+      estimate_qsvt_response_error(phases, identity_target, sample_points)
+          .max_abs_error,
+      1e-12);
+
+  auto plan = make_qsvt_plan({0.0, 0.0});
+  EXPECT_NEAR(0.0,
+              estimate_qsvt_response_error(plan, identity_target, sample_points)
+                  .max_abs_error,
+              1e-12);
+}
+
+TEST(QSVTTester, checkResponseErrorEstimatorValidation) {
+  using namespace cudaq::solvers;
+
+  auto target = [](double x) { return std::complex<double>(x, 0.0); };
+  auto non_finite_target = [](double) {
+    return std::complex<double>(std::numeric_limits<double>::quiet_NaN(), 0.0);
+  };
+
+  EXPECT_THROW(estimate_qsvt_response_error({0.0}, target, {}),
+               std::invalid_argument);
+  EXPECT_THROW(estimate_qsvt_response_error({0.0}, target, {1.1}),
+               std::invalid_argument);
+  EXPECT_THROW(estimate_qsvt_response_error({0.0}, non_finite_target, {0.0}),
+               std::invalid_argument);
+}
+
 TEST(QSVTTester, checkResponseEvaluatorConventions) {
   using namespace cudaq::solvers;
 

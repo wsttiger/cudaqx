@@ -12,6 +12,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <functional>
 #include <vector>
 
 namespace cudaq::solvers {
@@ -44,6 +45,14 @@ struct qsvt_response {
   std::complex<double> value;
   double magnitude = 0.0;
   double probability = 0.0;
+};
+
+/// @brief Host-side error summary for a sampled QSVT response approximation.
+struct qsvt_response_error {
+  double max_abs_error = 0.0;
+  double rms_error = 0.0;
+  double max_error_x = 0.0;
+  std::size_t num_samples = 0;
 };
 
 /// @brief QSVT host/device API boundary.
@@ -507,6 +516,36 @@ qsvt_response evaluate_qsvt_response(
 
 /// @brief Evaluate the scalar response using a transform plan convention.
 qsvt_response evaluate_qsvt_response(const qsvt_transform_plan &plan, double x);
+
+/// @brief Estimate response error against a target function on sample points.
+/// @details This is a host-side validation helper for user-supplied or future
+/// generated phases. The target callable maps scalar x values in [-1, 1] to
+/// the desired complex response at that point.
+qsvt_response_error estimate_qsvt_response_error(
+    const std::vector<double> &phases,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points,
+    qsvt_phase_convention convention = qsvt_phase_convention::qsvt);
+
+/// @brief Estimate response error for a validated phase sequence.
+qsvt_response_error estimate_qsvt_response_error(
+    const qsvt_phase_sequence &phases,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points,
+    qsvt_phase_convention convention = qsvt_phase_convention::qsvt);
+
+/// @brief Estimate response error for a QSVT sequence plan.
+qsvt_response_error estimate_qsvt_response_error(
+    const qsvt_plan &plan,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points,
+    qsvt_phase_convention convention = qsvt_phase_convention::qsvt);
+
+/// @brief Estimate response error using a transform plan convention.
+qsvt_response_error estimate_qsvt_response_error(
+    const qsvt_transform_plan &plan,
+    const std::function<std::complex<double>(double)> &target,
+    const std::vector<double> &sample_points);
 
 /// @brief Validate explicit phases against a transform descriptor.
 /// @details This validates descriptor metadata, phase finiteness, and the
