@@ -310,6 +310,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/lib/version.cpp.in"
 
 add_subdirectory(lib)
 add_subdirectory(tools)
+add_subdirectory(examples/cpp)
 
 if (CUDAQX_SOLVERS_BINDINGS_PYTHON)
   add_subdirectory(python)
