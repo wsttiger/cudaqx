@@ -28,14 +28,16 @@ composable building blocks rather than complete applications.
 | --- | --- | --- |
 | Pauli LCU block encoding | `lcu_decomposition`, `pauli_lcu_kernel_data`, `pauli_lcu` metadata | `prepare`, `unprepare`, `select`, `controlled_select`, `apply` |
 | Qubitization | PREPARE-state conventions and observable builders | zero/PREPARE reflections, forward and adjoint walks, controlled walks, walk powers, controlled walk powers |
-| QSVT/QSP sequencing | `qsvt_phase_sequence`, `qsvt_sequence_policy`, `qsvt_plan`, `qsvt_transform_descriptor` | signal phases, controlled signal phases, QSVT phase/walk sequences, controlled QSVT sequences |
+| QSVT/QSP sequencing | `qsvt_phase_sequence`, `qsvt_sequence_policy`, `qsvt_plan`, `qsvt_transform_descriptor`, `qsvt_transform_plan` | signal phases, controlled signal phases, QSVT phase/walk sequences, controlled QSVT sequences |
+| QSVT/QSP validation | `qsvt_response`, `qsvt_response_error`, response evaluators, response error estimators, uniform and Chebyshev sample grids | N/A; these are host-side diagnostics |
 
 Host-side objects validate metadata, define conventions, and own data-layout
 decisions. CUDA-Q kernels should consume only QPU-facing data extracted from
 those host objects: registers, `pauli_lcu` encodings, primitive scalar values,
 `std::vector<double>` phase data, and `std::vector<int>` walk-direction data.
-`qsvt_plan::kernel_data()` is the convenience view for extracting the phase and
-walk-direction vectors before a kernel invocation.
+`qsvt_plan::kernel_data()` and `qsvt_transform_plan::kernel_data()` are
+convenience views for extracting the phase and walk-direction vectors before a
+kernel invocation.
 
 A typical QSVT call pattern is:
 
@@ -63,7 +65,28 @@ The QSVT layer includes host-side transform descriptors for the primitive
 matrix functions needed by algorithms such as linear solve, real-time
 Hamiltonian simulation (`exp(-i H t)`), and imaginary-time evolution
 (`exp(-H t)`). These descriptors capture validated metadata only; they do not
-synthesize QSP/QSVT phases.
+synthesize QSP/QSVT phases. A `qsvt_transform_plan` retains that descriptor
+metadata while exposing the same kernel-ready phase and walk-direction data as a
+plain `qsvt_plan`.
+
+Users currently bring their own phase sequences from a paper, external
+toolchain, or future phase-generation API. The host-side validation utilities
+let users evaluate the scalar QSVT/QSP response for those phases, estimate the
+maximum and RMS error against a target function on explicit sample points, and
+build uniform or Chebyshev sample grids over the QSVT domain. These utilities
+are deliberately host-only so phase validation can happen before a CUDA-Q
+kernel invocation.
+
+The C++ example `examples/cpp/qsvt_bring_your_own_phases.cpp` demonstrates the
+current intended workflow:
+
+```text
+external phases
+ -> qsvt_plan
+ -> response evaluation and sampled error estimation
+ -> kernel_data()
+ -> apply_qsvt_sequence in a CUDA-Q kernel
+```
 
 Current limitations:
 
@@ -71,9 +94,13 @@ Current limitations:
 - Pauli LCU decomposition currently supports real coefficients.
 - Controlled gate lowering uses explicit arities in the primitive kernels.
 - QSVT phase synthesis is not implemented yet; callers provide phase sequences.
+- Response evaluation and error estimation are classical diagnostics for the
+  abstract scalar signal model, not circuit simulation replacements.
 - Transform descriptors are metadata for future phase-generation APIs.
 - Domain-level workflows such as linear solve or Hamiltonian simulation should
   live in examples until the underlying primitive APIs stabilize.
+- A future phase-generation implementation should be developed and validated in
+  a separate slice from these execution and validation primitives.
 
 Note: if you would like to use our Generative Quantum Eigensolver API, you will need
 additional dependencies installed. You can install them with
