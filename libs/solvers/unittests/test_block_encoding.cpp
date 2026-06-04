@@ -120,6 +120,15 @@ TEST(BlockEncodingTester, checkLCUDecompositionMetadata) {
   EXPECT_NEAR(encoding.normalization(), 2.75, 1e-10);
   EXPECT_NEAR(encoding.constant_term(), 2.0, 1e-10);
   EXPECT_EQ(encoding.get_kernel_data().term_signs[2], -1);
+
+  auto metadata = encoding.metadata();
+  EXPECT_EQ(metadata.num_system_qubits, 1);
+  EXPECT_EQ(metadata.num_ancilla_qubits, 2);
+  EXPECT_EQ(metadata.num_terms, 3);
+  EXPECT_EQ(metadata.padded_num_terms, 4);
+  EXPECT_NEAR(metadata.normalization, 2.75, 1e-10);
+  EXPECT_NEAR(metadata.constant_term, 2.0, 1e-10);
+  EXPECT_NEAR(metadata.coefficient_threshold, lcu.coefficient_threshold, 1e-16);
 }
 
 TEST(BlockEncodingTester, checkLCUDecompositionThreshold) {

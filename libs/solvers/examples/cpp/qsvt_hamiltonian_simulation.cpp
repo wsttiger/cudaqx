@@ -20,7 +20,6 @@ int main() {
 
   constexpr double pi = 3.141592653589793238462643383279502884;
   constexpr double evolution_time = pi / 2.0;
-  constexpr double normalization = 1.0;
   constexpr double target_error = 1e-12;
 
   // Toy real-time Hamiltonian simulation example:
@@ -34,8 +33,13 @@ int main() {
   // by an external tool such as QSPPACK or a future phase-generation API.
   std::vector<double> phases{-pi / 4.0, -pi / 4.0};
 
+  cudaq::spin_op h = x(0);
+  pauli_lcu encoding(h, 1);
+  auto block_encoding_metadata = encoding.metadata();
+
   auto descriptor = make_real_time_hamiltonian_simulation_qsvt_transform(
-      evolution_time, target_error, phases.size() - 1, normalization);
+      evolution_time, target_error, phases.size() - 1,
+      block_encoding_metadata.normalization);
   auto transform_plan = make_qsvt_transform_plan(descriptor, phases);
 
   std::vector<double> spectral_points{-1.0, 1.0};
@@ -46,13 +50,13 @@ int main() {
   auto response_error = estimate_qsvt_response_error(
       transform_plan, target_response, spectral_points);
 
+  std::cout << "Block-encoding normalization alpha: "
+            << block_encoding_metadata.normalization << "\n";
   std::cout << "Spectral response max error: " << response_error.max_abs_error
             << "\n";
   if (response_error.max_abs_error > target_error)
     return 1;
 
-  cudaq::spin_op h = x(0);
-  pauli_lcu encoding(h, 1);
   auto kernel_data = transform_plan.kernel_data();
   auto phase_data = kernel_data.phases;
   auto walk_direction_data = kernel_data.walk_directions;

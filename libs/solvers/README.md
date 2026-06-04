@@ -35,6 +35,8 @@ Host-side objects validate metadata, define conventions, and own data-layout
 decisions. CUDA-Q kernels should consume only QPU-facing data extracted from
 those host objects: registers, `pauli_lcu` encodings, primitive scalar values,
 `std::vector<double>` phase data, and `std::vector<int>` walk-direction data.
+`pauli_lcu::metadata()` exposes the encoded operator scale `H / alpha`, term
+counts, constant term, and register sizes for transform setup.
 `qsvt_plan::kernel_data()` and `qsvt_transform_plan::kernel_data()` are
 convenience views for extracting the phase and walk-direction vectors before a
 kernel invocation.

@@ -44,6 +44,20 @@ struct lcu_decomposition {
   double coefficient_threshold = 1e-12;
 };
 
+/// @brief Host-side metadata for a Pauli LCU block encoding.
+/// @details This is the lightweight inspection view that downstream transform
+/// descriptors and examples should use. It intentionally contains only scalar
+/// metadata, not QPU kernel layout vectors.
+struct pauli_lcu_metadata {
+  std::size_t num_system_qubits = 0;
+  std::size_t num_ancilla_qubits = 0;
+  std::size_t num_terms = 0;
+  std::size_t padded_num_terms = 0;
+  double normalization = 0.0;
+  double constant_term = 0.0;
+  double coefficient_threshold = 0.0;
+};
+
 /// @brief Host-side layout consumed by the Pauli LCU PREPARE/SELECT kernels.
 struct pauli_lcu_kernel_data {
   std::vector<double> state_prep_angles;
@@ -121,6 +135,20 @@ public:
   /// @details The block encoding satisfies ||H|| ≤ α = ||H||₁
   /// @return Normalization constant (1-norm)
   double normalization() const { return alpha; }
+
+  /// @brief Get scalar metadata for this block encoding.
+  /// @details Downstream QSVT/QSP transform setup should use this host-side
+  /// view to recover the encoded operator scale H / alpha and related layout
+  /// metadata without depending on the flattened kernel representation.
+  pauli_lcu_metadata metadata() const {
+    return {n_sys,
+            n_anc,
+            decomposition.num_terms,
+            decomposition.padded_num_terms,
+            alpha,
+            decomposition.constant_term,
+            decomposition.coefficient_threshold};
+  }
 
   ///  Get the constant identity component detected during decomposition
   double constant_term() const { return decomposition.constant_term; }
