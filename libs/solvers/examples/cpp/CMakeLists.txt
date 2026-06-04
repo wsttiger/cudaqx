@@ -25,3 +25,13 @@ target_link_libraries(qsvt_hamiltonian_simulation
     cudaq-solvers
     cudaq::cudaq
 )
+
+add_executable(qsvt_hamiltonian_simulation_statevector EXCLUDE_FROM_ALL
+  qsvt_hamiltonian_simulation_statevector.cpp
+)
+
+target_link_libraries(qsvt_hamiltonian_simulation_statevector
+  PRIVATE
+    cudaq-solvers
+    cudaq::cudaq
+)
