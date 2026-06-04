@@ -15,3 +15,13 @@ target_link_libraries(qsvt_bring_your_own_phases
     cudaq-solvers
     cudaq::cudaq
 )
+
+add_executable(qsvt_hamiltonian_simulation EXCLUDE_FROM_ALL
+  qsvt_hamiltonian_simulation.cpp
+)
+
+target_link_libraries(qsvt_hamiltonian_simulation
+  PRIVATE
+    cudaq-solvers
+    cudaq::cudaq
+)
