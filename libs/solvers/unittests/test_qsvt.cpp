@@ -51,6 +51,37 @@ TEST(QSVTTester, checkControlledSignalPhaseKernelCompile) {
   EXPECT_NO_THROW(controlled_phase_functor_test());
 }
 
+TEST(QSVTTester, checkQSPSignalPhaseKernelCompile) {
+  using namespace cudaq::solvers;
+
+  auto one_signal_test = []() __qpu__ {
+    cudaq::qvector<> signal(1);
+    apply_qsp_signal_phase(signal, 0.25);
+  };
+  EXPECT_NO_THROW(one_signal_test());
+
+  auto three_signal_test = []() __qpu__ {
+    cudaq::qvector<> signal(3);
+    qsp_signal_phase{}(signal, -0.5);
+  };
+  EXPECT_NO_THROW(three_signal_test());
+
+  auto controlled_phase_test = []() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(2);
+    x(control);
+    apply_controlled_qsp_signal_phase(control, signal, 0.25);
+  };
+  EXPECT_NO_THROW(controlled_phase_test());
+
+  auto controlled_phase_functor_test = []() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(3);
+    controlled_qsp_signal_phase{}(control, signal, -0.5);
+  };
+  EXPECT_NO_THROW(controlled_phase_functor_test());
+}
+
 TEST(QSVTTester, checkSequenceKernelCompile) {
   using namespace cudaq::spin;
   using namespace cudaq::solvers;
@@ -74,6 +105,52 @@ TEST(QSVTTester, checkSequenceKernelCompile) {
     cudaq::qvector<> system(encoding.num_system());
     encoding.prepare(signal);
     qsvt_sequence{}(signal, system, encoding, phase_data);
+  };
+  EXPECT_NO_THROW(sequence_functor_test());
+}
+
+TEST(QSVTTester, checkQSPSequenceKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+  auto plan = make_qsvt_plan({0.1, -0.2, 0.3});
+  auto kernel_data = plan.kernel_data();
+  auto phase_data = kernel_data.phases;
+  auto walk_direction_data = kernel_data.walk_directions;
+
+  auto sequence_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsp_sequence(signal, system, encoding, phase_data);
+  };
+  EXPECT_NO_THROW(sequence_test());
+
+  auto adjoint_sequence_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsp_sequence(signal, system, encoding, phase_data,
+                       qsvt_walk_direction::adjoint);
+  };
+  EXPECT_NO_THROW(adjoint_sequence_test());
+
+  auto policy_sequence_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    apply_qsp_sequence(signal, system, encoding, phase_data,
+                       walk_direction_data);
+  };
+  EXPECT_NO_THROW(policy_sequence_test());
+
+  auto sequence_functor_test = [&]() __qpu__ {
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    encoding.prepare(signal);
+    qsp_sequence{}(signal, system, encoding, phase_data, walk_direction_data);
   };
   EXPECT_NO_THROW(sequence_functor_test());
 }
@@ -206,6 +283,62 @@ TEST(QSVTTester, checkControlledSequenceKernelCompile) {
     encoding.prepare(signal);
     controlled_qsvt_sequence{}(control, signal, system, encoding, phase_data,
                                walk_direction_data);
+  };
+  EXPECT_NO_THROW(controlled_sequence_functor_test());
+}
+
+TEST(QSVTTester, checkControlledQSPSequenceKernelCompile) {
+  using namespace cudaq::spin;
+  using namespace cudaq::solvers;
+
+  cudaq::spin_op h = 0.5 * x(0) + 0.3 * z(0);
+  pauli_lcu encoding(h, 1);
+  auto plan = make_qsvt_plan({0.1, -0.2, 0.3});
+  auto kernel_data = plan.kernel_data();
+  auto phase_data = kernel_data.phases;
+  auto walk_direction_data = kernel_data.walk_directions;
+
+  auto controlled_sequence_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsp_sequence(control, signal, system, encoding,
+                                  phase_data);
+  };
+  EXPECT_NO_THROW(controlled_sequence_test());
+
+  auto controlled_adjoint_sequence_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsp_sequence(control, signal, system, encoding, phase_data,
+                                  qsvt_walk_direction::adjoint);
+  };
+  EXPECT_NO_THROW(controlled_adjoint_sequence_test());
+
+  auto controlled_policy_sequence_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    apply_controlled_qsp_sequence(control, signal, system, encoding, phase_data,
+                                  walk_direction_data);
+  };
+  EXPECT_NO_THROW(controlled_policy_sequence_test());
+
+  auto controlled_sequence_functor_test = [&]() __qpu__ {
+    cudaq::qubit control;
+    cudaq::qvector<> signal(encoding.num_ancilla());
+    cudaq::qvector<> system(encoding.num_system());
+    x(control);
+    encoding.prepare(signal);
+    controlled_qsp_sequence{}(control, signal, system, encoding, phase_data,
+                              walk_direction_data);
   };
   EXPECT_NO_THROW(controlled_sequence_functor_test());
 }
@@ -554,6 +687,15 @@ TEST(QSVTTester, checkResponseEvaluatorConventions) {
       evaluate_qsvt_response(phases, 0.5, qsvt_phase_convention::qsp);
 
   EXPECT_GT(std::abs(qsvt_response.value - qsp_response.value), 1e-6);
+
+  // QSPPACK's full phase factors use the QSP Z-rotation convention.
+  std::vector<double> qsppack_cosine_phases{
+      0.78539811199339948,    1.1393905344921082e-05, -0.0013479778846395907,
+      0.062500795316736538,   -0.39587833857675897,   0.062500795316736538,
+      -0.0013479778846395907, 1.1393905344921082e-05, 0.78539811199339948};
+  auto qsppack_response = evaluate_qsvt_response(qsppack_cosine_phases, 0.5,
+                                                 qsvt_phase_convention::qsp);
+  EXPECT_NEAR(0.5 * std::cos(0.5), qsppack_response.value.real(), 1e-8);
 
   auto descriptor = make_real_time_hamiltonian_simulation_qsvt_transform(
       0.75, 1e-4, phases.size() - 1);

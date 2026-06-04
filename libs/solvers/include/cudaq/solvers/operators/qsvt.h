@@ -117,6 +117,24 @@ struct qsvt_signal_phase {
   }
 };
 
+/// @brief Apply a QSP Z-rotation-style signal phase.
+/// @details QSPPACK and many QSP references use phases
+/// diag(exp(i phi), exp(-i phi)) in the two-dimensional signal model. Up to an
+/// unobservable global phase, this is equivalent to applying
+/// diag(exp(2 i phi), 1). The implementation therefore reuses the projector
+/// phase primitive with a doubled phase angle.
+__qpu__ inline void apply_qsp_signal_phase(cudaq::qview<> signal,
+                                           double phase) {
+  apply_qsvt_signal_phase(signal, 2.0 * phase);
+}
+
+/// @brief Kernel functor wrapper for a QSP signal phase.
+struct qsp_signal_phase {
+  void operator()(cudaq::qview<> signal, double phase) const __qpu__ {
+    apply_qsp_signal_phase(signal, phase);
+  }
+};
+
 /// @brief Apply a controlled phase to the all-zero signal/ancilla state.
 /// @details Applies the signal phase only when @p control is in the |1> state.
 __qpu__ inline void apply_controlled_qsvt_signal_phase(cudaq::qubit &control,
@@ -166,6 +184,22 @@ struct controlled_qsvt_signal_phase {
   void operator()(cudaq::qubit &control, cudaq::qview<> signal,
                   double phase) const __qpu__ {
     apply_controlled_qsvt_signal_phase(control, signal, phase);
+  }
+};
+
+/// @brief Apply a controlled QSP Z-rotation-style signal phase.
+/// @details See apply_qsp_signal_phase for the phase-convention relation.
+__qpu__ inline void apply_controlled_qsp_signal_phase(cudaq::qubit &control,
+                                                      cudaq::qview<> signal,
+                                                      double phase) {
+  apply_controlled_qsvt_signal_phase(control, signal, 2.0 * phase);
+}
+
+/// @brief Kernel functor wrapper for a controlled QSP signal phase.
+struct controlled_qsp_signal_phase {
+  void operator()(cudaq::qubit &control, cudaq::qview<> signal,
+                  double phase) const __qpu__ {
+    apply_controlled_qsp_signal_phase(control, signal, phase);
   }
 };
 
@@ -223,6 +257,56 @@ __qpu__ inline void apply_qsvt_sequence(cudaq::qview<> signal,
                       qsvt_walk_direction::forward);
 }
 
+/// @brief Apply a QSP-style phase/walk sequence for a Pauli LCU encoding.
+/// @details This matches the QSP phase convention used by QSPPACK: each signal
+/// phase is diag(exp(i phi), exp(-i phi)) in the abstract signal model. The
+/// qubitization walk convention and phase/walk ordering match
+/// apply_qsvt_sequence.
+__qpu__ inline void apply_qsp_sequence(cudaq::qview<> signal,
+                                       cudaq::qview<> system,
+                                       const pauli_lcu &encoding,
+                                       const std::vector<double> &phases,
+                                       qsvt_walk_direction direction) {
+  if (phases.empty())
+    return;
+
+  apply_qsp_signal_phase(signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    if (direction == qsvt_walk_direction::forward)
+      apply_qubitization_walk(signal, system, encoding);
+    else
+      apply_adjoint_qubitization_walk(signal, system, encoding);
+    apply_qsp_signal_phase(signal, phases[i]);
+  }
+}
+
+/// @brief Apply a QSP-style phase/walk sequence with per-step directions.
+__qpu__ inline void
+apply_qsp_sequence(cudaq::qview<> signal, cudaq::qview<> system,
+                   const pauli_lcu &encoding, const std::vector<double> &phases,
+                   const std::vector<int> &walk_directions) {
+  if (phases.empty())
+    return;
+
+  apply_qsp_signal_phase(signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    if (walk_directions[i - 1] == qsvt_adjoint_walk)
+      apply_adjoint_qubitization_walk(signal, system, encoding);
+    else
+      apply_qubitization_walk(signal, system, encoding);
+    apply_qsp_signal_phase(signal, phases[i]);
+  }
+}
+
+/// @brief Apply a QSP-style phase/walk sequence with forward walks.
+__qpu__ inline void apply_qsp_sequence(cudaq::qview<> signal,
+                                       cudaq::qview<> system,
+                                       const pauli_lcu &encoding,
+                                       const std::vector<double> &phases) {
+  apply_qsp_sequence(signal, system, encoding, phases,
+                     qsvt_walk_direction::forward);
+}
+
 /// @brief Apply a controlled QSVT-style phase/walk sequence.
 /// @details Uses the same phase/walk convention as apply_qsvt_sequence, with
 /// both signal phases and qubitization walks controlled by @p control.
@@ -274,6 +358,80 @@ apply_controlled_qsvt_sequence(cudaq::qubit &control, cudaq::qview<> signal,
                                  qsvt_walk_direction::forward);
 }
 
+/// @brief Apply a controlled QSP-style phase/walk sequence.
+__qpu__ inline void
+apply_controlled_qsp_sequence(cudaq::qubit &control, cudaq::qview<> signal,
+                              cudaq::qview<> system, const pauli_lcu &encoding,
+                              const std::vector<double> &phases,
+                              qsvt_walk_direction direction) {
+  if (phases.empty())
+    return;
+
+  apply_controlled_qsp_signal_phase(control, signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    if (direction == qsvt_walk_direction::forward)
+      apply_controlled_qubitization_walk(control, signal, system, encoding);
+    else
+      apply_controlled_adjoint_qubitization_walk(control, signal, system,
+                                                 encoding);
+    apply_controlled_qsp_signal_phase(control, signal, phases[i]);
+  }
+}
+
+/// @brief Apply a controlled QSP-style sequence with per-step directions.
+__qpu__ inline void
+apply_controlled_qsp_sequence(cudaq::qubit &control, cudaq::qview<> signal,
+                              cudaq::qview<> system, const pauli_lcu &encoding,
+                              const std::vector<double> &phases,
+                              const std::vector<int> &walk_directions) {
+  if (phases.empty())
+    return;
+
+  apply_controlled_qsp_signal_phase(control, signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    if (walk_directions[i - 1] == qsvt_adjoint_walk)
+      apply_controlled_adjoint_qubitization_walk(control, signal, system,
+                                                 encoding);
+    else
+      apply_controlled_qubitization_walk(control, signal, system, encoding);
+    apply_controlled_qsp_signal_phase(control, signal, phases[i]);
+  }
+}
+
+/// @brief Apply a controlled QSP-style phase/walk sequence with forward walks.
+__qpu__ inline void
+apply_controlled_qsp_sequence(cudaq::qubit &control, cudaq::qview<> signal,
+                              cudaq::qview<> system, const pauli_lcu &encoding,
+                              const std::vector<double> &phases) {
+  apply_controlled_qsp_sequence(control, signal, system, encoding, phases,
+                                qsvt_walk_direction::forward);
+}
+
+/// @brief Kernel functor wrapper for controlled QSP-style sequences.
+struct controlled_qsp_sequence {
+  void operator()(cudaq::qubit &control, cudaq::qview<> signal,
+                  cudaq::qview<> system, const pauli_lcu &encoding,
+                  const std::vector<double> &phases) const __qpu__ {
+    apply_controlled_qsp_sequence(control, signal, system, encoding, phases);
+  }
+
+  void operator()(cudaq::qubit &control, cudaq::qview<> signal,
+                  cudaq::qview<> system, const pauli_lcu &encoding,
+                  const std::vector<double> &phases,
+                  qsvt_walk_direction direction) const __qpu__ {
+    apply_controlled_qsp_sequence(control, signal, system, encoding, phases,
+                                  direction);
+  }
+
+  void operator()(cudaq::qubit &control, cudaq::qview<> signal,
+                  cudaq::qview<> system, const pauli_lcu &encoding,
+                  const std::vector<double> &phases,
+                  const std::vector<int> &walk_directions) const __qpu__ {
+    apply_controlled_qsp_sequence(control, signal, system, encoding, phases,
+                                  walk_directions);
+  }
+};
+
 /// @brief Kernel functor wrapper for controlled QSVT-style sequences.
 struct controlled_qsvt_sequence {
   void operator()(cudaq::qubit &control, cudaq::qview<> signal,
@@ -317,6 +475,27 @@ struct qsvt_sequence {
                   const pauli_lcu &encoding, const std::vector<double> &phases,
                   const std::vector<int> &walk_directions) const __qpu__ {
     apply_qsvt_sequence(signal, system, encoding, phases, walk_directions);
+  }
+};
+
+/// @brief Kernel functor wrapper for applying a QSP-style phase/walk sequence.
+struct qsp_sequence {
+  void operator()(cudaq::qview<> signal, cudaq::qview<> system,
+                  const pauli_lcu &encoding,
+                  const std::vector<double> &phases) const __qpu__ {
+    apply_qsp_sequence(signal, system, encoding, phases);
+  }
+
+  void operator()(cudaq::qview<> signal, cudaq::qview<> system,
+                  const pauli_lcu &encoding, const std::vector<double> &phases,
+                  qsvt_walk_direction direction) const __qpu__ {
+    apply_qsp_sequence(signal, system, encoding, phases, direction);
+  }
+
+  void operator()(cudaq::qview<> signal, cudaq::qview<> system,
+                  const pauli_lcu &encoding, const std::vector<double> &phases,
+                  const std::vector<int> &walk_directions) const __qpu__ {
+    apply_qsp_sequence(signal, system, encoding, phases, walk_directions);
   }
 };
 
