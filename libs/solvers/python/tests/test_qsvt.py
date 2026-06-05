@@ -18,6 +18,7 @@ if 'cudaq_solvers' not in sys.modules:
         sys.path.insert(0, build_path)
 
 import pytest
+import cudaq
 from cudaq import spin
 import cudaq_solvers as solvers
 
@@ -40,6 +41,33 @@ def test_pauli_lcu_metadata_binding():
     assert metadata.normalization == pytest.approx(2.75)
     assert metadata.constant_term == pytest.approx(2.0)
     assert metadata.coefficient_threshold == pytest.approx(1e-12)
+
+
+def test_pauli_lcu_block_encoding_device_interop():
+    h = 0.6 * spin.x(0) + 0.8 * spin.z(0)
+    encoding = solvers.PauliLCU(h, num_qubits=1)
+
+    angles = list(encoding.get_angles())
+    term_controls = list(encoding.get_term_controls())
+    term_ops = list(encoding.get_term_ops())
+    term_lengths = list(encoding.get_term_lengths())
+    term_signs = list(encoding.get_term_signs())
+    num_ancilla = encoding.num_ancilla
+    num_system = encoding.num_system
+
+    @cudaq.kernel
+    def kernel():
+        ancilla = cudaq.qvector(num_ancilla)
+        system = cudaq.qvector(num_system)
+        solvers.block_encoding.prepare(ancilla, angles)
+        solvers.block_encoding.select(ancilla, system, term_controls, term_ops,
+                                      term_lengths, term_signs)
+        solvers.block_encoding.unprepare(ancilla, angles)
+        solvers.block_encoding.apply(ancilla, system, angles, term_controls,
+                                     term_ops, term_lengths, term_signs)
+
+    counts = cudaq.sample(kernel, shots_count=16)
+    assert len(counts) > 0
 
 
 def test_qsvt_phase_sequence_and_walk_policy():

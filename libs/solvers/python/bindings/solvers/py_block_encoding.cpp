@@ -18,6 +18,7 @@
 #include "cuda-qx/core/kwargs_utils.h"
 #include "cudaq/python/PythonCppInterop.h"
 #include "cudaq/solvers/operators/block_encoding.h"
+#include "cudaq/solvers/operators/block_encoding_kernels.h"
 #include "cudaq/solvers/operators/qsvt.h"
 #include "cudaq/solvers/quantum_exact_lanczos.h"
 
@@ -182,6 +183,30 @@ Args:
             return numpy_array(self.get_term_signs());
           },
           "Get sign of each coefficient as NumPy array (for debugging)");
+
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>,
+                                        const std::vector<double> &>(
+      mod, "block_encoding", "prepare",
+      "Apply PauliLCU PREPARE inside a CUDA-Q Python kernel.");
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>,
+                                        const std::vector<double> &>(
+      mod, "block_encoding", "unprepare",
+      "Apply PauliLCU PREPARE dagger inside a CUDA-Q Python kernel.");
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, cudaq::qview<>,
+                                        const std::vector<int> &,
+                                        const std::vector<int> &,
+                                        const std::vector<int> &,
+                                        const std::vector<int> &>(
+      mod, "block_encoding", "select",
+      "Apply PauliLCU SELECT inside a CUDA-Q Python kernel.");
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, cudaq::qview<>,
+                                        const std::vector<double> &,
+                                        const std::vector<int> &,
+                                        const std::vector<int> &,
+                                        const std::vector<int> &,
+                                        const std::vector<int> &>(
+      mod, "block_encoding", "apply",
+      "Apply a full PauliLCU block encoding inside a CUDA-Q Python kernel.");
 
   // ============================================================================
   // QSVT HOST-SIDE PRIMITIVES

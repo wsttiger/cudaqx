@@ -35,6 +35,11 @@ add_library(cudaq-solvers SHARED
   version.cpp
 )
 
+cudaqx_add_device_code(cudaq-solvers
+  SOURCES
+    operators/block_encoding_kernels.cpp
+)
+
 add_subdirectory(adapt)
 add_subdirectory(optimizers)
 add_subdirectory(stateprep)
