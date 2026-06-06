@@ -8,7 +8,6 @@
 
 #include "cudaq/solvers/operators/block_encoding_kernels.h"
 
-
 namespace cudaq::solvers::block_encoding {
 
 __qpu__ void prepare(cudaq::qview<> ancilla,
@@ -63,6 +62,59 @@ __qpu__ void prepare(cudaq::qview<> ancilla,
                         ancilla[2], ancilla[3], ancilla[4], ancilla[5],
                         ancilla[6], ancilla[7], ancilla[8], ancilla[9],
                         ancilla[10]);
+      } else if (layer == 11) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11]);
+      } else if (layer == 12) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12]);
+      } else if (layer == 13) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13]);
+      } else if (layer == 14) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14]);
+      } else if (layer == 15) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15]);
+      } else if (layer == 16) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16]);
+      } else if (layer == 17) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16], ancilla[17]);
+      } else if (layer == 18) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16], ancilla[17],
+                        ancilla[18]);
+      } else if (layer == 19) {
+        ry<cudaq::ctrl>(state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16], ancilla[17],
+                        ancilla[18], ancilla[19]);
       }
       angle_idx++;
 
@@ -126,6 +178,59 @@ __qpu__ void unprepare(cudaq::qview<> ancilla,
                         ancilla[2], ancilla[3], ancilla[4], ancilla[5],
                         ancilla[6], ancilla[7], ancilla[8], ancilla[9],
                         ancilla[10]);
+      } else if (layer == 11) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11]);
+      } else if (layer == 12) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12]);
+      } else if (layer == 13) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13]);
+      } else if (layer == 14) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14]);
+      } else if (layer == 15) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15]);
+      } else if (layer == 16) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16]);
+      } else if (layer == 17) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16], ancilla[17]);
+      } else if (layer == 18) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16], ancilla[17],
+                        ancilla[18]);
+      } else if (layer == 19) {
+        ry<cudaq::ctrl>(-state_prep_angles[angle_idx], ancilla[0], ancilla[1],
+                        ancilla[2], ancilla[3], ancilla[4], ancilla[5],
+                        ancilla[6], ancilla[7], ancilla[8], ancilla[9],
+                        ancilla[10], ancilla[11], ancilla[12], ancilla[13],
+                        ancilla[14], ancilla[15], ancilla[16], ancilla[17],
+                        ancilla[18], ancilla[19]);
       }
       angle_idx--;
 

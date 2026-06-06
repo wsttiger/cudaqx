@@ -7,6 +7,7 @@
  ******************************************************************************/
 
 #include "cudaq/solvers/operators/block_encoding.h"
+#include "cudaq/solvers/operators/block_encoding_kernels.h"
 #include <cmath>
 #include <iostream>
 #include <numeric>
@@ -19,121 +20,6 @@ namespace cudaq::solvers {
 // ============================================================================
 // QUANTUM KERNELS (Stateless functors for CUDA-Q compiler)
 // ============================================================================
-
-/// @brief Kernel for PREPARE operation - state preparation tree
-struct pauli_prepare_kernel {
-  void operator()(cudaq::qview<> anc,
-                  const std::vector<double> &angles) const __qpu__ {
-    if (anc.size() == 0)
-      return;
-
-    // Root rotation
-    ry(angles[0], anc[0]);
-
-    // Tree layers (controlled rotations)
-    int angle_idx = 1;
-    for (std::size_t layer = 1; layer < anc.size(); ++layer) {
-      int num_branches = 1 << layer; // 2^layer
-
-      for (int i = 0; i < num_branches; ++i) {
-        // Setup X gates to match control pattern
-        // We use binary representation: if bit is 0, flip that qubit
-        for (int bit = 0; bit < static_cast<int>(layer); ++bit) {
-          if (!((i >> bit) & 1)) {
-            x(anc[layer - 1 - bit]);
-          }
-        }
-
-        // Controlled rotation - explicitly handle cases up to 20 ancilla
-        // This covers large molecular Hamiltonians (up to 2^20 = 1,048,576
-        // terms) NOTE: Cannot use qview with ry<cudaq::ctrl> unlike Pauli gates
-        if (layer == 1) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1]);
-        } else if (layer == 2) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2]);
-        } else if (layer == 3) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3]);
-        } else if (layer == 4) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4]);
-        } else if (layer == 5) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5]);
-        } else if (layer == 6) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6]);
-        } else if (layer == 7) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7]);
-        } else if (layer == 8) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8]);
-        } else if (layer == 9) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9]);
-        } else if (layer == 10) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10]);
-        } else if (layer == 11) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11]);
-        } else if (layer == 12) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12]);
-        } else if (layer == 13) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13]);
-        } else if (layer == 14) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13], anc[14]);
-        } else if (layer == 15) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15]);
-        } else if (layer == 16) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
-                          anc[16]);
-        } else if (layer == 17) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
-                          anc[16], anc[17]);
-        } else if (layer == 18) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
-                          anc[16], anc[17], anc[18]);
-        } else if (layer == 19) {
-          ry<cudaq::ctrl>(angles[angle_idx], anc[0], anc[1], anc[2], anc[3],
-                          anc[4], anc[5], anc[6], anc[7], anc[8], anc[9],
-                          anc[10], anc[11], anc[12], anc[13], anc[14], anc[15],
-                          anc[16], anc[17], anc[18], anc[19]);
-        } else {
-          // Hamiltonian with > 2^20 terms - extremely rare
-          // This would require > 20 ancilla qubits
-          // Users should consider Hamiltonian truncation for such large systems
-          throw std::runtime_error("Block encoding requires > 20 ancilla "
-                                   "qubits. Consider Hamiltonian truncation.");
-        }
-        angle_idx++;
-
-        // Uncompute X gates
-        for (int bit = 0; bit < static_cast<int>(layer); ++bit) {
-          if (!((i >> bit) & 1)) {
-            x(anc[layer - 1 - bit]);
-          }
-        }
-      }
-    }
-  }
-};
 
 __qpu__ void controlled_pauli_x(cudaq::qubit &control, cudaq::qview<> anc,
                                 cudaq::qubit &target) {
@@ -301,86 +187,6 @@ struct controlled_pauli_select_kernel {
       if (sign < 0)
         controlled_sign_correction(control, anc);
 
-      int back_ptr = ptr_ctrl - 1;
-      for (int b_rev = 0; b_rev < n_anc; ++b_rev) {
-        int anc_idx = (n_anc - 1) - b_rev;
-        int bit_val = ctrls[back_ptr--];
-        if (bit_val == 0)
-          x(anc[anc_idx]);
-      }
-    }
-  }
-};
-
-/// @brief Kernel for SELECT operation - controlled Pauli application
-struct pauli_select_kernel {
-  void operator()(cudaq::qview<> anc, cudaq::qview<> sys,
-                  const std::vector<int> &ctrls, const std::vector<int> &ops,
-                  const std::vector<int> &lens,
-                  const std::vector<int> &signs) const __qpu__ {
-    int ptr_ctrl = 0;
-    int ptr_op = 0;
-    int n_anc = anc.size();
-
-    // Iterate through every term in the Hamiltonian
-    for (std::size_t i = 0; i < lens.size(); ++i) {
-      int n_ops = lens[i];
-      int sign = signs[i];
-
-      // 1. Activate control pattern (match ancilla state to term index)
-      for (int b = 0; b < n_anc; ++b) {
-        int bit_val = ctrls[ptr_ctrl++];
-        if (bit_val == 0)
-          x(anc[b]);
-      }
-
-      // 2. Apply Pauli operators to system qubits
-      // Format: [code, qubit_idx, code, qubit_idx, ...]
-      // Codes: 1=X, 2=Y, 3=Z
-      for (int k = 0; k < n_ops; ++k) {
-        int code = ops[ptr_op++];
-        int q_idx = ops[ptr_op++];
-
-        if (code == 1)
-          x<cudaq::ctrl>(anc, sys[q_idx]); // Controlled-X
-        else if (code == 2)
-          y<cudaq::ctrl>(anc, sys[q_idx]); // Controlled-Y
-        else if (code == 3)
-          z<cudaq::ctrl>(anc, sys[q_idx]); // Controlled-Z
-      }
-
-      // 3. Apply sign correction (if coefficient is negative)
-      if (sign < 0) {
-        // Controlled-Z on last ancilla, controlled by all others
-        if (n_anc == 1) {
-          z(anc[0]);
-        } else if (n_anc == 2) {
-          z<cudaq::ctrl>(anc[0], anc[1]);
-        } else if (n_anc == 3) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2]);
-        } else if (n_anc == 4) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3]);
-        } else if (n_anc == 5) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4]);
-        } else if (n_anc == 6) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5]);
-        } else if (n_anc == 7) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5],
-                         anc[6]);
-        } else if (n_anc == 8) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
-                         anc[7]);
-        } else if (n_anc == 9) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
-                         anc[7], anc[8]);
-        } else if (n_anc == 10) {
-          z<cudaq::ctrl>(anc[0], anc[1], anc[2], anc[3], anc[4], anc[5], anc[6],
-                         anc[7], anc[8], anc[9]);
-        }
-        // Note: Hamiltonians with > 1024 terms are very rare in practice
-      }
-
-      // 4. Deactivate control pattern (uncompute X gates)
       int back_ptr = ptr_ctrl - 1;
       for (int b_rev = 0; b_rev < n_anc; ++b_rev) {
         int anc_idx = (n_anc - 1) - b_rev;
@@ -603,14 +409,13 @@ pauli_lcu::pauli_lcu(const lcu_decomposition &lcu)
 void pauli_lcu::prepare(cudaq::qview<> ancilla) const {
   if (ancilla.size() != n_anc)
     throw std::runtime_error("pauli_lcu::prepare: ancilla size mismatch");
-  pauli_prepare_kernel{}(ancilla, kernel_data.state_prep_angles);
+  block_encoding::prepare(ancilla, kernel_data.state_prep_angles);
 }
 
 void pauli_lcu::unprepare(cudaq::qview<> ancilla) const {
   if (ancilla.size() != n_anc)
     throw std::runtime_error("pauli_lcu::unprepare: ancilla size mismatch");
-  cudaq::adjoint(pauli_prepare_kernel{}, ancilla,
-                 kernel_data.state_prep_angles);
+  block_encoding::unprepare(ancilla, kernel_data.state_prep_angles);
 }
 
 void pauli_lcu::select(cudaq::qview<> ancilla, cudaq::qview<> system) const {
@@ -619,9 +424,9 @@ void pauli_lcu::select(cudaq::qview<> ancilla, cudaq::qview<> system) const {
   if (system.size() != n_sys)
     throw std::runtime_error("pauli_lcu::select: system size mismatch");
 
-  pauli_select_kernel{}(ancilla, system, kernel_data.term_controls,
-                        kernel_data.term_ops, kernel_data.term_lengths,
-                        kernel_data.term_signs);
+  block_encoding::select(ancilla, system, kernel_data.term_controls,
+                         kernel_data.term_ops, kernel_data.term_lengths,
+                         kernel_data.term_signs);
 }
 
 void pauli_lcu::controlled_select(cudaq::qubit &control, cudaq::qview<> ancilla,
