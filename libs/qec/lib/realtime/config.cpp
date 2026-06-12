@@ -251,12 +251,12 @@ cudaqx::heterogeneous_map trt_decoder_config::to_heterogeneous_map() const {
     config_map.insert(
         "global_decoder_params",
         global_decoder_config_to_heterogeneous_map(global_decoder_params));
-  } else if (global_decoder.has_value()) {
-    // trt_decoder attaches a global decoder only when both the decoder name and
-    // parameter map are present. An empty map is valid for decoders that do not
-    // need extra parameters.
-    config_map.insert("global_decoder_params", cudaqx::heterogeneous_map());
   }
+  // Note: when global_decoder_params is monostate we intentionally emit
+  // nothing, even if global_decoder is set. Inventing an empty params map here
+  // would round-trip back as a default pymatching_decoder_config, mutating the
+  // config. Any runtime need for an empty params map is handled in
+  // prepare_decoder_params (realtime_decoding.cpp), not in serialization.
 
   return config_map;
 }
@@ -273,6 +273,9 @@ trt_decoder_config trt_decoder_config::from_heterogeneous_map(
   GET_ARG(use_cuda_graph);
   GET_ARG(global_decoder);
   if (map.contains("global_decoder_params")) {
+    if (!config.global_decoder.has_value())
+      throw std::runtime_error(
+          "global_decoder_params present but global_decoder is not set.");
     try {
       config.global_decoder_params =
           map.get<global_decoder_config>("global_decoder_params");
@@ -468,7 +471,16 @@ struct MappingTraits<cudaq::qec::decoding::config::trt_decoder_config> {
     io.mapOptional("batch_size", config.batch_size);
     io.mapOptional("use_cuda_graph", config.use_cuda_graph);
     io.mapOptional("global_decoder", config.global_decoder);
-    io.mapOptional("global_decoder_params", config.global_decoder_params);
+    // Emit global_decoder_params only when it actually holds params. Mapping it
+    // unconditionally on output writes an empty `global_decoder_params: {}` for
+    // the monostate case, which deserializes back into a default
+    // pymatching_decoder_config -- mutating a monostate config across a YAML
+    // round-trip. On input we always map it: an absent key leaves the variant
+    // at its monostate default (mapOptional skips the nested mapping), and a
+    // present key is parsed into pymatching_decoder_config.
+    if (!io.outputting() ||
+        !std::holds_alternative<std::monostate>(config.global_decoder_params))
+      io.mapOptional("global_decoder_params", config.global_decoder_params);
 
     if (!std::holds_alternative<std::monostate>(config.global_decoder_params) &&
         config.global_decoder.has_value() &&

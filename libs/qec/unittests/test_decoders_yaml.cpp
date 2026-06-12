@@ -272,6 +272,47 @@ TEST(DecoderYAMLTest, TrtDecoderRealtimeParamsIncludeObservableMatrix) {
   EXPECT_EQ(global_O.shape()[1], config.block_size);
 }
 
+// Regression test for the round-trip fix: a trt config whose global_decoder is
+// set but whose global_decoder_params is left as the default (monostate) must
+// round-trip without inventing a default pymatching_decoder_config. Previously
+// to_heterogeneous_map emitted an empty params map that deserialized back into a
+// pymatching_decoder_config, silently mutating the config.
+TEST(DecoderYAMLTest, TrtDecoderMonostateParamsRoundTrip) {
+  auto config = create_test_decoder_config_trt(0);
+  auto &trt_config = std::get<cudaq::qec::decoding::config::trt_decoder_config>(
+      config.decoder_custom_args);
+  // Keep the decoder name, but drop the params back to monostate.
+  trt_config.global_decoder = "pymatching";
+  trt_config.global_decoder_params = std::monostate{};
+
+  // Serialization must NOT emit a global_decoder_params entry for monostate.
+  auto params = config.decoder_custom_args_to_heterogeneous_map();
+  EXPECT_FALSE(params.contains("global_decoder_params"));
+
+  // Full YAML round-trip must preserve monostate (not become pymatching).
+  cudaq::qec::decoding::config::multi_decoder_config multi_config;
+  multi_config.decoders.push_back(config);
+  test_decoder_yaml_roundtrip(multi_config);
+  const auto &rt = std::get<cudaq::qec::decoding::config::trt_decoder_config>(
+      multi_config.decoders[0].decoder_custom_args);
+  EXPECT_TRUE(std::holds_alternative<std::monostate>(rt.global_decoder_params));
+}
+
+// Regression test for the round-trip fix: a params map carrying
+// global_decoder_params but no global_decoder is malformed and must be rejected
+// rather than silently constructing a default pymatching config.
+TEST(DecoderYAMLTest, TrtDecoderParamsWithoutDecoderThrows) {
+  cudaqx::heterogeneous_map map;
+  map.insert("onnx_load_path", std::string("/tmp/predecoder.onnx"));
+  cudaqx::heterogeneous_map gd_params;
+  gd_params.insert("merge_strategy", std::string("smallest_weight"));
+  map.insert("global_decoder_params", gd_params);
+  EXPECT_THROW(
+      cudaq::qec::decoding::config::trt_decoder_config::from_heterogeneous_map(
+          map),
+      std::runtime_error);
+}
+
 TEST(DecoderYAMLTest, SlidingWindowDecoder) {
   std::size_t n_rounds = 4;
   std::size_t n_errs_per_round = 30;
