@@ -367,12 +367,26 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
     // Process the results.
     // TODO - should this interrogate the decoded_result.converged flag?
     const auto result_type = get_result_type();
-    const auto *result_type_str =
-        result_type == decode_result_type::decode_to_obs ? "obs" : "errs";
     const auto num_observables = get_num_observables();
-    const std::size_t expected_result_size =
-        result_type == decode_result_type::decode_to_obs ? num_observables
-                                                         : block_size;
+    const char *result_type_str = nullptr;
+    const char *result_type_name = nullptr;
+    std::size_t expected_result_size = 0;
+    switch (result_type) {
+    case decode_result_type::decode_to_errs:
+      result_type_str = "errs";
+      result_type_name = "decode_to_errs";
+      expected_result_size = block_size;
+      break;
+    case decode_result_type::decode_to_obs:
+      result_type_str = "obs";
+      result_type_name = "decode_to_obs";
+      expected_result_size = num_observables;
+      break;
+    }
+    if (!result_type_name)
+      throw std::runtime_error(
+          fmt::format("Unsupported decoder result type ({})",
+                      static_cast<int>(result_type)));
     if ((!pimpl->is_sliding_window &&
          decoded_result.result.size() != expected_result_size) ||
         (pimpl->is_sliding_window && !decoded_result.result.empty() &&
@@ -381,19 +395,23 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
           "Decoder result size ({}) does not match expected size ({}) for "
           "result type {}",
           decoded_result.result.size(), expected_result_size,
-          result_type == decode_result_type::decode_to_obs ? "decode_to_obs"
-                                                           : "decode_to_errs"));
+          result_type_name));
     }
 
     if (should_log) {
       log_t2 = std::chrono::high_resolution_clock::now();
-      if (result_type != decode_result_type::decode_to_obs) {
+      switch (result_type) {
+      case decode_result_type::decode_to_errs:
         for (std::size_t e = 0, E = decoded_result.result.size(); e < E; e++)
           if (decoded_result.result[e])
             log_errors.push_back(e);
+        break;
+      case decode_result_type::decode_to_obs:
+        break;
       }
     }
-    if (result_type == decode_result_type::decode_to_obs) {
+    switch (result_type) {
+    case decode_result_type::decode_to_obs:
       // Observable-frame path: decoder already projected to observables via its
       // internal "O" matrix; use the result directly.
       for (std::size_t i = 0; i < num_observables; i++) {
@@ -405,7 +423,8 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
             log_observable_corrections[i] ^= 1;
         }
       }
-    } else {
+      break;
+    case decode_result_type::decode_to_errs:
       // Error-frame path: decoder returns block-sized error vector; project to
       // observables via O_sparse.
       // For each observable
@@ -421,6 +440,7 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
           }
         }
       }
+      break;
     }
     if (should_log) {
       log_t3 = std::chrono::high_resolution_clock::now();
