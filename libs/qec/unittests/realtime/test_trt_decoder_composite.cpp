@@ -600,6 +600,12 @@ int main(int argc, char *argv[]) {
               << " row(s).\n";
     return 1;
   }
+  if (setup.decoder->get_result_type() !=
+      cudaq::qec::decoder::decode_result_type::decode_to_obs) {
+    std::cerr << "ERROR: composite trt_decoder must report decode_to_obs "
+                 "when constructed with O.\n";
+    return 1;
+  }
 
   std::cout << "[Setup] Init mode:   " << setup.init_mode << "\n";
   if (!setup.config_yaml_path.empty())
