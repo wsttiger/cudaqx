@@ -275,8 +275,8 @@ TEST(DecoderYAMLTest, TrtDecoderRealtimeParamsIncludeObservableMatrix) {
 // Regression test for the round-trip fix: a trt config whose global_decoder is
 // set but whose global_decoder_params is left as the default (monostate) must
 // round-trip without inventing a default pymatching_decoder_config. Previously
-// to_heterogeneous_map emitted an empty params map that deserialized back into a
-// pymatching_decoder_config, silently mutating the config.
+// to_heterogeneous_map emitted an empty params map that deserialized back into
+// a pymatching_decoder_config, silently mutating the config.
 TEST(DecoderYAMLTest, TrtDecoderMonostateParamsRoundTrip) {
   auto config = create_test_decoder_config_trt(0);
   auto &trt_config = std::get<cudaq::qec::decoding::config::trt_decoder_config>(
