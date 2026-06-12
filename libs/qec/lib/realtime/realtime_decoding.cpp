@@ -46,7 +46,21 @@ namespace cudaq::qec::decoding::host {
 cudaqx::heterogeneous_map prepare_decoder_params(
     const cudaq::qec::decoding::config::decoder_config &decoder_config) {
   auto params = decoder_config.decoder_custom_args_to_heterogeneous_map();
-  if (decoder_config.type != "trt_decoder" || decoder_config.O_sparse.empty())
+  if (decoder_config.type != "trt_decoder")
+    return params;
+
+  // The trt_decoder plugin attaches a pymatching global decoder only when both
+  // "global_decoder" and "global_decoder_params" are present. Serialization no
+  // longer emits an empty params map for the monostate (no-params) case, so
+  // synthesize one here -- before the O_sparse early return -- so that a global
+  // decoder running on residual detectors without an O matrix still attaches.
+  const bool has_pymatching_global =
+      params.contains("global_decoder") &&
+      params.get<std::string>("global_decoder") == "pymatching";
+  if (has_pymatching_global && !params.contains("global_decoder_params"))
+    params.insert("global_decoder_params", cudaqx::heterogeneous_map());
+
+  if (decoder_config.O_sparse.empty())
     return params;
 
   const auto num_observables = std::count(decoder_config.O_sparse.begin(),
@@ -58,13 +72,9 @@ cudaqx::heterogeneous_map prepare_decoder_params(
       decoder_config.O_sparse, num_observables, decoder_config.block_size);
   params.insert("O", O);
 
-  if (params.contains("global_decoder") &&
-      params.get<std::string>("global_decoder") == "pymatching") {
-    cudaqx::heterogeneous_map global_decoder_params;
-    if (params.contains("global_decoder_params")) {
-      global_decoder_params =
-          params.get<cudaqx::heterogeneous_map>("global_decoder_params");
-    }
+  if (has_pymatching_global) {
+    auto global_decoder_params =
+        params.get<cudaqx::heterogeneous_map>("global_decoder_params");
     global_decoder_params.insert("O", O);
     params.insert("global_decoder_params", global_decoder_params);
   }

@@ -313,6 +313,37 @@ TEST(DecoderYAMLTest, TrtDecoderParamsWithoutDecoderThrows) {
       std::runtime_error);
 }
 
+// A pymatching global decoder with no params and no O matrix must still attach:
+// prepare_decoder_params synthesizes an empty global_decoder_params map before
+// the O early-return so the plugin sees both keys it requires.
+TEST(DecoderYAMLTest, TrtDecoderGlobalDecoderWithoutObservables) {
+  auto config = create_test_decoder_config_trt(0);
+  auto &trt_config = std::get<cudaq::qec::decoding::config::trt_decoder_config>(
+      config.decoder_custom_args);
+  trt_config.global_decoder = "pymatching";
+  trt_config.global_decoder_params = std::monostate{};
+  config.O_sparse.clear(); // no observables
+
+  auto params = cudaq::qec::decoding::host::prepare_decoder_params(config);
+  EXPECT_TRUE(params.contains("global_decoder"));
+  EXPECT_TRUE(params.contains("global_decoder_params"));
+  EXPECT_FALSE(params.contains("O"));
+}
+
+// Serialization rejects a malformed in-memory config that carries
+// global_decoder_params but no global_decoder, symmetric with
+// from_heterogeneous_map.
+TEST(DecoderYAMLTest, TrtDecoderToMapParamsWithoutDecoderThrows) {
+  cudaq::qec::decoding::config::trt_decoder_config trt_config;
+  trt_config.onnx_load_path = "/tmp/predecoder.onnx";
+  auto pymatching_params =
+      cudaq::qec::decoding::config::pymatching_decoder_config();
+  pymatching_params.merge_strategy = "smallest_weight";
+  trt_config.global_decoder_params = pymatching_params; // non-monostate
+  // global_decoder intentionally left unset.
+  EXPECT_THROW(trt_config.to_heterogeneous_map(), std::runtime_error);
+}
+
 TEST(DecoderYAMLTest, SlidingWindowDecoder) {
   std::size_t n_rounds = 4;
   std::size_t n_errs_per_round = 30;

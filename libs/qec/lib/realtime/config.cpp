@@ -244,7 +244,11 @@ cudaqx::heterogeneous_map trt_decoder_config::to_heterogeneous_map() const {
   INSERT_ARG(use_cuda_graph);
   INSERT_ARG(global_decoder);
   if (!std::holds_alternative<std::monostate>(global_decoder_params)) {
-    if (global_decoder.has_value() && global_decoder.value() != "pymatching") {
+    if (!global_decoder.has_value()) {
+      throw std::runtime_error(
+          "global_decoder_params present but global_decoder is not set.");
+    }
+    if (global_decoder.value() != "pymatching") {
       throw std::runtime_error(
           "global_decoder_params currently supports only pymatching.");
     }
