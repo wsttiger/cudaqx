@@ -236,9 +236,8 @@ for s, o in zip(log_detectors_sparse, log_observables_dense):
                                dtype=numpy.uint8)
         decoded_observables_sparse = decoded_sparse
     else:
-        print(
-            f"Error: unsupported ResultType set {sorted(result_types)} "
-            f"in decode_call_idx {decode_call_idx}.")
+        print(f"Error: unsupported ResultType set {sorted(result_types)} "
+              f"in decode_call_idx {decode_call_idx}.")
         exit(1)
 
     if "obs" in result_types:
@@ -250,8 +249,11 @@ for s, o in zip(log_detectors_sparse, log_observables_dense):
                 print(
                     f"Replay mismatch in observable result in decode_call_idx {decode_call_idx}"
                 )
-                print(f"Decoded observable result : {decoded_observables_sparse}")
-                print(f"Expected observable result: {expected_observables_sparse}")
+                print(
+                    f"Decoded observable result : {decoded_observables_sparse}")
+                print(
+                    f"Expected observable result: {expected_observables_sparse}"
+                )
 
     replay_observables_dense.append(O_replay)
     O_log = numpy.array(log_observables_dense[decode_call_idx],
