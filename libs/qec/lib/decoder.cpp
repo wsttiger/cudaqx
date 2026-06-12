@@ -398,48 +398,41 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
           result_type_name));
     }
 
-    if (should_log) {
+    // Flip an observable correction and mirror it into the per-call log so the
+    // logged flips stay faithful to the applied corrections.
+    auto flip_correction = [&](std::size_t i) {
+      pimpl->corrections[i] ^= 1;
+      if (should_log)
+        log_observable_corrections[i] ^= 1;
+    };
+
+    if (should_log)
       log_t2 = std::chrono::high_resolution_clock::now();
-      switch (result_type) {
-      case decode_result_type::decode_to_errs:
-        for (std::size_t e = 0, E = decoded_result.result.size(); e < E; e++)
-          if (decoded_result.result[e])
-            log_errors.push_back(e);
-        break;
-      case decode_result_type::decode_to_obs:
-        break;
-      }
-    }
+
     switch (result_type) {
     case decode_result_type::decode_to_obs:
       // Observable-frame path: decoder already projected to observables via its
       // internal "O" matrix; use the result directly.
-      for (std::size_t i = 0; i < num_observables; i++) {
+      for (std::size_t i = 0; i < num_observables; i++)
         if (decoded_result.result[i]) {
           if (should_log)
             log_observables.push_back(i);
-          pimpl->corrections[i] ^= 1;
-          if (should_log)
-            log_observable_corrections[i] ^= 1;
+          flip_correction(i);
         }
-      }
       break;
     case decode_result_type::decode_to_errs:
-      // Error-frame path: decoder returns block-sized error vector; project to
-      // observables via O_sparse.
-      // For each observable
-      for (std::size_t i = 0; i < num_observables; i++) {
-        // For each error that flips this observable
-        for (auto col : O_sparse[i]) {
-          // If the decoder predicted that this error occurred
-          if (decoded_result.result[col]) {
-            // Flip the correction for this observable
-            pimpl->corrections[i] ^= 1;
-            if (should_log)
-              log_observable_corrections[i] ^= 1;
-          }
-        }
-      }
+      // Error-frame path: decoder returns a block-sized error vector; project
+      // to observables via O_sparse.
+      if (should_log)
+        for (std::size_t e = 0, E = decoded_result.result.size(); e < E; e++)
+          if (decoded_result.result[e])
+            log_errors.push_back(e);
+      // For each observable, flip its correction once for each predicted error
+      // that flips it (net parity over O_sparse[i]).
+      for (std::size_t i = 0; i < num_observables; i++)
+        for (auto col : O_sparse[i])
+          if (decoded_result.result[col])
+            flip_correction(i);
       break;
     }
     if (should_log) {
