@@ -102,6 +102,10 @@ struct pymatching_decoder_config {
   from_heterogeneous_map(const cudaqx::heterogeneous_map &map);
 };
 
+// The realtime trt_decoder config currently models only PyMatching as a global
+// decoder. Other global decoder plugins may be constructed through lower-level
+// APIs when their parameters are supplied directly, but they are not serialized
+// by this config variant yet.
 using global_decoder_config =
     std::variant<std::monostate, pymatching_decoder_config>;
 
