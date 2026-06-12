@@ -238,8 +238,7 @@ for s, o in zip(log_detectors_sparse, log_observables_dense):
     else:
         print(
             f"Error: unsupported ResultType set {sorted(result_types)} "
-            f"in decode_call_idx {decode_call_idx}."
-        )
+            f"in decode_call_idx {decode_call_idx}.")
         exit(1)
 
     if "obs" in result_types:
