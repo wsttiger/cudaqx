@@ -292,6 +292,7 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
     std::vector<uint32_t> log_msyn;
     std::vector<uint32_t> log_detectors;
     std::vector<uint32_t> log_errors;
+    std::vector<uint32_t> log_observables;
     std::vector<uint8_t> log_observable_corrections;
     // The four time points are used to measure the duration of each of 3 steps.
     std::chrono::time_point<std::chrono::high_resolution_clock> log_t0, log_t1,
@@ -305,6 +306,7 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
     if (should_log) {
       log_t0 = std::chrono::high_resolution_clock::now();
       log_errors.reserve(syndrome_length);
+      log_observables.reserve(O_sparse.size());
       log_observable_corrections.resize(O_sparse.size());
     }
 
@@ -365,6 +367,8 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
     // Process the results.
     // TODO - should this interrogate the decoded_result.converged flag?
     const auto result_type = get_result_type();
+    const auto *result_type_str =
+        result_type == decode_result_type::decode_to_obs ? "obs" : "errs";
     const auto num_observables = get_num_observables();
     const std::size_t expected_result_size =
         result_type == decode_result_type::decode_to_obs ? num_observables
@@ -383,8 +387,6 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
 
     if (should_log) {
       log_t2 = std::chrono::high_resolution_clock::now();
-      // TODO: log_errors is meaningful only for decode_to_errs; revisit on
-      // the logging pass.
       if (result_type != decode_result_type::decode_to_obs) {
         for (std::size_t e = 0, E = decoded_result.result.size(); e < E; e++)
           if (decoded_result.result[e])
@@ -396,6 +398,8 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
       // internal "O" matrix; use the result directly.
       for (std::size_t i = 0; i < num_observables; i++) {
         if (decoded_result.result[i]) {
+          if (should_log)
+            log_observables.push_back(i);
           pimpl->corrections[i] ^= 1;
           if (should_log)
             log_observable_corrections[i] ^= 1;
@@ -426,13 +430,15 @@ bool decoder::enqueue_syndrome(const uint8_t *syndrome,
       pimpl->log_counter++;
       auto s = fmt::format(
           "[DecoderStats][{}] Counter:{} DecoderId:{} InputMsyn:{} "
-          "InputDetectors:{} Converged:{} Errors:{} "
+          "InputDetectors:{} Converged:{} ResultType:{} Errors:{} "
+          "Observables:{} "
           "ObservableCorrectionsThisCall:{} ObservableCorrectionsTotal:{} "
           "Dur1:{:.1f}us Dur2:{:.1f}us Dur3:{:.1f}us",
           static_cast<const void *>(this), pimpl->log_counter,
           pimpl->decoder_id, fmt::join(log_msyn, ","),
           fmt::join(log_detectors, ","), decoded_result.converged ? 1 : 0,
-          fmt::join(log_errors, ","),
+          result_type_str, fmt::join(log_errors, ","),
+          fmt::join(log_observables, ","),
           fmt::join(log_observable_corrections, ","),
           fmt::join(std::vector<uint8_t>(pimpl->corrections.begin(),
                                          pimpl->corrections.end()),
