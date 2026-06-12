@@ -230,11 +230,17 @@ for s, o in zip(log_detectors_sparse, log_observables_dense):
         decoded_observables_sparse = [
             i for i in range(len(O_replay)) if O_replay[i]
         ]
-    else:
+    elif "obs" in result_types:
         replay_errors_sparse.append([])
         O_replay = numpy.array([1 if x > 0.5 else 0 for x in result.result],
                                dtype=numpy.uint8)
         decoded_observables_sparse = decoded_sparse
+    else:
+        print(
+            f"Error: unsupported ResultType set {sorted(result_types)} "
+            f"in decode_call_idx {decode_call_idx}."
+        )
+        exit(1)
 
     if "obs" in result_types:
         expected_observables_sparse = log_observables_sparse[decode_call_idx]
