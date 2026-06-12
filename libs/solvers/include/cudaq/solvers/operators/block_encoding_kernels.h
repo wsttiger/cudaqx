@@ -2,8 +2,8 @@
  * Copyright (c) 2024 - 2026 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
- * This source code and the accompanying materials are made available under     *
- * the terms of the Apache License 2.0 which accompanies this distribution.     *
+ * This source code and the accompanying materials are made available under  *
+ * the terms of the Apache License 2.0 which accompanies this distribution.  *
  ******************************************************************************/
 #pragma once
 
@@ -45,3 +45,61 @@ __qpu__ void apply(cudaq::qview<> ancilla, cudaq::qview<> system,
                    const std::vector<int> &term_signs);
 
 } // namespace cudaq::solvers::block_encoding
+
+namespace cudaq::solvers::qubitization {
+
+/// \pure_device_kernel
+///
+/// @brief Reflect about the all-zero state on an ancilla register.
+__qpu__ void reflect_about_zero(cudaq::qview<> ancilla);
+
+/// \pure_device_kernel
+///
+/// @brief Reflect about the PauliLCU PREPARE state from flattened kernel data.
+__qpu__ void
+reflect_about_prepare(cudaq::qview<> ancilla,
+                      const std::vector<double> &state_prep_angles);
+
+/// \pure_device_kernel
+///
+/// @brief Apply one PauliLCU qubitization walk step from flattened kernel data.
+__qpu__ void apply_walk(cudaq::qview<> ancilla, cudaq::qview<> system,
+                        const std::vector<double> &state_prep_angles,
+                        const std::vector<int> &term_controls,
+                        const std::vector<int> &term_ops,
+                        const std::vector<int> &term_lengths,
+                        const std::vector<int> &term_signs);
+
+/// \pure_device_kernel
+///
+/// @brief Apply one adjoint PauliLCU qubitization walk step from flattened
+/// data.
+__qpu__ void apply_adjoint_walk(cudaq::qview<> ancilla, cudaq::qview<> system,
+                                const std::vector<double> &state_prep_angles,
+                                const std::vector<int> &term_controls,
+                                const std::vector<int> &term_ops,
+                                const std::vector<int> &term_lengths,
+                                const std::vector<int> &term_signs);
+
+/// \pure_device_kernel
+///
+/// @brief Apply repeated PauliLCU qubitization walk steps from flattened data.
+__qpu__ void apply_walk_power(cudaq::qview<> ancilla, cudaq::qview<> system,
+                              const std::vector<double> &state_prep_angles,
+                              const std::vector<int> &term_controls,
+                              const std::vector<int> &term_ops,
+                              const std::vector<int> &term_lengths,
+                              const std::vector<int> &term_signs, int power);
+
+/// \pure_device_kernel
+///
+/// @brief Apply repeated adjoint PauliLCU qubitization walk steps.
+__qpu__ void
+apply_adjoint_walk_power(cudaq::qview<> ancilla, cudaq::qview<> system,
+                         const std::vector<double> &state_prep_angles,
+                         const std::vector<int> &term_controls,
+                         const std::vector<int> &term_ops,
+                         const std::vector<int> &term_lengths,
+                         const std::vector<int> &term_signs, int power);
+
+} // namespace cudaq::solvers::qubitization

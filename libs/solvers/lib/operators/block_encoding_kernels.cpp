@@ -2,8 +2,8 @@
  * Copyright (c) 2024 - 2026 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
- * This source code and the accompanying materials are made available under     *
- * the terms of the Apache License 2.0 which accompanies this distribution.     *
+ * This source code and the accompanying materials are made available under  *
+ * the terms of the Apache License 2.0 which accompanies this distribution.  *
  ******************************************************************************/
 
 #include "cudaq/solvers/operators/block_encoding_kernels.h"
@@ -329,3 +329,98 @@ __qpu__ void apply(cudaq::qview<> ancilla, cudaq::qview<> system,
 }
 
 } // namespace cudaq::solvers::block_encoding
+
+namespace cudaq::solvers::qubitization {
+
+__qpu__ void reflect_about_zero(cudaq::qview<> ancilla) {
+  for (std::size_t i = 0; i < ancilla.size(); ++i)
+    x(ancilla[i]);
+
+  std::size_t num_ancilla = ancilla.size();
+  if (num_ancilla == 0) {
+    return;
+  } else if (num_ancilla == 1) {
+    z(ancilla[0]);
+  } else if (num_ancilla == 2) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1]);
+  } else if (num_ancilla == 3) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2]);
+  } else if (num_ancilla == 4) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3]);
+  } else if (num_ancilla == 5) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4]);
+  } else if (num_ancilla == 6) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5]);
+  } else if (num_ancilla == 7) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6]);
+  } else if (num_ancilla == 8) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6], ancilla[7]);
+  } else if (num_ancilla == 9) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6], ancilla[7], ancilla[8]);
+  } else if (num_ancilla == 10) {
+    z<cudaq::ctrl>(ancilla[0], ancilla[1], ancilla[2], ancilla[3], ancilla[4],
+                   ancilla[5], ancilla[6], ancilla[7], ancilla[8], ancilla[9]);
+  }
+
+  for (std::size_t i = 0; i < ancilla.size(); ++i)
+    x(ancilla[i]);
+}
+
+__qpu__ void
+reflect_about_prepare(cudaq::qview<> ancilla,
+                      const std::vector<double> &state_prep_angles) {
+  block_encoding::unprepare(ancilla, state_prep_angles);
+  reflect_about_zero(ancilla);
+  block_encoding::prepare(ancilla, state_prep_angles);
+}
+
+__qpu__ void apply_walk(cudaq::qview<> ancilla, cudaq::qview<> system,
+                        const std::vector<double> &state_prep_angles,
+                        const std::vector<int> &term_controls,
+                        const std::vector<int> &term_ops,
+                        const std::vector<int> &term_lengths,
+                        const std::vector<int> &term_signs) {
+  block_encoding::select(ancilla, system, term_controls, term_ops, term_lengths,
+                         term_signs);
+  reflect_about_prepare(ancilla, state_prep_angles);
+}
+
+__qpu__ void apply_adjoint_walk(cudaq::qview<> ancilla, cudaq::qview<> system,
+                                const std::vector<double> &state_prep_angles,
+                                const std::vector<int> &term_controls,
+                                const std::vector<int> &term_ops,
+                                const std::vector<int> &term_lengths,
+                                const std::vector<int> &term_signs) {
+  reflect_about_prepare(ancilla, state_prep_angles);
+  block_encoding::select(ancilla, system, term_controls, term_ops, term_lengths,
+                         term_signs);
+}
+
+__qpu__ void apply_walk_power(cudaq::qview<> ancilla, cudaq::qview<> system,
+                              const std::vector<double> &state_prep_angles,
+                              const std::vector<int> &term_controls,
+                              const std::vector<int> &term_ops,
+                              const std::vector<int> &term_lengths,
+                              const std::vector<int> &term_signs, int power) {
+  for (int i = 0; i < power; ++i)
+    apply_walk(ancilla, system, state_prep_angles, term_controls, term_ops,
+               term_lengths, term_signs);
+}
+
+__qpu__ void
+apply_adjoint_walk_power(cudaq::qview<> ancilla, cudaq::qview<> system,
+                         const std::vector<double> &state_prep_angles,
+                         const std::vector<int> &term_controls,
+                         const std::vector<int> &term_ops,
+                         const std::vector<int> &term_lengths,
+                         const std::vector<int> &term_signs, int power) {
+  for (int i = 0; i < power; ++i)
+    apply_adjoint_walk(ancilla, system, state_prep_angles, term_controls,
+                       term_ops, term_lengths, term_signs);
+}
+
+} // namespace cudaq::solvers::qubitization

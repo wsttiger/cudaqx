@@ -192,21 +192,56 @@ Args:
                                         const std::vector<double> &>(
       mod, "block_encoding", "unprepare",
       "Apply PauliLCU PREPARE dagger inside a CUDA-Q Python kernel.");
-  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, cudaq::qview<>,
-                                        const std::vector<int> &,
-                                        const std::vector<int> &,
-                                        const std::vector<int> &,
-                                        const std::vector<int> &>(
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &>(
       mod, "block_encoding", "select",
       "Apply PauliLCU SELECT inside a CUDA-Q Python kernel.");
-  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, cudaq::qview<>,
-                                        const std::vector<double> &,
-                                        const std::vector<int> &,
-                                        const std::vector<int> &,
-                                        const std::vector<int> &,
-                                        const std::vector<int> &>(
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &>(
       mod, "block_encoding", "apply",
       "Apply a full PauliLCU block encoding inside a CUDA-Q Python kernel.");
+
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>>(
+      mod, "qubitization", "reflect_about_zero",
+      "Reflect about the all-zero ancilla state inside a CUDA-Q Python "
+      "kernel.");
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>,
+                                        const std::vector<double> &>(
+      mod, "qubitization", "reflect_about_prepare",
+      "Reflect about the PauliLCU PREPARE state inside a CUDA-Q Python "
+      "kernel.");
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &>(
+      mod, "qubitization", "apply_walk",
+      "Apply one PauliLCU qubitization walk step inside a CUDA-Q Python "
+      "kernel.");
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &>(
+      mod, "qubitization", "apply_adjoint_walk",
+      "Apply one adjoint PauliLCU qubitization walk step inside a CUDA-Q "
+      "Python kernel.");
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &, int>(
+      mod, "qubitization", "apply_walk_power",
+      "Apply repeated PauliLCU qubitization walk steps inside a CUDA-Q Python "
+      "kernel.");
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &, int>(
+      mod, "qubitization", "apply_adjoint_walk_power",
+      "Apply repeated adjoint PauliLCU qubitization walk steps inside a "
+      "CUDA-Q Python kernel.");
 
   // ============================================================================
   // QSVT HOST-SIDE PRIMITIVES
