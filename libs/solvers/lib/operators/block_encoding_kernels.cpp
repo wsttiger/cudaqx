@@ -520,3 +520,37 @@ __qpu__ void apply_qsp_sequence(cudaq::qview<> signal, cudaq::qview<> system,
 }
 
 } // namespace cudaq::solvers::qsvt_primitives
+
+namespace cudaq::solvers::qsvt {
+
+__qpu__ void apply_signal_phase(cudaq::qview<> signal, double phase) {
+  qsvt_primitives::apply_signal_phase(signal, phase);
+}
+
+__qpu__ void apply_phase_sequence(cudaq::qview<> signal, cudaq::qview<> system,
+                                  const std::vector<double> &phases,
+                                  const std::vector<int> &walk_directions,
+                                  const std::vector<double> &state_prep_angles,
+                                  const std::vector<int> &term_controls,
+                                  const std::vector<int> &term_ops,
+                                  const std::vector<int> &term_lengths,
+                                  const std::vector<int> &term_signs) {
+  if (phases.empty())
+    return;
+
+  apply_signal_phase(signal, phases[0]);
+  for (std::size_t i = 1; i < phases.size(); ++i) {
+    if (walk_directions[i - 1] == 1) {
+      qubitization::reflect_about_zero(signal);
+      block_encoding::apply(signal, system, state_prep_angles, term_controls,
+                            term_ops, term_lengths, term_signs);
+    } else {
+      block_encoding::apply(signal, system, state_prep_angles, term_controls,
+                            term_ops, term_lengths, term_signs);
+      qubitization::reflect_about_zero(signal);
+    }
+    apply_signal_phase(signal, phases[i]);
+  }
+}
+
+} // namespace cudaq::solvers::qsvt

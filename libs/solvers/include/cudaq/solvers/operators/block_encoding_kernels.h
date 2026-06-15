@@ -141,3 +141,28 @@ __qpu__ void apply_qsp_sequence(cudaq::qview<> signal, cudaq::qview<> system,
                                 const std::vector<int> &term_signs);
 
 } // namespace cudaq::solvers::qsvt_primitives
+
+namespace cudaq::solvers::qsvt {
+
+/// \pure_device_kernel
+///
+/// @brief Apply a QSVT projector phase to the all-zero signal state.
+__qpu__ void apply_signal_phase(cudaq::qview<> signal, double phase);
+
+/// \pure_device_kernel
+///
+/// @brief Apply a flattened PauliLCU QSVT phase/walk sequence.
+///
+/// @details This is the Python-facing QSVT execution primitive. Phases from
+/// QSPPACK or other QSP generators should be converted to this projector-phase
+/// convention before calling this helper.
+__qpu__ void apply_phase_sequence(cudaq::qview<> signal, cudaq::qview<> system,
+                                  const std::vector<double> &phases,
+                                  const std::vector<int> &walk_directions,
+                                  const std::vector<double> &state_prep_angles,
+                                  const std::vector<int> &term_controls,
+                                  const std::vector<int> &term_ops,
+                                  const std::vector<int> &term_lengths,
+                                  const std::vector<int> &term_signs);
+
+} // namespace cudaq::solvers::qsvt

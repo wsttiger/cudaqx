@@ -38,7 +38,6 @@ from scipy import linalg as la
 from cudaq import spin
 import cudaq_solvers as solvers
 
-
 EVOLUTION_TIME = 0.8
 INITIAL_STATE_SEED = 13
 PHASE_GENERATION_DEGREE = 16
@@ -88,7 +87,6 @@ SIN_QSP_PHASES = [
     2.2494080921322152e-11,
     -8.8938765361745635e-14,
 ]
-
 
 PAULI = {
     "I": np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.complex128),
@@ -167,12 +165,12 @@ def random_normalized_ket(num_qubits: int, seed: int) -> np.ndarray:
 
 
 def qsp_response(phases: list[float], x: float) -> complex:
-    return solvers.evaluate_qsvt_response(
-        phases, x, solvers.QSVTPhaseConvention.qsp
-    ).value
+    poly = solvers.qsvt.phases_to_poly(phases, solvers.QSVTPhaseConvention.qsp)
+    return poly(x)
 
 
-def component_errors(tau: float, sample_points: np.ndarray) -> tuple[float, float]:
+def component_errors(tau: float,
+                     sample_points: np.ndarray) -> tuple[float, float]:
     cos_errors = []
     sin_errors = []
     for x in sample_points:
@@ -202,11 +200,13 @@ def main() -> int:
     encoding = solvers.PauliLCU(spin_hamiltonian(REFERENCE_TERMS), num_qubits)
     metadata = encoding.metadata()
     if abs(metadata.normalization - alpha) > 1e-12:
-        raise RuntimeError("PauliLCU normalization does not match reference alpha")
+        raise RuntimeError(
+            "PauliLCU normalization does not match reference alpha")
 
     hamiltonian = hamiltonian_matrix(REFERENCE_TERMS)
     initial_state = random_normalized_ket(num_qubits, INITIAL_STATE_SEED)
-    dense_evolved = la.expm(-1.0j * EVOLUTION_TIME * hamiltonian) @ initial_state
+    dense_evolved = la.expm(
+        -1.0j * EVOLUTION_TIME * hamiltonian) @ initial_state
 
     eigenvalues, eigenvectors = np.linalg.eigh(hamiltonian)
     amplitudes = eigenvectors.conj().T @ initial_state
@@ -214,20 +214,20 @@ def main() -> int:
     diagonal_evolved = eigenvectors @ (exact_phases * amplitudes)
 
     scaled_eigenvalues = eigenvalues / alpha
-    qsp_factors = np.array([qsp_phase_factor(float(x)) for x in scaled_eigenvalues])
+    qsp_factors = np.array(
+        [qsp_phase_factor(float(x)) for x in scaled_eigenvalues])
     qsp_evolved = eigenvectors @ (qsp_factors * amplitudes)
 
     sample_points = np.linspace(-1.0, 1.0, args.num_samples)
     max_cos_error, max_sin_error = component_errors(tau, sample_points)
     scalar_error = max(
         abs(qsp_phase_factor(float(x)) - np.exp(-1.0j * tau * x))
-        for x in sample_points
-    )
+        for x in sample_points)
 
     dense_diagonal_l2 = np.linalg.norm(dense_evolved - diagonal_evolved)
     qsp_l2 = np.linalg.norm(qsp_evolved - diagonal_evolved)
     qsp_max_amplitude_error = np.max(np.abs(qsp_evolved - diagonal_evolved))
-    qsp_fidelity = abs(np.vdot(diagonal_evolved, qsp_evolved)) ** 2
+    qsp_fidelity = abs(np.vdot(diagonal_evolved, qsp_evolved))**2
 
     print("QSPPACK phase validation for 4-qubit Hamiltonian simulation")
     print("=" * 64)

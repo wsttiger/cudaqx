@@ -12,7 +12,9 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cmath>
 #include <sstream>
+#include <stdexcept>
 
 #include "bindings/utils/type_casters.h"
 #include "cuda-qx/core/kwargs_utils.h"
@@ -221,50 +223,18 @@ Args:
       mod, "qubitization", "apply_walk",
       "Apply one PauliLCU qubitization walk step inside a CUDA-Q Python "
       "kernel.");
-  cudaq::python::addDeviceKernelInterop<
-      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
-      const std::vector<int> &, const std::vector<int> &,
-      const std::vector<int> &, const std::vector<int> &>(
-      mod, "qubitization", "apply_adjoint_walk",
-      "Apply one adjoint PauliLCU qubitization walk step inside a CUDA-Q "
-      "Python kernel.");
-  cudaq::python::addDeviceKernelInterop<
-      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
-      const std::vector<int> &, const std::vector<int> &,
-      const std::vector<int> &, const std::vector<int> &, int>(
-      mod, "qubitization", "apply_walk_power",
-      "Apply repeated PauliLCU qubitization walk steps inside a CUDA-Q Python "
-      "kernel.");
-  cudaq::python::addDeviceKernelInterop<
-      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
-      const std::vector<int> &, const std::vector<int> &,
-      const std::vector<int> &, const std::vector<int> &, int>(
-      mod, "qubitization", "apply_adjoint_walk_power",
-      "Apply repeated adjoint PauliLCU qubitization walk steps inside a "
-      "CUDA-Q Python kernel.");
 
   cudaq::python::addDeviceKernelInterop<cudaq::qview<>, double>(
-      mod, "qsvt_primitives", "apply_signal_phase",
+      mod, "qsvt", "apply_signal_phase",
       "Apply a QSVT projector phase to the all-zero signal state inside a "
       "CUDA-Q Python kernel.");
-  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, double>(
-      mod, "qsvt_primitives", "apply_qsp_signal_phase",
-      "Apply a QSP-style signal phase inside a CUDA-Q Python kernel.");
   cudaq::python::addDeviceKernelInterop<
       cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
       const std::vector<int> &, const std::vector<double> &,
       const std::vector<int> &, const std::vector<int> &,
       const std::vector<int> &, const std::vector<int> &>(
-      mod, "qsvt_primitives", "apply_sequence",
+      mod, "qsvt", "apply_phase_sequence",
       "Apply a flattened PauliLCU QSVT phase/walk sequence inside a CUDA-Q "
-      "Python kernel.");
-  cudaq::python::addDeviceKernelInterop<
-      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
-      const std::vector<int> &, const std::vector<double> &,
-      const std::vector<int> &, const std::vector<int> &,
-      const std::vector<int> &, const std::vector<int> &>(
-      mod, "qsvt_primitives", "apply_qsp_sequence",
-      "Apply a flattened PauliLCU QSP phase/walk sequence inside a CUDA-Q "
       "Python kernel.");
 
   // ============================================================================
@@ -281,8 +251,7 @@ Args:
       mod, "QSVTPhaseConvention",
       R"(Convention used to interpret QSP/QSVT phases.)")
       .value("qsvt", qsvt_phase_convention::qsvt)
-      .value("qsp", qsvt_phase_convention::qsp)
-      .export_values();
+      .value("qsp", qsvt_phase_convention::qsp);
 
   nb::enum_<qsvt_transform_kind>(
       mod, "QSVTTransformKind",
@@ -495,74 +464,78 @@ that user-supplied or externally generated phases are intended to implement.)")
           nb::arg("evolution_time"), nb::arg("target_error"),
           nb::arg("degree_hint") = 0, nb::arg("normalization") = 1.0);
 
-  mod.def(
-      "evaluate_qsvt_response",
-      [](std::vector<double> phases, double x,
-         qsvt_phase_convention convention) {
-        return evaluate_qsvt_response(phases, x, convention);
+  auto qsvt_obj = mod.attr("qsvt");
+  auto qsvt = nb::borrow<nb::module_>(qsvt_obj.ptr());
+  qsvt.def(
+      "phases_to_poly",
+      [](std::vector<double> phases, qsvt_phase_convention convention) {
+        return nb::cpp_function(
+            [phases = std::move(phases), convention](double x) {
+              return evaluate_qsvt_response(phases, x, convention).value;
+            });
       },
-      nb::arg("phases"), nb::arg("x"),
-      nb::arg("convention") = qsvt_phase_convention::qsvt);
-  mod.def(
-      "evaluate_qsvt_response",
-      [](const qsvt_phase_sequence &phases, double x,
-         qsvt_phase_convention convention) {
-        return evaluate_qsvt_response(phases, x, convention);
+      nb::arg("phases"), nb::arg("convention") = qsvt_phase_convention::qsvt,
+      R"(Construct a host-side polynomial response from QSVT/QSP phases.)");
+  qsvt.def(
+      "phases_to_poly",
+      [](const qsvt_phase_sequence &phases, qsvt_phase_convention convention) {
+        std::vector<double> phase_data = phases.data();
+        return nb::cpp_function(
+            [phase_data = std::move(phase_data), convention](double x) {
+              return evaluate_qsvt_response(phase_data, x, convention).value;
+            });
       },
-      nb::arg("phases"), nb::arg("x"),
-      nb::arg("convention") = qsvt_phase_convention::qsvt);
-  mod.def(
-      "evaluate_qsvt_response",
-      [](const qsvt_plan &plan, double x, qsvt_phase_convention convention) {
-        return evaluate_qsvt_response(plan, x, convention);
+      nb::arg("phases"), nb::arg("convention") = qsvt_phase_convention::qsvt,
+      R"(Construct a host-side polynomial response from a phase sequence.)");
+  qsvt.def(
+      "phases_to_poly",
+      [](const qsvt_plan &plan, qsvt_phase_convention convention) {
+        std::vector<double> phase_data = plan.phase_data();
+        return nb::cpp_function(
+            [phase_data = std::move(phase_data), convention](double x) {
+              return evaluate_qsvt_response(phase_data, x, convention).value;
+            });
       },
-      nb::arg("plan"), nb::arg("x"),
-      nb::arg("convention") = qsvt_phase_convention::qsvt);
-  mod.def(
-      "evaluate_qsvt_response",
-      [](const qsvt_transform_plan &plan, double x) {
-        return evaluate_qsvt_response(plan, x);
-      },
-      nb::arg("plan"), nb::arg("x"));
+      nb::arg("plan"), nb::arg("convention") = qsvt_phase_convention::qsvt,
+      R"(Construct a host-side polynomial response from a QSVT plan.)");
+  qsvt.def(
+      "estimate_poly_error",
+      [](const std::function<std::complex<double>(double)> &poly,
+         const std::function<std::complex<double>(double)> &target,
+         nb::tuple domain, std::size_t num_points) {
+        if (nb::len(domain) != 2)
+          throw std::invalid_argument("domain must contain exactly two values");
+        auto min_x = nb::cast<double>(domain[0]);
+        auto max_x = nb::cast<double>(domain[1]);
+        if (!std::isfinite(min_x) || !std::isfinite(max_x))
+          throw std::invalid_argument("domain values must be finite");
 
-  mod.def(
-      "estimate_qsvt_response_error",
-      [](std::vector<double> phases,
-         const std::function<std::complex<double>(double)> &target,
-         std::vector<double> sample_points, qsvt_phase_convention convention) {
-        return estimate_qsvt_response_error(phases, target, sample_points,
-                                            convention);
+        auto sample_points =
+            make_uniform_qsvt_sample_points(min_x, max_x, num_points);
+        qsvt_response_error error;
+        error.num_samples = sample_points.size();
+
+        double sum_squared_error = 0.0;
+        for (double x : sample_points) {
+          const auto delta = poly(x) - target(x);
+          const auto abs_error = std::abs(delta);
+          if (!std::isfinite(abs_error))
+            throw std::invalid_argument(
+                "polynomial and target must produce finite values");
+          sum_squared_error += abs_error * abs_error;
+          if (abs_error > error.max_abs_error) {
+            error.max_abs_error = abs_error;
+            error.max_error_x = x;
+          }
+        }
+
+        error.rms_error = std::sqrt(sum_squared_error / sample_points.size());
+        return error;
       },
-      nb::arg("phases"), nb::arg("target"), nb::arg("sample_points"),
-      nb::arg("convention") = qsvt_phase_convention::qsvt);
-  mod.def(
-      "estimate_qsvt_response_error",
-      [](const qsvt_phase_sequence &phases,
-         const std::function<std::complex<double>(double)> &target,
-         std::vector<double> sample_points, qsvt_phase_convention convention) {
-        return estimate_qsvt_response_error(phases, target, sample_points,
-                                            convention);
-      },
-      nb::arg("phases"), nb::arg("target"), nb::arg("sample_points"),
-      nb::arg("convention") = qsvt_phase_convention::qsvt);
-  mod.def(
-      "estimate_qsvt_response_error",
-      [](const qsvt_plan &plan,
-         const std::function<std::complex<double>(double)> &target,
-         std::vector<double> sample_points, qsvt_phase_convention convention) {
-        return estimate_qsvt_response_error(plan, target, sample_points,
-                                            convention);
-      },
-      nb::arg("plan"), nb::arg("target"), nb::arg("sample_points"),
-      nb::arg("convention") = qsvt_phase_convention::qsvt);
-  mod.def(
-      "estimate_qsvt_response_error",
-      [](const qsvt_transform_plan &plan,
-         const std::function<std::complex<double>(double)> &target,
-         std::vector<double> sample_points) {
-        return estimate_qsvt_response_error(plan, target, sample_points);
-      },
-      nb::arg("plan"), nb::arg("target"), nb::arg("sample_points"));
+      nb::arg("poly"), nb::arg("target"),
+      nb::arg("domain") = nb::make_tuple(-1.0, 1.0),
+      nb::arg("num_points") = 101,
+      R"(Estimate a host-side polynomial approximation error on a domain.)");
 
   mod.def("make_uniform_qsvt_sample_points", &make_uniform_qsvt_sample_points,
           nb::arg("min_x"), nb::arg("max_x"), nb::arg("num_points"));

@@ -205,54 +205,37 @@ def _run_qsvt_good_component(initial_state, num_system, num_ancilla, phases,
     def qsvt_kernel(state: cudaq.State):
         system = cudaq.qvector(state)
         signal = cudaq.qvector(num_ancilla)
-        solvers.block_encoding.prepare(signal, angles)
-        solvers.qsvt_primitives.apply_sequence(signal, system, phases,
-                                               walk_directions, angles,
-                                               term_controls, term_ops,
-                                               term_lengths, term_signs)
-        solvers.block_encoding.unprepare(signal, angles)
+        solvers.qsvt.apply_phase_sequence(signal, system, phases,
+                                          walk_directions, angles,
+                                          term_controls, term_ops, term_lengths,
+                                          term_signs)
 
     full_state = cudaq.get_state(qsvt_kernel, initial_state)
     return _zero_ancilla_component(full_state, num_system, num_ancilla)
 
 
-def _run_qsp_good_component(initial_state, num_system, num_ancilla, phases,
-                            walk_directions, kernel_data):
+def _run_explicit_qsvt_good_component(initial_state, num_system, num_ancilla,
+                                      phases, walk_directions, kernel_data):
+    assert all(direction == 0 for direction in walk_directions)
     angles, term_controls, term_ops, term_lengths, term_signs = kernel_data
 
     @cudaq.kernel
-    def qsp_kernel(state: cudaq.State):
+    def qsvt_kernel(state: cudaq.State):
         system = cudaq.qvector(state)
         signal = cudaq.qvector(num_ancilla)
-        solvers.block_encoding.prepare(signal, angles)
-        solvers.qsvt_primitives.apply_qsp_sequence(signal, system, phases,
-                                                   walk_directions, angles,
-                                                   term_controls, term_ops,
-                                                   term_lengths, term_signs)
-        solvers.block_encoding.unprepare(signal, angles)
-
-    full_state = cudaq.get_state(qsp_kernel, initial_state)
-    return _zero_ancilla_component(full_state, num_system, num_ancilla)
-
-
-def _run_qsppack_qubitization_good_component(initial_ket, num_system,
-                                             num_ancilla, phases, kernel_data):
-    angles, term_controls, term_ops, term_lengths, term_signs = kernel_data
-    initial_state = cudaq.State.from_data(np.asarray(initial_ket).copy())
-
-    @cudaq.kernel
-    def qsp_kernel(state: cudaq.State):
-        system = cudaq.qvector(state)
-        signal = cudaq.qvector(num_ancilla)
-        solvers.qsvt_primitives.apply_qsp_signal_phase(signal, phases[0])
+        solvers.qsvt.apply_signal_phase(signal, phases[0])
         for i in range(1, len(phases)):
             solvers.block_encoding.apply(signal, system, angles, term_controls,
                                          term_ops, term_lengths, term_signs)
             solvers.qubitization.reflect_about_zero(signal)
-            solvers.qsvt_primitives.apply_qsp_signal_phase(signal, phases[i])
+            solvers.qsvt.apply_signal_phase(signal, phases[i])
 
-    full_state = cudaq.get_state(qsp_kernel, initial_state)
+    full_state = cudaq.get_state(qsvt_kernel, initial_state)
     return _zero_ancilla_component(full_state, num_system, num_ancilla)
+
+
+def _qsp_to_projector_phases(phases):
+    return [2.0 * float(phase) for phase in phases]
 
 
 def _qsppack_hamiltonian_simulation_phases(tau, degree=16):
@@ -354,10 +337,6 @@ def test_pauli_lcu_block_encoding_device_interop():
         solvers.qubitization.reflect_about_prepare(ancilla, angles)
         solvers.qubitization.apply_walk(ancilla, system, angles, term_controls,
                                         term_ops, term_lengths, term_signs)
-        solvers.qubitization.apply_adjoint_walk_power(ancilla, system, angles,
-                                                      term_controls, term_ops,
-                                                      term_lengths, term_signs,
-                                                      1)
 
     counts = cudaq.sample(kernel, shots_count=16)
     assert len(counts) > 0
@@ -434,7 +413,8 @@ def test_pauli_lcu_qubitization_walk_matches_numpy_good_subspace(
     _assert_good_component_matches(good_component, expected_component)
 
 
-def test_qsvt_hamiltonian_simulation_sequence_matches_numpy(qpp_cpu_target):
+def test_qsvt_hamiltonian_simulation_sequence_matches_explicit_loop(
+        qpp_cpu_target):
     num_system = 4
     terms = _pauli_string_terms_to_indexed_terms(
         _QSVT_HAMILTONIAN_SIMULATION_TERMS)
@@ -467,22 +447,22 @@ def test_qsvt_hamiltonian_simulation_sequence_matches_numpy(qpp_cpu_target):
                                                  kernel_data)
     quantum_time_evolved_state = quantum_cos_state - 1.0j * quantum_sin_state
 
-    numpy_cos_state = _numpy_pauli_lcu_qsvt_good_component(
-        terms, num_system, initial_ket, cos_phases, cos_walk_directions,
-        encoding.normalization)
-    numpy_sin_state = _numpy_pauli_lcu_qsvt_good_component(
-        terms, num_system, initial_ket, sin_phases, sin_walk_directions,
-        encoding.normalization)
-    numpy_time_evolved_state = numpy_cos_state - 1.0j * numpy_sin_state
+    explicit_cos_state = _run_explicit_qsvt_good_component(
+        initial_state, num_system, encoding.num_ancilla, cos_phases,
+        cos_walk_directions, kernel_data)
+    explicit_sin_state = _run_explicit_qsvt_good_component(
+        initial_state, num_system, encoding.num_ancilla, sin_phases,
+        sin_walk_directions, kernel_data)
+    explicit_time_evolved_state = explicit_cos_state - 1.0j * explicit_sin_state
 
     # These fixed phase sequences are deterministic stand-ins for externally
     # generated Hamiltonian-simulation phases. This test validates that the
-    # Python CUDA-Q QSVT circuit matches an equivalent NumPy PauliLCU
-    # qubitization model; it is not a phase-generation accuracy test.
-    assert np.linalg.norm(quantum_cos_state - numpy_cos_state) < 1e-10
-    assert np.linalg.norm(quantum_sin_state - numpy_sin_state) < 1e-10
+    # public QSVT sequence helper matches the equivalent explicit composition of
+    # signal phases, PauliLCU block encodings, and zero-signal reflections.
+    assert np.linalg.norm(quantum_cos_state - explicit_cos_state) < 1e-10
+    assert np.linalg.norm(quantum_sin_state - explicit_sin_state) < 1e-10
     assert (np.linalg.norm(quantum_time_evolved_state -
-                           numpy_time_evolved_state) < 1e-10)
+                           explicit_time_evolved_state) < 1e-10)
     assert np.linalg.norm(quantum_time_evolved_state) > 1e-8
 
 
@@ -512,25 +492,30 @@ def test_qsppack_generated_phases_validate_device_sequence_and_exact_response(
     assert sin_info["value"] < 1e-12
 
     kernel_data = _kernel_data(encoding)
-    quantum_cos_state = _run_qsppack_qubitization_good_component(
-        initial_ket, num_system, encoding.num_ancilla, cos_phases, kernel_data)
-    quantum_sin_state = _run_qsppack_qubitization_good_component(
-        initial_ket, num_system, encoding.num_ancilla, sin_phases, kernel_data)
+    initial_state = cudaq.State.from_data(initial_ket)
+    cos_walk_directions = [0] * (len(cos_phases) - 1)
+    sin_walk_directions = [0] * (len(sin_phases) - 1)
+    quantum_cos_state = _run_qsvt_good_component(
+        initial_state, num_system, encoding.num_ancilla,
+        _qsp_to_projector_phases(cos_phases), cos_walk_directions, kernel_data)
+    quantum_sin_state = _run_qsvt_good_component(
+        initial_state, num_system, encoding.num_ancilla,
+        _qsp_to_projector_phases(sin_phases), sin_walk_directions, kernel_data)
 
     quantum_cos_state *= np.exp(-1.0j * np.sum(cos_phases))
     quantum_sin_state *= np.exp(-1.0j * np.sum(sin_phases))
 
     exact_state, eigenvalues, eigenvectors = _exact_time_evolved_state(
         hamiltonian_matrix, initial_ket, evolution_time)
+    cos_poly = solvers.qsvt.phases_to_poly(cos_phases,
+                                           solvers.QSVTPhaseConvention.qsp)
+    sin_poly = solvers.qsvt.phases_to_poly(sin_phases,
+                                           solvers.QSVTPhaseConvention.qsp)
     sample_errors = []
     for scaled_eigenvalue in eigenvalues / alpha:
         walk_eigenvalue = -scaled_eigenvalue
-        cos_response = solvers.evaluate_qsvt_response(
-            cos_phases, float(walk_eigenvalue),
-            solvers.QSVTPhaseConvention.qsp).value
-        sin_response = solvers.evaluate_qsvt_response(
-            sin_phases, float(walk_eigenvalue),
-            solvers.QSVTPhaseConvention.qsp).value
+        cos_response = cos_poly(float(walk_eigenvalue))
+        sin_response = sin_poly(float(walk_eigenvalue))
         target = np.exp(-1.0j * tau * scaled_eigenvalue)
         response = 2.0 * (cos_response.real + 1.0j * sin_response.imag)
         sample_errors.append(abs(response - target))
@@ -623,25 +608,26 @@ def test_qsvt_plan_and_transform_descriptor():
 
 
 def test_qsvt_response_evaluation_and_error_estimation():
-    response = solvers.evaluate_qsvt_response([0.0, 0.0], 0.5)
-    assert isinstance(response, solvers.QSVTResponse)
-    assert response.value.real == pytest.approx(0.5)
-    assert response.value.imag == pytest.approx(0.0)
-    assert response.magnitude == pytest.approx(0.5)
-    assert response.probability == pytest.approx(0.25)
+    poly = solvers.qsvt.phases_to_poly([0.0, 0.0])
+    response = poly(0.5)
+    assert isinstance(response, complex)
+    assert response.real == pytest.approx(0.5)
+    assert response.imag == pytest.approx(0.0)
 
-    qsp_response = solvers.evaluate_qsvt_response(
-        [0.1, -0.2], 0.5, solvers.QSVTPhaseConvention.qsp)
-    assert isinstance(qsp_response.value, complex)
+    qsp_poly = solvers.qsvt.phases_to_poly([0.1, -0.2],
+                                           solvers.QSVTPhaseConvention.qsp)
+    qsp_response = qsp_poly(0.5)
+    assert isinstance(qsp_response, complex)
 
     sample_points = solvers.make_uniform_qsvt_sample_points(-1.0, 1.0, 5)
     assert sample_points == pytest.approx([-1.0, -0.5, 0.0, 0.5, 1.0])
     chebyshev_points = solvers.make_chebyshev_qsvt_sample_points(-1.0, 1.0, 3)
     assert chebyshev_points == pytest.approx([-1.0, 0.0, 1.0])
 
-    error = solvers.estimate_qsvt_response_error([0.0, 0.0],
-                                                 lambda x: complex(x, 0.0),
-                                                 sample_points)
+    error = solvers.qsvt.estimate_poly_error(poly,
+                                             lambda x: complex(x, 0.0),
+                                             domain=(-1.0, 1.0),
+                                             num_points=5)
     assert isinstance(error, solvers.QSVTResponseError)
     assert error.max_abs_error == pytest.approx(0.0, abs=1e-12)
     assert error.rms_error == pytest.approx(0.0, abs=1e-12)
