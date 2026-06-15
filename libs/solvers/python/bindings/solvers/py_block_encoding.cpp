@@ -241,228 +241,20 @@ Args:
   // QSVT HOST-SIDE PRIMITIVES
   // ============================================================================
 
-  nb::enum_<qsvt_walk_direction>(mod, "QSVTWalkDirection",
-                                 R"(Direction of a qubitization walk.)")
-      .value("forward", qsvt_walk_direction::forward)
-      .value("adjoint", qsvt_walk_direction::adjoint)
-      .export_values();
-
   nb::enum_<qsvt_phase_convention>(
       mod, "QSVTPhaseConvention",
       R"(Convention used to interpret QSP/QSVT phases.)")
       .value("qsvt", qsvt_phase_convention::qsvt)
       .value("qsp", qsvt_phase_convention::qsp);
 
-  nb::enum_<qsvt_transform_kind>(
-      mod, "QSVTTransformKind",
-      R"(Host-side QSVT matrix-function transform kind.)")
-      .value("custom", qsvt_transform_kind::custom)
-      .value("linear_solve", qsvt_transform_kind::linear_solve)
-      .value("real_time_hamiltonian_simulation",
-             qsvt_transform_kind::real_time_hamiltonian_simulation)
-      .value("imaginary_time_hamiltonian_simulation",
-             qsvt_transform_kind::imaginary_time_hamiltonian_simulation)
-      .export_values();
-
-  nb::class_<qsvt_response>(mod, "QSVTResponse",
-                            R"(Scalar response of a QSP/QSVT phase sequence.)")
-      .def(nb::init<>())
-      .def_rw("value", &qsvt_response::value)
-      .def_rw("magnitude", &qsvt_response::magnitude)
-      .def_rw("probability", &qsvt_response::probability);
-
   nb::class_<qsvt_response_error>(
-      mod, "QSVTResponseError", R"(Sampled QSVT response approximation error.)")
+      mod, "_QSVTResponseError",
+      R"(Sampled QSVT response approximation error.)")
       .def(nb::init<>())
       .def_rw("max_abs_error", &qsvt_response_error::max_abs_error)
       .def_rw("rms_error", &qsvt_response_error::rms_error)
       .def_rw("max_error_x", &qsvt_response_error::max_error_x)
       .def_rw("num_samples", &qsvt_response_error::num_samples);
-
-  nb::class_<qsvt_phase_sequence>(mod, "QSVTPhaseSequence",
-                                  R"(Validated host-side QSVT phase sequence.)")
-      .def(nb::init<std::vector<double>>(), nb::arg("phases"))
-      .def("__len__", &qsvt_phase_sequence::size)
-      .def("__getitem__", [](const qsvt_phase_sequence &self,
-                             std::size_t index) { return self[index]; })
-      .def_prop_ro("size", &qsvt_phase_sequence::size)
-      .def_prop_ro("degree", &qsvt_phase_sequence::degree)
-      .def_prop_ro("phases",
-                   [](const qsvt_phase_sequence &self) {
-                     return std::vector<double>(self.data().begin(),
-                                                self.data().end());
-                   })
-      .def("data", [](const qsvt_phase_sequence &self) {
-        return std::vector<double>(self.data().begin(), self.data().end());
-      });
-
-  nb::class_<qsvt_sequence_policy>(mod, "QSVTSequencePolicy",
-                                   R"(Validated host-side QSVT walk policy.)")
-      .def(nb::init<std::vector<int>>(), nb::arg("walk_directions"))
-      .def("__len__", &qsvt_sequence_policy::size)
-      .def("__getitem__", [](const qsvt_sequence_policy &self,
-                             std::size_t index) { return self[index]; })
-      .def_prop_ro("size", &qsvt_sequence_policy::size)
-      .def_prop_ro("degree", &qsvt_sequence_policy::degree)
-      .def_prop_ro("walk_directions",
-                   [](const qsvt_sequence_policy &self) {
-                     const auto &directions = self.walk_direction_data();
-                     return std::vector<int>(directions.begin(),
-                                             directions.end());
-                   })
-      .def("walk_direction_data", [](const qsvt_sequence_policy &self) {
-        const auto &directions = self.walk_direction_data();
-        return std::vector<int>(directions.begin(), directions.end());
-      });
-
-  nb::class_<qsvt_transform_descriptor>(
-      mod, "QSVTTransformDescriptor",
-      R"(Host-side metadata describing a target QSVT transform.
-
-This object does not generate phases. It validates and records the transform
-that user-supplied or externally generated phases are intended to implement.)")
-      .def(nb::init<>())
-      .def_rw("kind", &qsvt_transform_descriptor::kind)
-      .def_rw("phase_convention", &qsvt_transform_descriptor::phase_convention)
-      .def_rw("evolution_time", &qsvt_transform_descriptor::evolution_time)
-      .def_rw("condition_number", &qsvt_transform_descriptor::condition_number)
-      .def_rw("target_error", &qsvt_transform_descriptor::target_error)
-      .def_rw("normalization", &qsvt_transform_descriptor::normalization)
-      .def_rw("degree_hint", &qsvt_transform_descriptor::degree_hint);
-
-  nb::class_<qsvt_plan>(mod, "QSVTPlan",
-                        R"(Validated host-side QSVT phase/walk sequence plan.)")
-      .def(nb::init<std::vector<double>>(), nb::arg("phases"))
-      .def(nb::init<std::vector<double>, qsvt_sequence_policy>(),
-           nb::arg("phases"), nb::arg("policy"))
-      .def_prop_ro("num_phases", &qsvt_plan::num_phases)
-      .def_prop_ro("degree", &qsvt_plan::degree)
-      .def_prop_ro("phase_data",
-                   [](const qsvt_plan &self) {
-                     const auto &phases = self.phase_data();
-                     return std::vector<double>(phases.begin(), phases.end());
-                   })
-      .def_prop_ro("walk_direction_data",
-                   [](const qsvt_plan &self) {
-                     const auto &directions = self.walk_direction_data();
-                     return std::vector<int>(directions.begin(),
-                                             directions.end());
-                   })
-      .def("kernel_data", [](const qsvt_plan &self) {
-        nb::dict data;
-        const auto &phases = self.phase_data();
-        const auto &directions = self.walk_direction_data();
-        data["phases"] =
-            nb::cast(std::vector<double>(phases.begin(), phases.end()));
-        data["walk_directions"] =
-            nb::cast(std::vector<int>(directions.begin(), directions.end()));
-        return data;
-      });
-
-  nb::class_<qsvt_transform_plan>(
-      mod, "QSVTTransformPlan",
-      R"(Validated QSVT plan associated with target transform metadata.)")
-      .def_prop_ro("descriptor", &qsvt_transform_plan::descriptor)
-      .def_prop_ro("plan", &qsvt_transform_plan::plan)
-      .def_prop_ro("num_phases", &qsvt_transform_plan::num_phases)
-      .def_prop_ro("degree", &qsvt_transform_plan::degree)
-      .def_prop_ro("phase_data",
-                   [](const qsvt_transform_plan &self) {
-                     const auto &phases = self.phase_data();
-                     return std::vector<double>(phases.begin(), phases.end());
-                   })
-      .def_prop_ro("walk_direction_data",
-                   [](const qsvt_transform_plan &self) {
-                     const auto &directions = self.walk_direction_data();
-                     return std::vector<int>(directions.begin(),
-                                             directions.end());
-                   })
-      .def("kernel_data", [](const qsvt_transform_plan &self) {
-        nb::dict data;
-        const auto &phases = self.phase_data();
-        const auto &directions = self.walk_direction_data();
-        data["phases"] =
-            nb::cast(std::vector<double>(phases.begin(), phases.end()));
-        data["walk_directions"] =
-            nb::cast(std::vector<int>(directions.begin(), directions.end()));
-        return data;
-      });
-
-  mod.def("is_valid_qsvt_phase_sequence", &is_valid_qsvt_phase_sequence,
-          nb::arg("phases"));
-  mod.def("validate_qsvt_phase_sequence", &validate_qsvt_phase_sequence,
-          nb::arg("phases"));
-  mod.def("qsvt_polynomial_degree", &qsvt_polynomial_degree,
-          nb::arg("num_phases"));
-  mod.def("qsvt_walk_direction_code", &qsvt_walk_direction_code,
-          nb::arg("direction"));
-  mod.def("is_valid_qsvt_sequence_policy", &is_valid_qsvt_sequence_policy,
-          nb::arg("degree"), nb::arg("policy"));
-  mod.def("validate_qsvt_sequence_policy", &validate_qsvt_sequence_policy,
-          nb::arg("degree"), nb::arg("policy"));
-  mod.def("make_qsvt_phase_sequence", &make_qsvt_phase_sequence,
-          nb::arg("phases"));
-  mod.def(
-      "make_qsvt_sequence_policy",
-      [](std::size_t degree, qsvt_walk_direction direction) {
-        return make_qsvt_sequence_policy(degree, direction);
-      },
-      nb::arg("degree"), nb::arg("direction") = qsvt_walk_direction::forward);
-  mod.def(
-      "make_custom_qsvt_sequence_policy",
-      [](std::vector<qsvt_walk_direction> directions) {
-        return make_qsvt_sequence_policy(std::move(directions));
-      },
-      nb::arg("directions"));
-  mod.def("make_alternating_qsvt_sequence_policy",
-          &make_alternating_qsvt_sequence_policy, nb::arg("degree"),
-          nb::arg("first_direction") = qsvt_walk_direction::forward);
-  mod.def(
-      "make_qsvt_plan",
-      [](std::vector<double> phases) {
-        return make_qsvt_plan(std::move(phases));
-      },
-      nb::arg("phases"));
-  mod.def(
-      "make_qsvt_plan",
-      [](std::vector<double> phases, qsvt_sequence_policy policy) {
-        return make_qsvt_plan(std::move(phases), std::move(policy));
-      },
-      nb::arg("phases"), nb::arg("policy"));
-
-  mod.def("is_valid_qsvt_transform_descriptor",
-          &is_valid_qsvt_transform_descriptor, nb::arg("descriptor"));
-  mod.def("validate_qsvt_transform_descriptor",
-          &validate_qsvt_transform_descriptor, nb::arg("descriptor"));
-  mod.def("validate_qsvt_transform_phase_sequence",
-          &validate_qsvt_transform_phase_sequence, nb::arg("descriptor"),
-          nb::arg("phases"));
-  mod.def(
-      "make_qsvt_transform_plan",
-      [](const qsvt_transform_descriptor &descriptor,
-         std::vector<double> phases) {
-        return make_qsvt_transform_plan(descriptor, std::move(phases));
-      },
-      nb::arg("descriptor"), nb::arg("phases"));
-  mod.def(
-      "make_qsvt_transform_plan",
-      [](const qsvt_transform_descriptor &descriptor,
-         std::vector<double> phases, qsvt_sequence_policy policy) {
-        return make_qsvt_transform_plan(descriptor, std::move(phases),
-                                        std::move(policy));
-      },
-      nb::arg("descriptor"), nb::arg("phases"), nb::arg("policy"));
-  mod.def("make_linear_solve_qsvt_transform", &make_linear_solve_qsvt_transform,
-          nb::arg("condition_number"), nb::arg("target_error"),
-          nb::arg("degree_hint") = 0, nb::arg("normalization") = 1.0);
-  mod.def("make_real_time_hamiltonian_simulation_qsvt_transform",
-          &make_real_time_hamiltonian_simulation_qsvt_transform,
-          nb::arg("evolution_time"), nb::arg("target_error"),
-          nb::arg("degree_hint") = 0, nb::arg("normalization") = 1.0);
-  mod.def("make_imaginary_time_hamiltonian_simulation_qsvt_transform",
-          &make_imaginary_time_hamiltonian_simulation_qsvt_transform,
-          nb::arg("evolution_time"), nb::arg("target_error"),
-          nb::arg("degree_hint") = 0, nb::arg("normalization") = 1.0);
 
   auto qsvt_obj = mod.attr("qsvt");
   auto qsvt = nb::borrow<nb::module_>(qsvt_obj.ptr());
@@ -476,28 +268,6 @@ that user-supplied or externally generated phases are intended to implement.)")
       },
       nb::arg("phases"), nb::arg("convention") = qsvt_phase_convention::qsvt,
       R"(Construct a host-side polynomial response from QSVT/QSP phases.)");
-  qsvt.def(
-      "phases_to_poly",
-      [](const qsvt_phase_sequence &phases, qsvt_phase_convention convention) {
-        std::vector<double> phase_data = phases.data();
-        return nb::cpp_function(
-            [phase_data = std::move(phase_data), convention](double x) {
-              return evaluate_qsvt_response(phase_data, x, convention).value;
-            });
-      },
-      nb::arg("phases"), nb::arg("convention") = qsvt_phase_convention::qsvt,
-      R"(Construct a host-side polynomial response from a phase sequence.)");
-  qsvt.def(
-      "phases_to_poly",
-      [](const qsvt_plan &plan, qsvt_phase_convention convention) {
-        std::vector<double> phase_data = plan.phase_data();
-        return nb::cpp_function(
-            [phase_data = std::move(phase_data), convention](double x) {
-              return evaluate_qsvt_response(phase_data, x, convention).value;
-            });
-      },
-      nb::arg("plan"), nb::arg("convention") = qsvt_phase_convention::qsvt,
-      R"(Construct a host-side polynomial response from a QSVT plan.)");
   qsvt.def(
       "estimate_poly_error",
       [](const std::function<std::complex<double>(double)> &poly,

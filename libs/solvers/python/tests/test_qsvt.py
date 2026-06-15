@@ -398,12 +398,12 @@ def test_qsvt_hamiltonian_simulation_sequence_matches_explicit_loop(
     assert encoding.term_count == len(terms)
 
     kernel_data = _kernel_data(encoding)
-    cos_plan = solvers.make_qsvt_plan(_QSVT_COS_PHASES)
-    sin_plan = solvers.make_qsvt_plan(_QSVT_SIN_PHASES)
-    cos_phases = list(cos_plan.phase_data)
-    sin_phases = list(sin_plan.phase_data)
-    cos_walk_directions = list(cos_plan.walk_direction_data)
-    sin_walk_directions = list(sin_plan.walk_direction_data)
+    cos_sequence = solvers.qsvt.phase_sequence(_QSVT_COS_PHASES)
+    sin_sequence = solvers.qsvt.phase_sequence(_QSVT_SIN_PHASES)
+    cos_phases = cos_sequence.phase_data
+    sin_phases = sin_sequence.phase_data
+    cos_walk_directions = cos_sequence.walk_direction_data
+    sin_walk_directions = sin_sequence.walk_direction_data
 
     quantum_cos_state = _run_qsvt_good_component(initial_state, num_system,
                                                  encoding.num_ancilla,
@@ -472,14 +472,16 @@ def test_qsppack_generated_phases_validate_device_sequence_and_exact_response(
 
     kernel_data = _kernel_data(encoding)
     initial_state = cudaq.State.from_data(initial_ket)
-    cos_walk_directions = [0] * (len(cos_phases) - 1)
-    sin_walk_directions = [0] * (len(sin_phases) - 1)
+    cos_sequence = solvers.qsvt.phase_sequence(
+        _qsp_to_projector_phases(cos_phases))
+    sin_sequence = solvers.qsvt.phase_sequence(
+        _qsp_to_projector_phases(sin_phases))
     quantum_cos_state = _run_qsvt_good_component(
         initial_state, num_system, encoding.num_ancilla,
-        _qsp_to_projector_phases(cos_phases), cos_walk_directions, kernel_data)
+        cos_sequence.phase_data, cos_sequence.walk_direction_data, kernel_data)
     quantum_sin_state = _run_qsvt_good_component(
         initial_state, num_system, encoding.num_ancilla,
-        _qsp_to_projector_phases(sin_phases), sin_walk_directions, kernel_data)
+        sin_sequence.phase_data, sin_sequence.walk_direction_data, kernel_data)
 
     quantum_cos_state *= np.exp(-1.0j * np.sum(cos_phases))
     quantum_sin_state *= np.exp(-1.0j * np.sum(sin_phases))
@@ -515,79 +517,66 @@ def test_qsppack_generated_phases_validate_device_sequence_and_exact_response(
     assert qsp_fidelity == pytest.approx(1.0, abs=1e-10)
 
 
-def test_qsvt_phase_sequence_and_walk_policy():
-    """Validate host-side phase-sequence and walk-policy metadata helpers."""
+def test_qsvt_phase_sequence_helper():
+    """Validate the Python-facing QSVT sequence helper.
 
-    phases = solvers.make_qsvt_phase_sequence([0.1, -0.2, 0.3])
-    assert isinstance(phases, solvers.QSVTPhaseSequence)
-    assert len(phases) == 3
-    assert phases.size == 3
-    assert phases.degree == 2
-    assert phases.phases == pytest.approx([0.1, -0.2, 0.3])
-    assert phases.data() == pytest.approx([0.1, -0.2, 0.3])
-    assert phases[1] == pytest.approx(-0.2)
+    The public Python API should hand kernels plain phase and walk-direction
+    arrays without exposing the lower-level C++ planning structs. This test
+    checks default, custom, and alternating walk-direction layouts.
+    """
 
-    assert solvers.qsvt_polynomial_degree(3) == 2
-    assert solvers.qsvt_walk_direction_code(
-        solvers.QSVTWalkDirection.forward) == 0
-    assert solvers.qsvt_walk_direction_code(
-        solvers.QSVTWalkDirection.adjoint) == 1
+    sequence = solvers.qsvt.phase_sequence([0.1, -0.2, 0.3])
+    assert isinstance(sequence, solvers.qsvt.PhaseSequence)
+    assert sequence.degree == 2
+    assert sequence.phase_data == pytest.approx([0.1, -0.2, 0.3])
+    assert sequence.walk_direction_data == [solvers.qsvt.FORWARD] * 2
+    assert sequence.kernel_data()["phases"] == pytest.approx([0.1, -0.2, 0.3])
+    assert sequence.kernel_data()["walk_directions"] == [solvers.qsvt.FORWARD
+                                                        ] * 2
 
-    policy = solvers.make_alternating_qsvt_sequence_policy(
-        3, solvers.QSVTWalkDirection.adjoint)
-    assert isinstance(policy, solvers.QSVTSequencePolicy)
-    assert len(policy) == 3
-    assert policy.degree == 3
-    assert policy.walk_directions == [1, 0, 1]
-    assert policy.walk_direction_data() == [1, 0, 1]
-    assert policy[0] == 1
-    assert solvers.is_valid_qsvt_sequence_policy(3, policy)
+    custom = solvers.qsvt.phase_sequence([0.1, -0.2, 0.3],
+                                         walk_directions=["forward", "adjoint"])
+    assert custom.walk_direction_data == [
+        solvers.qsvt.FORWARD, solvers.qsvt.ADJOINT
+    ]
 
-    custom = solvers.make_custom_qsvt_sequence_policy([
-        solvers.QSVTWalkDirection.forward,
-        solvers.QSVTWalkDirection.adjoint,
-    ])
-    assert custom.walk_directions == [0, 1]
+    alternating = solvers.qsvt.phase_sequence(
+        [0.1, -0.2, 0.3, -0.4],
+        walk_directions=solvers.qsvt.alternating_walk_directions(
+            3, first="adjoint"))
+    assert alternating.walk_direction_data == [
+        solvers.qsvt.ADJOINT, solvers.qsvt.FORWARD, solvers.qsvt.ADJOINT
+    ]
+
+    qsp_sequence = solvers.qsvt.phase_sequence([0.1, -0.2], convention="qsp")
+    assert qsp_sequence.convention == solvers.qsvt.PhaseConvention.qsp
 
 
-def test_qsvt_plan_and_transform_descriptor():
-    """Validate host-side QSVT plan and transform descriptor metadata."""
+def test_qsvt_python_layer_hides_cpp_planning_objects():
+    """Keep C++ QSVT plan/descriptor types out of the public Python surface."""
 
-    policy = solvers.make_qsvt_sequence_policy(
-        2, solvers.QSVTWalkDirection.adjoint)
-    plan = solvers.make_qsvt_plan([0.1, -0.2, 0.3], policy)
-
-    assert isinstance(plan, solvers.QSVTPlan)
-    assert plan.num_phases == 3
-    assert plan.degree == 2
-    assert plan.phase_data == pytest.approx([0.1, -0.2, 0.3])
-    assert plan.walk_direction_data == [1, 1]
-    assert plan.kernel_data()["phases"] == pytest.approx([0.1, -0.2, 0.3])
-    assert plan.kernel_data()["walk_directions"] == [1, 1]
-
-    descriptor = solvers.make_real_time_hamiltonian_simulation_qsvt_transform(
-        evolution_time=0.75,
-        target_error=1e-4,
-        degree_hint=2,
-        normalization=1.5)
-    assert (descriptor.kind ==
-            solvers.QSVTTransformKind.real_time_hamiltonian_simulation)
-    assert descriptor.phase_convention == solvers.QSVTPhaseConvention.qsvt
-    assert descriptor.evolution_time == pytest.approx(0.75)
-    assert descriptor.target_error == pytest.approx(1e-4)
-    assert descriptor.degree_hint == 2
-    assert descriptor.normalization == pytest.approx(1.5)
-    assert solvers.is_valid_qsvt_transform_descriptor(descriptor)
-
-    transform_plan = solvers.make_qsvt_transform_plan(descriptor,
-                                                      [0.1, -0.2, 0.3], policy)
-    assert isinstance(transform_plan, solvers.QSVTTransformPlan)
-    assert transform_plan.num_phases == 3
-    assert transform_plan.degree == 2
-    assert transform_plan.phase_data == pytest.approx([0.1, -0.2, 0.3])
-    assert transform_plan.walk_direction_data == [1, 1]
-    assert transform_plan.descriptor.evolution_time == pytest.approx(0.75)
-    assert transform_plan.plan.degree == 2
+    hidden_names = [
+        "QSVTWalkDirection",
+        "QSVTTransformKind",
+        "QSVTResponse",
+        "QSVTResponseError",
+        "QSVTPhaseSequence",
+        "QSVTSequencePolicy",
+        "QSVTPlan",
+        "QSVTTransformDescriptor",
+        "QSVTTransformPlan",
+        "make_qsvt_phase_sequence",
+        "make_qsvt_sequence_policy",
+        "make_custom_qsvt_sequence_policy",
+        "make_alternating_qsvt_sequence_policy",
+        "make_qsvt_plan",
+        "make_qsvt_transform_plan",
+        "make_linear_solve_qsvt_transform",
+        "make_real_time_hamiltonian_simulation_qsvt_transform",
+        "make_imaginary_time_hamiltonian_simulation_qsvt_transform",
+    ]
+    for name in hidden_names:
+        assert not hasattr(solvers, name)
 
 
 def test_qsvt_response_evaluation_and_error_estimation():
@@ -599,8 +588,8 @@ def test_qsvt_response_evaluation_and_error_estimation():
     assert response.real == pytest.approx(0.5)
     assert response.imag == pytest.approx(0.0)
 
-    qsp_poly = solvers.qsvt.phases_to_poly([0.1, -0.2],
-                                           solvers.QSVTPhaseConvention.qsp)
+    qsp_sequence = solvers.qsvt.phase_sequence([0.1, -0.2], convention="qsp")
+    qsp_poly = solvers.qsvt.phases_to_poly(qsp_sequence)
     qsp_response = qsp_poly(0.5)
     assert isinstance(qsp_response, complex)
 
@@ -613,22 +602,24 @@ def test_qsvt_response_evaluation_and_error_estimation():
                                              lambda x: complex(x, 0.0),
                                              domain=(-1.0, 1.0),
                                              num_points=5)
-    assert isinstance(error, solvers.QSVTResponseError)
+    assert isinstance(error, solvers.qsvt.PolyError)
     assert error.max_abs_error == pytest.approx(0.0, abs=1e-12)
     assert error.rms_error == pytest.approx(0.0, abs=1e-12)
     assert error.num_samples == 5
 
 
 def test_qsvt_validation_errors():
-    """Confirm invalid host-side QSVT inputs are rejected."""
+    """Confirm invalid Python-facing QSVT inputs are rejected."""
 
-    assert not solvers.is_valid_qsvt_phase_sequence([])
-    with pytest.raises(Exception):
-        solvers.validate_qsvt_phase_sequence([])
-    with pytest.raises(Exception):
-        solvers.qsvt_polynomial_degree(0)
-    with pytest.raises(Exception):
-        solvers.make_qsvt_plan([0.1, 0.2], solvers.QSVTSequencePolicy([0, 1]))
-    with pytest.raises(Exception):
-        solvers.make_linear_solve_qsvt_transform(condition_number=0.5,
-                                                 target_error=1e-3)
+    with pytest.raises(ValueError):
+        solvers.qsvt.phase_sequence([])
+    with pytest.raises(ValueError):
+        solvers.qsvt.phase_sequence([0.1, 0.2], walk_directions=[0, 1])
+    with pytest.raises(ValueError):
+        solvers.qsvt.phase_sequence([0.1, 0.2], walk_directions=["sideways"])
+    with pytest.raises(ValueError):
+        solvers.qsvt.phase_sequence([0.1, 0.2], convention="phaseish")
+    with pytest.raises(ValueError):
+        solvers.qsvt.forward_walk_directions(-1)
+    with pytest.raises(ValueError):
+        solvers.qsvt.alternating_walk_directions(1, first="sideways")
