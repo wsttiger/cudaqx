@@ -6,7 +6,13 @@
 # This source code and the accompanying materials are made available under     #
 # the terms of the Apache License 2.0 which accompanies this distribution.     #
 # ============================================================================ #
-"""Tests for QSVT host-side Python bindings."""
+"""Tests for PauliLCU, qubitization, and QSVT Python primitives.
+
+The tests are organized by abstraction layer. The lower-level tests validate the
+PauliLCU metadata, block encoding, and qubitization walk. The QSVT tests then
+check that the public phase-sequence API composes those primitives correctly and
+that QSPPACK-generated Hamiltonian-simulation phases flow through the same API.
+"""
 
 import os
 import sys
@@ -141,62 +147,6 @@ def _zero_ancilla_component(full_state, num_system, num_ancilla):
     return state_vector[:system_dimension].copy()
 
 
-def _signal_projector_phase_matrix(phase,
-                                   signal_dimension,
-                                   system_dimension,
-                                   phase_scale=1.0):
-    signal_phase = np.ones(signal_dimension, dtype=np.complex128)
-    signal_phase[0] = np.exp(1.0j * phase_scale * phase)
-    return np.kron(np.diag(signal_phase),
-                   np.eye(system_dimension, dtype=np.complex128))
-
-
-def _numpy_pauli_lcu_qsvt_good_component(terms,
-                                         num_qubits,
-                                         initial_ket,
-                                         phases,
-                                         walk_directions,
-                                         normalization,
-                                         phase_scale=1.0):
-    system_dimension = 1 << num_qubits
-    signal_dimension = len(terms)
-    assert signal_dimension == 1 << int(np.log2(signal_dimension))
-    assert len(phases) == len(walk_directions) + 1
-
-    coefficients = np.array([coefficient for coefficient, _ in terms],
-                            dtype=np.float64)
-    beta = np.sqrt(np.abs(coefficients) / normalization).astype(np.complex128)
-    signal_reflection = (np.eye(signal_dimension, dtype=np.complex128) -
-                         2.0 * np.outer(beta, beta.conj()))
-    reflection = np.kron(signal_reflection,
-                         np.eye(system_dimension, dtype=np.complex128))
-
-    select = np.zeros((signal_dimension * system_dimension,
-                       signal_dimension * system_dimension),
-                      dtype=np.complex128)
-    for term_index, (coefficient, paulis) in enumerate(terms):
-        block_start = term_index * system_dimension
-        block_end = block_start + system_dimension
-        sign = 1.0 if coefficient >= 0.0 else -1.0
-        pauli_matrix = _pauli_sum_matrix([(1.0, paulis)], num_qubits)
-        select[block_start:block_end,
-               block_start:block_end] = sign * pauli_matrix
-
-    forward_walk = reflection @ select
-    adjoint_walk = select @ reflection
-
-    state = np.kron(beta, initial_ket)
-    state = _signal_projector_phase_matrix(
-        phases[0], signal_dimension, system_dimension, phase_scale) @ state
-
-    for direction, phase in zip(walk_directions, phases[1:]):
-        state = (adjoint_walk if direction == 1 else forward_walk) @ state
-        state = _signal_projector_phase_matrix(
-            phase, signal_dimension, system_dimension, phase_scale) @ state
-
-    return beta.conj() @ state.reshape(signal_dimension, system_dimension)
-
-
 def _run_qsvt_good_component(initial_state, num_system, num_ancilla, phases,
                              walk_directions, kernel_data):
     angles, term_controls, term_ops, term_lengths, term_signs = kernel_data
@@ -292,6 +242,8 @@ def _assert_good_component_matches(good_component, expected_component):
 
 
 def test_pauli_lcu_metadata_binding():
+    """Validate host-side PauliLCU metadata and flattened kernel data access."""
+
     h = 2.0 + 0.5 * spin.z(0) - 0.25 * spin.x(0)
     encoding = solvers.PauliLCU(h, num_qubits=1)
 
@@ -312,6 +264,8 @@ def test_pauli_lcu_metadata_binding():
 
 
 def test_pauli_lcu_block_encoding_device_interop():
+    """Smoke-test that public LCU and qubitization helpers compile in kernels."""
+
     h = 0.6 * spin.x(0) + 0.8 * spin.z(0)
     encoding = solvers.PauliLCU(h, num_qubits=1)
 
@@ -343,6 +297,12 @@ def test_pauli_lcu_block_encoding_device_interop():
 
 
 def test_pauli_lcu_block_encoding_matches_numpy_good_subspace(qpp_cpu_target):
+    """Check that PauliLCU block encoding produces H|psi>/alpha.
+
+    The CUDA-Q statevector is only used in the test: we postselect the all-zero
+    ancilla component and compare it with dense NumPy multiplication.
+    """
+
     num_system = 4
     hamiltonian = _four_qubit_hamiltonian()
     hamiltonian_matrix = _pauli_sum_matrix(_FOUR_QUBIT_TERMS, num_system)
@@ -375,6 +335,8 @@ def test_pauli_lcu_block_encoding_matches_numpy_good_subspace(qpp_cpu_target):
 
 def test_pauli_lcu_qubitization_walk_matches_numpy_good_subspace(
         qpp_cpu_target):
+    """Check one qubitization walk against dense Hamiltonian action."""
+
     num_system = 4
     hamiltonian = _four_qubit_hamiltonian()
     hamiltonian_matrix = _pauli_sum_matrix(_FOUR_QUBIT_TERMS, num_system)
@@ -415,6 +377,14 @@ def test_pauli_lcu_qubitization_walk_matches_numpy_good_subspace(
 
 def test_qsvt_hamiltonian_simulation_sequence_matches_explicit_loop(
         qpp_cpu_target):
+    """Validate the public QSVT sequence helper against an explicit circuit.
+
+    This does not test phase-generation accuracy. The fixed phases are a stable
+    fixture used to ensure apply_phase_sequence() is equivalent to manually
+    composing signal phases, PauliLCU block encodings, and zero-signal
+    reflections.
+    """
+
     num_system = 4
     terms = _pauli_string_terms_to_indexed_terms(
         _QSVT_HAMILTONIAN_SIMULATION_TERMS)
@@ -468,6 +438,15 @@ def test_qsvt_hamiltonian_simulation_sequence_matches_explicit_loop(
 
 def test_qsppack_generated_phases_validate_device_sequence_and_exact_response(
         qpp_cpu_target):
+    """Run a small QSPPACK Hamiltonian-simulation flow end to end.
+
+    QSPPACK provides cos/sin phase sequences. The test converts those phases to
+    the projector-phase convention used by apply_phase_sequence(), executes the
+    quantum circuit, and compares the resulting evolved state with exact dense
+    diagonalization. The scalar phases_to_poly() checks diagnose phase quality
+    separately from device execution.
+    """
+
     num_system = 4
     evolution_time = 0.8
     phase_generation_degree = 16
@@ -537,6 +516,8 @@ def test_qsppack_generated_phases_validate_device_sequence_and_exact_response(
 
 
 def test_qsvt_phase_sequence_and_walk_policy():
+    """Validate host-side phase-sequence and walk-policy metadata helpers."""
+
     phases = solvers.make_qsvt_phase_sequence([0.1, -0.2, 0.3])
     assert isinstance(phases, solvers.QSVTPhaseSequence)
     assert len(phases) == 3
@@ -570,6 +551,8 @@ def test_qsvt_phase_sequence_and_walk_policy():
 
 
 def test_qsvt_plan_and_transform_descriptor():
+    """Validate host-side QSVT plan and transform descriptor metadata."""
+
     policy = solvers.make_qsvt_sequence_policy(
         2, solvers.QSVTWalkDirection.adjoint)
     plan = solvers.make_qsvt_plan([0.1, -0.2, 0.3], policy)
@@ -608,6 +591,8 @@ def test_qsvt_plan_and_transform_descriptor():
 
 
 def test_qsvt_response_evaluation_and_error_estimation():
+    """Check classical phase-to-polynomial diagnostics used by QSVT tests."""
+
     poly = solvers.qsvt.phases_to_poly([0.0, 0.0])
     response = poly(0.5)
     assert isinstance(response, complex)
@@ -635,6 +620,8 @@ def test_qsvt_response_evaluation_and_error_estimation():
 
 
 def test_qsvt_validation_errors():
+    """Confirm invalid host-side QSVT inputs are rejected."""
+
     assert not solvers.is_valid_qsvt_phase_sequence([])
     with pytest.raises(Exception):
         solvers.validate_qsvt_phase_sequence([])
