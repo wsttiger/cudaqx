@@ -243,6 +243,30 @@ Args:
       "Apply repeated adjoint PauliLCU qubitization walk steps inside a "
       "CUDA-Q Python kernel.");
 
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, double>(
+      mod, "qsvt_primitives", "apply_signal_phase",
+      "Apply a QSVT projector phase to the all-zero signal state inside a "
+      "CUDA-Q Python kernel.");
+  cudaq::python::addDeviceKernelInterop<cudaq::qview<>, double>(
+      mod, "qsvt_primitives", "apply_qsp_signal_phase",
+      "Apply a QSP-style signal phase inside a CUDA-Q Python kernel.");
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &>(
+      mod, "qsvt_primitives", "apply_sequence",
+      "Apply a flattened PauliLCU QSVT phase/walk sequence inside a CUDA-Q "
+      "Python kernel.");
+  cudaq::python::addDeviceKernelInterop<
+      cudaq::qview<>, cudaq::qview<>, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<double> &,
+      const std::vector<int> &, const std::vector<int> &,
+      const std::vector<int> &, const std::vector<int> &>(
+      mod, "qsvt_primitives", "apply_qsp_sequence",
+      "Apply a flattened PauliLCU QSP phase/walk sequence inside a CUDA-Q "
+      "Python kernel.");
+
   // ============================================================================
   // QSVT HOST-SIDE PRIMITIVES
   // ============================================================================

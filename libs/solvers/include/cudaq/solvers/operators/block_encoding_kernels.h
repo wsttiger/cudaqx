@@ -103,3 +103,41 @@ apply_adjoint_walk_power(cudaq::qview<> ancilla, cudaq::qview<> system,
                          const std::vector<int> &term_signs, int power);
 
 } // namespace cudaq::solvers::qubitization
+
+namespace cudaq::solvers::qsvt_primitives {
+
+/// \pure_device_kernel
+///
+/// @brief Apply a QSVT projector phase to the all-zero signal state.
+__qpu__ void apply_signal_phase(cudaq::qview<> signal, double phase);
+
+/// \pure_device_kernel
+///
+/// @brief Apply a QSP-style signal phase to the all-zero signal state.
+__qpu__ void apply_qsp_signal_phase(cudaq::qview<> signal, double phase);
+
+/// \pure_device_kernel
+///
+/// @brief Apply a flattened PauliLCU QSVT phase/walk sequence.
+__qpu__ void apply_sequence(cudaq::qview<> signal, cudaq::qview<> system,
+                            const std::vector<double> &phases,
+                            const std::vector<int> &walk_directions,
+                            const std::vector<double> &state_prep_angles,
+                            const std::vector<int> &term_controls,
+                            const std::vector<int> &term_ops,
+                            const std::vector<int> &term_lengths,
+                            const std::vector<int> &term_signs);
+
+/// \pure_device_kernel
+///
+/// @brief Apply a flattened PauliLCU QSP phase/walk sequence.
+__qpu__ void apply_qsp_sequence(cudaq::qview<> signal, cudaq::qview<> system,
+                                const std::vector<double> &phases,
+                                const std::vector<int> &walk_directions,
+                                const std::vector<double> &state_prep_angles,
+                                const std::vector<int> &term_controls,
+                                const std::vector<int> &term_ops,
+                                const std::vector<int> &term_lengths,
+                                const std::vector<int> &term_signs);
+
+} // namespace cudaq::solvers::qsvt_primitives
