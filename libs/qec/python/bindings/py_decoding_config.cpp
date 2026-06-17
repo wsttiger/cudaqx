@@ -111,27 +111,6 @@ void bindDecodingConfig(nb::module_ &mod) {
                   &multi_error_lut_config::from_heterogeneous_map,
                   nb::arg("map"));
 
-  // pymatching_decoder_config
-  nb::class_<config::pymatching_decoder_config>(
-      mod_cfg, "pymatching_decoder_config", "PyMatching decoder configuration.")
-      .def(nb::init<>())
-      .def(
-          "__init__",
-          [](config::pymatching_decoder_config &self,
-             const cudaqx::heterogeneous_map &map) {
-            new (&self) pymatching_decoder_config(
-                pymatching_decoder_config::from_heterogeneous_map(map));
-          },
-          nb::arg("map"))
-      .def_rw("merge_strategy", &pymatching_decoder_config::merge_strategy)
-      .def_rw("error_rate_vec", &pymatching_decoder_config::error_rate_vec)
-      .def("to_heterogeneous_map",
-           &pymatching_decoder_config::to_heterogeneous_map,
-           nb::rv_policy::move)
-      .def_static("from_heterogeneous_map",
-                  &pymatching_decoder_config::from_heterogeneous_map,
-                  nb::arg("map"));
-
   // trt_decoder_config
   nb::class_<config::trt_decoder_config>(mod_cfg, "trt_decoder_config",
                                          "TensorRT decoder configuration.")
@@ -162,16 +141,14 @@ void bindDecodingConfig(nb::module_ &mod) {
       .def_prop_rw(
           "global_decoder_params",
           [](const trt_decoder_config &self)
-              -> std::optional<pymatching_decoder_config> {
-            if (std::holds_alternative<pymatching_decoder_config>(
+              -> std::optional<pymatching_config> {
+            if (std::holds_alternative<pymatching_config>(
                     self.global_decoder_params)) {
-              return std::get<pymatching_decoder_config>(
-                  self.global_decoder_params);
+              return std::get<pymatching_config>(self.global_decoder_params);
             }
             return std::nullopt;
           },
-          [](trt_decoder_config &self,
-             std::optional<pymatching_decoder_config> value) {
+          [](trt_decoder_config &self, std::optional<pymatching_config> value) {
             if (value.has_value()) {
               self.global_decoder_params = value.value();
             } else {

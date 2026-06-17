@@ -190,32 +190,14 @@ single_error_lut_config single_error_lut_config::from_heterogeneous_map(
   return config;
 }
 
-// ------ pymatching_decoder_config ------
-cudaqx::heterogeneous_map
-pymatching_decoder_config::to_heterogeneous_map() const {
-  cudaqx::heterogeneous_map config_map;
-  INSERT_ARG(merge_strategy);
-  INSERT_ARG(error_rate_vec);
-  return config_map;
-}
-
-pymatching_decoder_config pymatching_decoder_config::from_heterogeneous_map(
-    const cudaqx::heterogeneous_map &map) {
-  pymatching_decoder_config config;
-  GET_ARG(merge_strategy);
-  GET_ARG(error_rate_vec);
-  return config;
-}
-
 cudaqx::heterogeneous_map global_decoder_config_to_heterogeneous_map(
     const global_decoder_config &global_decoder_params) {
   if (std::holds_alternative<std::monostate>(global_decoder_params)) {
     return cudaqx::heterogeneous_map();
   }
 
-  if (std::holds_alternative<pymatching_decoder_config>(
-          global_decoder_params)) {
-    return std::get<pymatching_decoder_config>(global_decoder_params)
+  if (std::holds_alternative<pymatching_config>(global_decoder_params)) {
+    return std::get<pymatching_config>(global_decoder_params)
         .to_heterogeneous_map();
   }
 
@@ -230,7 +212,7 @@ global_decoder_config global_decoder_config_from_heterogeneous_map(
         "global_decoder_params currently supports only pymatching.");
   }
 
-  return pymatching_decoder_config::from_heterogeneous_map(map);
+  return pymatching_config::from_heterogeneous_map(map);
 }
 
 // ------ pymatching_config ------
@@ -278,8 +260,8 @@ cudaqx::heterogeneous_map trt_decoder_config::to_heterogeneous_map() const {
   }
   // Note: when global_decoder_params is monostate we intentionally emit
   // nothing, even if global_decoder is set. Inventing an empty params map here
-  // would round-trip back as a default pymatching_decoder_config, mutating the
-  // config. Any runtime need for an empty params map is handled in
+  // would round-trip back as a default pymatching_config, mutating the config.
+  // Any runtime need for an empty params map is handled in
   // prepare_decoder_params (realtime_decoding.cpp), not in serialization.
 
   return config_map;
@@ -300,13 +282,16 @@ trt_decoder_config trt_decoder_config::from_heterogeneous_map(
     if (!config.global_decoder.has_value())
       throw std::runtime_error(
           "global_decoder_params present but global_decoder is not set.");
+    if (config.global_decoder.value() != "pymatching")
+      throw std::runtime_error(
+          "global_decoder_params currently supports only pymatching.");
     try {
       config.global_decoder_params =
           map.get<global_decoder_config>("global_decoder_params");
     } catch (...) {
       try {
         config.global_decoder_params =
-            map.get<pymatching_decoder_config>("global_decoder_params");
+            map.get<pymatching_config>("global_decoder_params");
       } catch (...) {
         auto nested_map =
             map.get<cudaqx::heterogeneous_map>("global_decoder_params");
@@ -451,16 +436,6 @@ struct MappingTraits<cudaq::qec::decoding::config::single_error_lut_config> {
 };
 
 template <>
-struct MappingTraits<cudaq::qec::decoding::config::pymatching_decoder_config> {
-  static void
-  mapping(IO &io,
-          cudaq::qec::decoding::config::pymatching_decoder_config &config) {
-    io.mapOptional("merge_strategy", config.merge_strategy);
-    io.mapOptional("error_rate_vec", config.error_rate_vec);
-  }
-};
-
-template <>
 struct MappingTraits<cudaq::qec::decoding::config::global_decoder_config> {
   static void
   mapping(IO &io, cudaq::qec::decoding::config::global_decoder_config &config) {
@@ -471,16 +446,16 @@ struct MappingTraits<cudaq::qec::decoding::config::global_decoder_config> {
         return;
       }
 
-      auto &pymatching_config = std::get<pymatching_decoder_config>(config);
-      io.mapOptional("merge_strategy", pymatching_config.merge_strategy);
-      io.mapOptional("error_rate_vec", pymatching_config.error_rate_vec);
+      auto &params = std::get<pymatching_config>(config);
+      io.mapOptional("merge_strategy", params.merge_strategy);
+      io.mapOptional("error_rate_vec", params.error_rate_vec);
       return;
     }
 
-    pymatching_decoder_config pymatching_config;
-    io.mapOptional("merge_strategy", pymatching_config.merge_strategy);
-    io.mapOptional("error_rate_vec", pymatching_config.error_rate_vec);
-    config = std::move(pymatching_config);
+    pymatching_config params;
+    io.mapOptional("merge_strategy", params.merge_strategy);
+    io.mapOptional("error_rate_vec", params.error_rate_vec);
+    config = std::move(params);
   }
 };
 
@@ -508,10 +483,10 @@ struct MappingTraits<cudaq::qec::decoding::config::trt_decoder_config> {
     // Emit global_decoder_params only when it actually holds params. Mapping it
     // unconditionally on output writes an empty `global_decoder_params: {}` for
     // the monostate case, which deserializes back into a default
-    // pymatching_decoder_config -- mutating a monostate config across a YAML
+    // pymatching_config -- mutating a monostate config across a YAML
     // round-trip. On input we always map it: an absent key leaves the variant
     // at its monostate default (mapOptional skips the nested mapping), and a
-    // present key is parsed into pymatching_decoder_config.
+    // present key is parsed into pymatching_config.
     if (!io.outputting() ||
         !std::holds_alternative<std::monostate>(config.global_decoder_params))
       io.mapOptional("global_decoder_params", config.global_decoder_params);

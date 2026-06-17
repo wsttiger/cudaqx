@@ -94,19 +94,6 @@ struct single_error_lut_config {
   from_heterogeneous_map(const cudaqx::heterogeneous_map &map);
 };
 
-struct pymatching_decoder_config {
-  std::optional<std::string> merge_strategy;
-  std::optional<std::vector<double>> error_rate_vec;
-
-  bool operator==(const pymatching_decoder_config &) const = default;
-
-  __attribute__((visibility("default"))) cudaqx::heterogeneous_map
-  to_heterogeneous_map() const;
-
-  __attribute__((visibility("default"))) static pymatching_decoder_config
-  from_heterogeneous_map(const cudaqx::heterogeneous_map &map);
-};
-
 struct pymatching_config {
   std::optional<std::vector<double>> error_rate_vec;
   std::optional<std::string> merge_strategy;
@@ -124,8 +111,7 @@ struct pymatching_config {
 // decoder. Other global decoder plugins may be constructed through lower-level
 // APIs when their parameters are supplied directly, but they are not serialized
 // by this config variant yet.
-using global_decoder_config =
-    std::variant<std::monostate, pymatching_decoder_config>;
+using global_decoder_config = std::variant<std::monostate, pymatching_config>;
 
 struct trt_decoder_config {
   std::optional<std::string> onnx_load_path;
