@@ -87,28 +87,28 @@ echo "Building CUDA-Q."
 cd /cuda-quantum
 
 CUDAQ_PATCH='diff --git a/CMakeLists.txt b/CMakeLists.txt
-index dc906f615..5d591ea06 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -682,7 +682,7 @@ if(CUDAQ_BUILD_TESTS)
+@@ -774,8 +774,8 @@ if(CUDAQ_BUILD_TESTS)
  endif()
 
- if (CUDAQ_ENABLE_PYTHON)
+ if("python" IN_LIST CUDAQ_ENABLE_PROJECTS)
 -  find_package(Python 3 COMPONENTS Interpreter Development)
+-  find_package(Python3 COMPONENTS Interpreter Development)
 +  find_package(Python 3 COMPONENTS Interpreter Development.Module)
++  find_package(Python3 COMPONENTS Interpreter Development.Module)
 
-   # Apply specific patch to pybind11 for our documentation.
-   # Only apply the patch if not already applied.
+   add_subdirectory(tpls/nanobind)
+
 diff --git a/python/runtime/cudaq/domains/plugins/CMakeLists.txt b/python/runtime/cudaq/domains/plugins/CMakeLists.txt
-index 675919e25..7de85b815 100644
 --- a/python/runtime/cudaq/domains/plugins/CMakeLists.txt
 +++ b/python/runtime/cudaq/domains/plugins/CMakeLists.txt
-@@ -31,7 +31,7 @@ else()
-   endif()
+@@ -33,7 +33,7 @@ if (SKBUILD)
+ else()
    target_link_libraries(cudaq-pyscf
      PRIVATE
--      Python::Python pybind11::pybind11
-+      Python::Module pybind11::pybind11
+-      nanobind-static Python3::Python
++      nanobind-static Python3::Module
        cudaq-chemistry cudaq-operator cudaq cudaq-py-utils cudaq-platform-default)
  endif()
 '
@@ -118,4 +118,3 @@ echo "$CUDAQ_PATCH" | git apply --verbose
 $python -m venv --system-site-packages .venv
 source .venv/bin/activate
 CUDAQ_BUILD_TESTS=FALSE bash scripts/build_cudaq.sh -v
-

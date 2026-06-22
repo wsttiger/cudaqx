@@ -110,17 +110,17 @@ echo "Building MLIR bindings for ${python}" && \
 CUDAQ_PATCH='diff --git a/CMakeLists.txt b/CMakeLists.txt
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -709,8 +709,8 @@ if(CUDAQ_BUILD_TESTS)
+@@ -774,8 +774,8 @@ if(CUDAQ_BUILD_TESTS)
  endif()
 
- if (CUDAQ_ENABLE_PYTHON)
+ if("python" IN_LIST CUDAQ_ENABLE_PROJECTS)
 -  find_package(Python 3 COMPONENTS Interpreter Development)
 -  find_package(Python3 COMPONENTS Interpreter Development)
 +  find_package(Python 3 COMPONENTS Interpreter Development.Module)
 +  find_package(Python3 COMPONENTS Interpreter Development.Module)
 
-   # Apply specific patch to pybind11 for our documentation.
-   # Only apply the patch if not already applied.
+   add_subdirectory(tpls/nanobind)
+
 diff --git a/python/runtime/cudaq/domains/plugins/CMakeLists.txt b/python/runtime/cudaq/domains/plugins/CMakeLists.txt
 --- a/python/runtime/cudaq/domains/plugins/CMakeLists.txt
 +++ b/python/runtime/cudaq/domains/plugins/CMakeLists.txt
@@ -134,9 +134,18 @@ diff --git a/python/runtime/cudaq/domains/plugins/CMakeLists.txt b/python/runtim
  endif()
 '
 
-echo "$CUDAQ_PATCH" | git apply --verbose
+# Apply the CMake Python-component patch (Development -> Development.Module).
+# Strict apply first (matches the canonical pinned cuda-quantum tree); fall back
+# to a reduced-context apply (-C1) for refs whose surrounding CMake context has
+# shifted -- e.g. after upstream cuda-quantum PR #4698 restructured the
+# python/nanobind block, which the shared-ring branch (NVIDIA/cuda-quantum#4712)
+# carries via its upstream merge.  Both paths are non-interactive; do NOT use
+# `patch`, which can hang on a "File to patch" prompt in CI.
+if ! echo "$CUDAQ_PATCH" | git apply --verbose; then
+  echo "build_cudaq: strict git apply failed; retrying with -C1 (reduced context)" >&2
+  echo "$CUDAQ_PATCH" | git apply --verbose -C1
+fi
 
 $python -m venv --system-site-packages .venv
 source .venv/bin/activate
 CUDAQ_BUILD_TESTS=FALSE bash scripts/build_cudaq.sh -v ${cudaq_ninja_jobs_arg}
-
