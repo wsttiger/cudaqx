@@ -251,7 +251,7 @@ void bindCode(nb::module_ &mod) {
                     ? nb::cast<nb::module_>(mod.attr("qecrt"))
                     : mod.def_submodule("qecrt");
 
-  nb::class_<qec::two_qubit_depolarization>(
+  nb::class_<qec::two_qubit_depolarization, cudaq::kraus_channel>(
       qecmod, "TwoQubitDepolarization",
       R"#(Models the decoherence of the each qubit independently in a two-qubit operation into a mixture "
       of the computational basis states, `|0>` and `|1>`.)#")
@@ -259,7 +259,7 @@ void bindCode(nb::module_ &mod) {
            "Initialize the `TwoQubitDepolarizationChannel` with the provided "
            "`probability`.");
 
-  nb::class_<qec::two_qubit_bitflip>(
+  nb::class_<qec::two_qubit_bitflip, cudaq::kraus_channel>(
       qecmod, "TwoQubitBitFlip",
       R"#(Models independent bit flip errors after a two-qubit operation.)#")
       .def(nb::init<double>(), nb::arg("probability"),
