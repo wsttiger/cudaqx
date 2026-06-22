@@ -36,9 +36,7 @@ cudaqx::tensor<uint8_t> make_H(std::size_t num_detectors = 4,
   return H;
 }
 
-cudaqx::heterogeneous_map make_params() {
-  return cudaqx::heterogeneous_map{};
-}
+cudaqx::heterogeneous_map make_params() { return cudaqx::heterogeneous_map{}; }
 
 } // namespace
 
@@ -75,8 +73,8 @@ TEST(ChromobiusDecoder, checkPcmInputThrows) {
 }
 
 TEST(ChromobiusDecoder, checkMalformedDemThrows) {
-  EXPECT_THROW((void)cudaq::qec::decoder::get(
-                   "chromobius", std::string_view{"not a valid DEM"},
-                   make_params()),
-               std::runtime_error);
+  EXPECT_THROW(
+      (void)cudaq::qec::decoder::get(
+          "chromobius", std::string_view{"not a valid DEM"}, make_params()),
+      std::runtime_error);
 }

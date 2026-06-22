@@ -829,9 +829,9 @@ void bindDecoder(nb::module_ &mod) {
 
   qecmod.def(
       "get_decoder",
-      [get_decoder_from_dem_text, cast_decoder](const std::string &name,
-                                                nb::object H,
-                                                nb::kwargs options) -> nb::object {
+      [get_decoder_from_dem_text,
+       cast_decoder](const std::string &name, nb::object H,
+                     nb::kwargs options) -> nb::object {
         if (nb::isinstance<nb::str>(H)) {
           return get_decoder_from_dem_text(name, nb::cast<std::string>(H),
                                            options);
