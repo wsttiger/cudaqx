@@ -33,12 +33,8 @@ __qpu__ void
 enqueue_syndromes(std::uint64_t decoder_id,
                   const std::vector<cudaq::measure_result> &syndromes,
                   std::uint64_t tag) {
-#ifdef CUDAQ_LIBRARY_MODE
   cudaq::device_call(simulation_enqueue_syndromes, decoder_id,
-                     cudaq::measure_result::to_bool_vector(syndromes), tag);
-#else
-  cudaq::device_call(simulation_enqueue_syndromes, decoder_id, syndromes, tag);
-#endif
+                     cudaq::to_bools(syndromes), tag);
 }
 
 __qpu__ void enqueue_syndromes_test(std::uint64_t decoder_id,

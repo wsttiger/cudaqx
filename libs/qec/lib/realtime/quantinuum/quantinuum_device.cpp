@@ -22,7 +22,7 @@ enqueue_syndromes(std::uint64_t decoder_id,
                   std::uint64_t tag) {
   uint64_t syndrome_size = syndromes.size();
   // Discriminate first, then bit-pack into the `uint64` wire format.
-  uint64_t syndrome = cudaq::to_integer(syndromes);
+  uint64_t syndrome = cudaq::to_integer(cudaq::to_bools(syndromes));
   cudaq::device_call(enqueue_syndromes_ui64, decoder_id, syndrome_size,
                      syndrome, tag);
 }
