@@ -8,8 +8,6 @@
 
 from pathlib import Path
 
-import numpy as np
-
 import cudaq_qec as qec
 
 
@@ -49,13 +47,14 @@ def _read_shots() -> list[tuple[str, list[float], list[float]]]:
     return shots
 
 
+def _as_list(values):
+    return values.tolist() if hasattr(values, "tolist") else list(values)
+
+
 def _make_decoder():
     dem = _read_dem()
     shots = _read_shots()
-    num_detectors = len(shots[0][1])
-    num_observables = len(shots[0][2])
-    H = np.zeros((num_detectors, num_observables), dtype=np.uint8)
-    return qec.get_decoder("chromobius", H, dem=dem), shots
+    return qec.get_decoder("chromobius", dem), shots
 
 
 def test_chromobius_matches_upstream_predict_reference():
@@ -63,7 +62,8 @@ def test_chromobius_matches_upstream_predict_reference():
     for name, syndrome, expected in shots:
         result = decoder.decode(syndrome)
         assert result.converged, name
-        assert result.result == expected, (name, result.result, expected)
+        actual = _as_list(result.result)
+        assert actual == expected, (name, actual, expected)
 
 
 def test_chromobius_batch_matches_upstream_predict_reference():
@@ -71,5 +71,5 @@ def test_chromobius_batch_matches_upstream_predict_reference():
     batch_results = decoder.decode_batch([syndrome for _, syndrome, _ in shots])
     for batch_result, (name, _, expected) in zip(batch_results, shots):
         assert batch_result.converged, name
-        assert batch_result.result == expected, (name, batch_result.result,
-                                                 expected)
+        actual = _as_list(batch_result.result)
+        assert actual == expected, (name, actual, expected)

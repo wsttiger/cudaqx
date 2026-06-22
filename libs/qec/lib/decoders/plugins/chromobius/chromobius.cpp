@@ -12,30 +12,66 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <fstream>
+#include <limits>
 #include <span>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cudaq::qec {
 
 namespace {
 
-std::string get_dem_text(const cudaqx::heterogeneous_map &params) {
-  if (params.contains("dem"))
-    return params.get<std::string>("dem");
-  if (params.contains("dem_path")) {
-    const auto path = params.get<std::string>("dem_path");
-    std::ifstream file(path);
-    if (!file)
-      throw std::runtime_error("Failed to open Chromobius dem_path: " + path);
-    return std::string(std::istreambuf_iterator<char>(file),
-                       std::istreambuf_iterator<char>());
+struct chromobius_init_data {
+  stim::DetectorErrorModel dem;
+  cudaq::qec::sparse_binary_matrix base_H;
+};
+
+cudaq::qec::sparse_binary_matrix
+make_empty_base_H(std::size_t num_detectors, std::size_t num_observables) {
+  using index_type = cudaq::qec::sparse_binary_matrix::index_type;
+  constexpr auto max_index = std::numeric_limits<index_type>::max();
+  if (num_detectors > max_index)
+    throw std::runtime_error(
+        "Chromobius DEM has too many detectors for CUDA-Q QEC");
+  if (num_observables > max_index)
+    throw std::runtime_error(
+        "Chromobius DEM has too many observables for CUDA-Q QEC");
+
+  return cudaq::qec::sparse_binary_matrix::from_csc(
+      static_cast<index_type>(num_detectors),
+      static_cast<index_type>(num_observables),
+      std::vector<index_type>(num_observables + 1, 0), {});
+}
+
+chromobius_init_data make_chromobius_init_data(const decoder_init &init) {
+  const auto *dem_text = std::get_if<std::string>(&init);
+  if (!dem_text) {
+    throw std::runtime_error(
+        "Chromobius decoder requires a Stim detector error model string as "
+        "decoder input. Use get_decoder(\"chromobius\", dem_text, params).");
   }
 
-  throw std::runtime_error(
-      "Chromobius decoder requires a Stim detector error model via the "
-      "'dem' or 'dem_path' parameter.");
+  stim::DetectorErrorModel dem;
+  try {
+    dem = stim::DetectorErrorModel(*dem_text);
+  } catch (const std::exception &e) {
+    throw std::runtime_error(std::string("Chromobius Stim DEM parse failed: ") +
+                             e.what());
+  }
+
+  const auto num_detectors = static_cast<std::size_t>(dem.count_detectors());
+  const auto num_observables =
+      static_cast<std::size_t>(dem.count_observables());
+  if (num_observables > 64) {
+    throw std::runtime_error(
+        "Chromobius currently returns observable flips as a 64-bit mask; "
+        "CUDA-Q QEC wrapper supports at most 64 observables.");
+  }
+
+  return chromobius_init_data{
+      std::move(dem), make_empty_base_H(num_detectors, num_observables)};
 }
 
 std::vector<std::vector<uint32_t>> identity_sparse(std::size_t size) {
@@ -62,16 +98,13 @@ private:
   std::size_t num_observables = 0;
   bool return_weight = false;
 
+  std::vector<uint8_t> hard_syndrome;
   std::vector<uint8_t> packed_detection_events;
 
 public:
-  chromobius(const cudaqx::tensor<uint8_t> &H,
+  chromobius(chromobius_init_data init_data,
              const cudaqx::heterogeneous_map &params)
-      : decoder(H), dem(get_dem_text(params)) {
-    auto H_shape = H.shape();
-    if (H_shape.size() != 2)
-      throw std::runtime_error("Chromobius decoder requires a rank-2 tensor H");
-
+      : decoder(std::move(init_data.base_H)), dem(std::move(init_data.dem)) {
     ::chromobius::DecoderConfigOptions options;
     options.drop_mobius_errors_involving_remnant_errors =
         get_bool_param(params, "drop_mobius_errors_involving_remnant_errors",
@@ -85,18 +118,12 @@ public:
 
     return_weight = get_bool_param(params, "return_weight", false);
 
-    const auto num_detectors = static_cast<std::size_t>(dem.count_detectors());
-    if (H_shape[0] != num_detectors) {
-      throw std::runtime_error(
-          "Chromobius H row count must match the number of detectors in dem");
-    }
-
     chromobius_decoder =
         ::chromobius::Decoder::from_dem(dem, std::move(options));
     chromobius_decoder.write_mobius_match_to_std_err =
         get_bool_param(params, "write_mobius_match_to_stderr", false);
 
-    syndrome_size = num_detectors;
+    syndrome_size = static_cast<std::size_t>(dem.count_detectors());
     num_observables = static_cast<std::size_t>(dem.count_observables());
     if (num_observables > 64) {
       throw std::runtime_error(
@@ -106,6 +133,7 @@ public:
 
     block_size = num_observables;
     num_detector_bytes = (syndrome_size + 7) / 8;
+    hard_syndrome.resize(syndrome_size);
     packed_detection_events.resize(num_detector_bytes);
 
     // Chromobius directly predicts observables. Make the base realtime
@@ -122,8 +150,9 @@ public:
 
     std::fill(packed_detection_events.begin(), packed_detection_events.end(),
               uint8_t{0});
+    cudaq::qec::convert_vec_soft_to_hard(syndrome, hard_syndrome);
     for (std::size_t i = 0; i < syndrome.size(); ++i) {
-      if (syndrome[i] >= 0.5)
+      if (hard_syndrome[i])
         packed_detection_events[i >> 3] |= static_cast<uint8_t>(1u << (i & 7));
     }
 
@@ -151,9 +180,10 @@ public:
 
   CUDAQ_EXTENSION_CUSTOM_CREATOR_FUNCTION(
       chromobius, static std::unique_ptr<decoder> create(
-                      const cudaqx::tensor<uint8_t> &H,
+                      const cudaq::qec::decoder_init &init,
                       const cudaqx::heterogeneous_map &params) {
-        return std::make_unique<chromobius>(H, params);
+        return std::make_unique<chromobius>(make_chromobius_init_data(init),
+                                            params);
       })
 };
 

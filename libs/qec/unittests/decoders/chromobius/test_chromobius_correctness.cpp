@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -78,20 +79,6 @@ std::vector<reference_shot> read_reference_shots() {
   return shots;
 }
 
-cudaqx::tensor<uint8_t> make_H(std::size_t num_detectors,
-                               std::size_t num_observables) {
-  std::vector<uint8_t> H_data(num_detectors * num_observables, 0);
-  cudaqx::tensor<uint8_t> H;
-  H.copy(H_data.data(), {num_detectors, num_observables});
-  return H;
-}
-
-cudaqx::heterogeneous_map make_params(const std::string &dem) {
-  cudaqx::heterogeneous_map params;
-  params.insert("dem", dem);
-  return params;
-}
-
 } // namespace
 
 TEST(ChromobiusCorrectness, matchesUpstreamPredictReference) {
@@ -101,8 +88,7 @@ TEST(ChromobiusCorrectness, matchesUpstreamPredictReference) {
 
   const auto num_detectors = shots.front().syndrome.size();
   const auto num_observables = shots.front().expected_observables.size();
-  auto decoder = cudaq::qec::decoder::get(
-      "chromobius", make_H(num_detectors, num_observables), make_params(dem));
+  auto decoder = cudaq::qec::decoder::get("chromobius", std::string_view{dem});
 
   for (const auto &shot : shots) {
     SCOPED_TRACE(shot.name);

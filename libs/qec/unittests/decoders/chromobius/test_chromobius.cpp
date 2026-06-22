@@ -8,10 +8,9 @@
 
 #include "cudaq/qec/decoder.h"
 
-#include <filesystem>
-#include <fstream>
 #include <gtest/gtest.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -38,16 +37,14 @@ cudaqx::tensor<uint8_t> make_H(std::size_t num_detectors = 4,
 }
 
 cudaqx::heterogeneous_map make_params() {
-  cudaqx::heterogeneous_map params;
-  params.insert("dem", std::string(chromobius_dem));
-  return params;
+  return cudaqx::heterogeneous_map{};
 }
 
 } // namespace
 
 TEST(ChromobiusDecoder, checkAllZeroSyndrome) {
-  auto decoder =
-      cudaq::qec::decoder::get("chromobius", make_H(), make_params());
+  auto decoder = cudaq::qec::decoder::get(
+      "chromobius", std::string_view{chromobius_dem}, make_params());
 
   std::vector<cudaq::qec::float_t> syndrome = {0, 0, 0, 0};
   auto result = decoder->decode(syndrome);
@@ -60,8 +57,8 @@ TEST(ChromobiusDecoder, checkAllZeroSyndrome) {
 }
 
 TEST(ChromobiusDecoder, checkKnownObservableFlip) {
-  auto decoder =
-      cudaq::qec::decoder::get("chromobius", make_H(), make_params());
+  auto decoder = cudaq::qec::decoder::get(
+      "chromobius", std::string_view{chromobius_dem}, make_params());
 
   std::vector<cudaq::qec::float_t> syndrome = {1, 0, 0, 0};
   auto result = decoder->decode(syndrome);
@@ -71,36 +68,15 @@ TEST(ChromobiusDecoder, checkKnownObservableFlip) {
   EXPECT_EQ(result.result[0], 1.0);
 }
 
-TEST(ChromobiusDecoder, checkDemPath) {
-  const auto dem_path = std::filesystem::path(testing::TempDir()) /
-                        "cudaq_qec_chromobius_test.dem";
-  {
-    std::ofstream file(dem_path);
-    file << chromobius_dem;
-  }
-
-  cudaqx::heterogeneous_map params;
-  params.insert("dem_path", dem_path.string());
-  auto decoder = cudaq::qec::decoder::get("chromobius", make_H(), params);
-
-  std::vector<cudaq::qec::float_t> syndrome = {0, 0, 0, 0};
-  auto result = decoder->decode(syndrome);
-
-  EXPECT_TRUE(result.converged);
-  ASSERT_EQ(result.result.size(), 1);
-  EXPECT_EQ(result.result[0], 0.0);
-
-  std::filesystem::remove(dem_path);
-}
-
-TEST(ChromobiusDecoder, checkMissingDemThrows) {
-  cudaqx::heterogeneous_map params;
-  EXPECT_THROW((void)cudaq::qec::decoder::get("chromobius", make_H(), params),
-               std::runtime_error);
-}
-
-TEST(ChromobiusDecoder, checkDetectorCountMismatchThrows) {
+TEST(ChromobiusDecoder, checkPcmInputThrows) {
   EXPECT_THROW(
-      (void)cudaq::qec::decoder::get("chromobius", make_H(3), make_params()),
+      (void)cudaq::qec::decoder::get("chromobius", make_H(), make_params()),
       std::runtime_error);
+}
+
+TEST(ChromobiusDecoder, checkMalformedDemThrows) {
+  EXPECT_THROW((void)cudaq::qec::decoder::get(
+                   "chromobius", std::string_view{"not a valid DEM"},
+                   make_params()),
+               std::runtime_error);
 }
