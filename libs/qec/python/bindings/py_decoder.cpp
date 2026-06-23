@@ -802,13 +802,10 @@ void bindDecoder(nb::module_ &mod) {
     });
   });
 
-  auto cast_decoder = [](std::unique_ptr<decoder> decoder) -> nb::object {
-    return nb::cast(std::move(decoder), nb::rv_policy::take_ownership);
-  };
-
-  auto get_decoder_from_dem_text =
-      [cast_decoder](const std::string &name, const std::string &dem_text,
-                     nb::kwargs options) -> nb::object {
+  auto get_decoder_from_dem_text = [](const std::string &name,
+                                      const std::string &dem_text,
+                                      nb::kwargs options)
+      -> std::variant<nb::object, std::unique_ptr<decoder>> {
     if (PyDecoderRegistry::contains(name)) {
       auto dem = dem_from_stim_text(dem_text);
 
@@ -823,15 +820,14 @@ void bindDecoder(nb::module_ &mod) {
       return PyDecoderRegistry::get_decoder(name, H_obj, options);
     }
 
-    return cast_decoder(
-        get_decoder(name, decoder_init{dem_text}, hetMapFromKwargs(options)));
+    return get_decoder(name, decoder_init{dem_text}, hetMapFromKwargs(options));
   };
 
   qecmod.def(
       "get_decoder",
-      [get_decoder_from_dem_text,
-       cast_decoder](const std::string &name, nb::object H,
-                     nb::kwargs options) -> nb::object {
+      [get_decoder_from_dem_text](const std::string &name, nb::object H,
+                                  nb::kwargs options)
+          -> std::variant<nb::object, std::unique_ptr<decoder>> {
         if (nb::isinstance<nb::str>(H)) {
           return get_decoder_from_dem_text(name, nb::cast<std::string>(H),
                                            options);
@@ -858,8 +854,7 @@ void bindDecoder(nb::module_ &mod) {
               "    pip install cudaq-qec[tensor-network-decoder]\n");
         }
 
-        return cast_decoder(
-            get_decoder(name, H_sparse, hetMapFromKwargs(options)));
+        return get_decoder(name, H_sparse, hetMapFromKwargs(options));
       },
       R"pbdoc(
         Get a decoder by name.
@@ -1264,35 +1259,23 @@ void bindDecoder(nb::module_ &mod) {
     // to `INS_t6vectorIbSaIbEE`; the Python frontend hands it pre-discriminated
     // bits via `cudaq.to_bools(...)`.
     // clang-format off
-    static const std::vector<std::vector<std::string>> initFuncNames = {
-        {
-            "function_enqueue_syndromes._ZN5cudaq3qec8decoding17enqueue_syndromesEmRKSt6vectorINS_14measure_handleESaIS3_EEm.init_func",
-            "function_enqueue_syndromes._ZN5cudaq3qec8decoding17enqueue_syndromesEmRKSt6vectorIbSaIbEEm.init_func",
-        },
-        {"function_enqueue_syndromes_test._ZN5cudaq3qec8decoding22enqueue_syndromes_testEmRKSt6vectorIbSaIbEEm.init_func"},
-        {"function_get_corrections._ZN5cudaq3qec8decoding15get_correctionsEmmb.init_func"},
-        {"function_reset_decoder._ZN5cudaq3qec8decoding13reset_decoderEm.init_func"}};
+    static const std::vector<std::string> initFuncNames = {
+        "function_enqueue_syndromes._ZN5cudaq3qec8decoding17enqueue_syndromesEmRKSt6vectorINS_14measure_handleESaIS3_EEm.init_func",
+        "function_enqueue_syndromes_test._ZN5cudaq3qec8decoding22enqueue_syndromes_testEmRKSt6vectorIbSaIbEEm.init_func",
+        "function_get_corrections._ZN5cudaq3qec8decoding15get_correctionsEmmb.init_func",
+        "function_reset_decoder._ZN5cudaq3qec8decoding13reset_decoderEm.init_func"};
     // clang-format on
-    for (const auto &funcNameAlternatives : initFuncNames) {
+    for (const auto &funcName : initFuncNames) {
+      // Use dlsym to get the function pointer
       using InitFuncType = void (*)();
-      InitFuncType initFunc = nullptr;
-      std::string funcNames;
-      for (const auto &funcName : funcNameAlternatives) {
-        if (!funcNames.empty())
-          funcNames += "' or '";
-        funcNames += funcName;
-        dlerror();
-        initFunc = reinterpret_cast<InitFuncType>(
-            dlsym(decoderLibHandle, funcName.c_str()));
-        if (initFunc)
-          break;
-      }
+      InitFuncType initFunc = reinterpret_cast<InitFuncType>(
+          dlsym(decoderLibHandle, funcName.c_str()));
       if (!initFunc) {
         char *error_msg = dlerror();
         throw std::runtime_error(fmt::format(
             "Failed to locate init function '{}' in decoder library at '{}': "
             "{}",
-            funcNames, path,
+            funcName, path,
             (error_msg ? std::string(error_msg) : "unknown error.")));
       }
       // Call the init function to register/update the decoder quake code
