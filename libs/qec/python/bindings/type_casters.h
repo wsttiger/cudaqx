@@ -198,7 +198,9 @@ struct type_caster<cudaqx::heterogeneous_map> {
                        cudaq::qec::decoding::config::global_decoder_config>(
                        &val)) {
           if (std::holds_alternative<std::monostate>(*global_cfg)) {
-            result[key.c_str()] = nb::none();
+            // Omit the key for monostate, matching
+            // trt_decoder_config::to_heterogeneous_map(): an unset global
+            // decoder serializes as absent, not as a null value.
           } else {
             result[key.c_str()] = nb::cast(
                 std::get<cudaq::qec::decoding::config::pymatching_config>(

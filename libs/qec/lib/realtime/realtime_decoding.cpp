@@ -186,6 +186,18 @@ cudaqx::heterogeneous_map prepare_decoder_params(
   if (decoder_config.type != "trt_decoder")
     return params;
 
+  // batch_size > 1 has no effect on the realtime path: enqueue_syndrome decodes
+  // one syndrome per call, so the trt_decoder zero-pads the batch and discards
+  // all but slot 0. Warn rather than reject -- the result is correct, just
+  // wasteful. (Offline decode_batch users set batch_size via a raw params map,
+  // not this realtime config path.)
+  if (params.contains("batch_size") &&
+      params.get<std::size_t>("batch_size") > 1)
+    CUDAQ_WARN(
+        "trt_decoder batch_size > 1 has no effect on the realtime decode path "
+        "(one syndrome is decoded per call); the extra batch slots are "
+        "zero-padded and discarded. Use batch_size = 1 for realtime.");
+
   // The trt_decoder plugin attaches a pymatching global decoder only when both
   // "global_decoder" and "global_decoder_params" are present. Serialization no
   // longer emits an empty params map for the monostate (no-params) case, so
