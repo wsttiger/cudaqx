@@ -127,7 +127,7 @@ LLVM_INSTALL_PREFIX="$LLVM_INSTALL_PREFIX" \
 # ---------------------------------------------------------------------------
 log "Verifying device_call support in $CUDAQ_INSTALL_PREFIX"
 dc_lib="$CUDAQ_INSTALL_PREFIX/lib/libcudaq-device-call-runtime.so"
-dc_hdr="$CUDAQ_INSTALL_PREFIX/include/cudaq_internal/device_call/DeviceCallService.h"
+dc_hdr="$CUDAQ_INSTALL_PREFIX/include/cudaq/realtime/device_call_service.h"
 ok=1
 if [ -f "$dc_lib" ]; then echo "  [ok]      $dc_lib"; else echo "  [MISSING] $dc_lib"; ok=0; fi
 if [ -f "$dc_hdr" ]; then echo "  [ok]      $dc_hdr"; else echo "  [MISSING] $dc_hdr"; ok=0; fi
